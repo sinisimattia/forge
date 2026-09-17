@@ -25,8 +25,10 @@ are a plain top-level `docs/` folder — read them directly, no refresh/sync ste
 - `docs/standards/{naming,typing,i18n,data-conventions}.md` — cross-stack rules.
 - `docs/standards/agent-playbook.md` — shared lifecycle/trigger semantics.
 - `docs/rfcs/*.md` — entities, fields, types, relations, enum values for the domain touched.
-- `docs/api/README.md` — endpoint paths, methods, status codes, response shapes.
-- `docs/architecture/{system-overview,backend,frontend}.md` — structural patterns and boundaries.
+- `docs/api/README.md` — cross-cutting API conventions (error shape, pagination, versioning). Concrete endpoint contracts live beside the backend code that implements them (ADR-0004).
+- `docs/architecture/*.md` — package boundaries, contracts, and cross-cutting decisions
+  (not framework-specific module/component conventions — those are package-local, in each
+  package's own `STANDARDS.md`, per ADR-0003).
 - `docs/adrs/*.md` — check for any ADR that deprecates or removes a value before treating it
   as still valid.
 

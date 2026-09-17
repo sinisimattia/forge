@@ -43,7 +43,7 @@ Shared, cross-package rules:
   philosophy, money-as-cents, enums-from-source
 - `docs/rfcs/*.md` — entities, enums, relations for the domain being planned (read
   when the task touches types)
-- `docs/api/README.md` — endpoint contracts
+- `docs/api/README.md` — cross-cutting API conventions (error shape, pagination, versioning); endpoint contracts live beside their implementation (ADR-0004)
 
 Package-specific rules (read the ones for the packages the task touches):
 
@@ -71,9 +71,10 @@ the rest of the plan is package-conditional and sequenced core-first.
 
 - the task's referenced RFC(s) (`docs/rfcs/*.md`) — a domain such as articles,
   comments, or tags has its own RFC named for it (e.g. `docs/rfcs/0001-article-data-model.md`)
-- the relevant endpoints in `docs/api/README.md`
-- `docs/architecture/backend.md` for module patterns (new backend module) and/or
-  `docs/architecture/frontend.md` for component structure, routing, layouts
+- the API conventions in `docs/api/README.md`, and the endpoint documentation beside the code that implements it
+- `docs/architecture/*.md` for how the touched packages fit together (boundaries, data
+  flow, integration decisions) — module layout, component structure, and routing/layout
+  conventions are package-local; see that package's `STANDARDS.md` above
 
 **Step 4 — Audit existing code** in the affected packages. Search before creating — zero
 duplication is a hard rule (see each package's `STANDARDS.md`).
@@ -108,7 +109,7 @@ detailed enough that implementation proceeds without re-reading the docs.
 
 ### Documentation consulted
 - `docs/rfcs/[primary].md` — [what it covers for this task]
-- `docs/architecture/{backend,frontend}.md` — [module patterns / routing-layout rules]
+- `docs/architecture/*.md` — [boundary/integration decisions relevant to this feature]
 
 ### Existing code to reuse
 | Package | File | How to reuse |

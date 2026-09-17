@@ -23,8 +23,8 @@ user's request. Never run a GitHub-mutating command without explicit confirmatio
 - `libs/core/STANDARDS.md` — core purity (no `typeorm`/`@nestjs/*`/Nuxt-Vue
   imports), `I`-prefixed contracts, entities-not-DTOs, the rehydration exception, TSDoc DoD.
 - `docs/rfcs/*.md`, `docs/api/README.md` — docs-compliance baseline.
-- `docs/architecture/{system-overview,backend,frontend}.md` — docs
-  compliance during review.
+- `docs/architecture/*.md` — package boundaries/contracts/decisions, for docs compliance
+  during review (framework-specific conventions are package-local, per ADR-0003).
 
 Per-package rules apply **only to files in that package**; shared `docs/standards/*` apply
 everywhere. Docs win on conflict.
