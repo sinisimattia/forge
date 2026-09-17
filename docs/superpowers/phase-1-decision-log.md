@@ -814,6 +814,18 @@ content. I traced the root cause:
   - The difference: the source has a package-lock.json pinning exact transitive versions
     (@storybook/builder-vite 9.1.2, @storybook/vue3-vite 9.1.2, @rolldown/pluginutils 1.0.1, ...).
     The template ships none, so every generated project resolves fresh and drifts.
+
+  **>>> CORRECTION (2026-09-18): THIS HYPOTHESIS WAS WRONG. <<<**
+  The lockfile was subsequently shipped (template/package-lock.json, 985 KiB / 28,581 lines) and
+  `npm ci` in a generated project now works — which DID fix the containerisation promise. But the
+  Storybook build **still fails identically**, reproduced twice from two independent lockfile
+  refreshes, including an install pinned to the exact versions named above
+  (@storybook/builder-vite 9.1.2, @storybook/vue3-vite 9.1.2, @rolldown/pluginutils 1.0.1) that
+  this entry believed were the known-good combination. `[vite:build-html] Missing field
+  'moduleType'` building iframe.html. **Dependency drift is NOT the cause. The root cause is
+  unknown and unfixed.** Forge's storybook CI job remains `continue-on-error: true`. One factor not
+  ruled out: all testing ran on host Node 26, not the pinned Node 22.
+  Do not re-adopt the drift explanation without new evidence — it has been tested and falsified.
 This is the SAME root cause as A1 (Dockerfiles need a lockfile the template lacks). It is broader
 than either symptom: GENERATED PROJECTS ARE NOT REPRODUCIBLE. Two builds a week apart can differ.
 This is a decision about the template's character (pinned vs floating dependencies) with real
