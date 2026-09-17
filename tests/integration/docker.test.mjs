@@ -33,14 +33,15 @@ async function getFreePort() {
 }
 
 /** Gather what compose knows right now, so a failure is diagnosable instead of a bare timeout. */
-async function composeDiagnostics(target) {
-  const ps = await run('docker', ['compose', 'ps', '--all'], { cwd: target })
+async function composeDiagnostics(target, projectName) {
+  const ps = await run('docker', ['compose', '-p', projectName, 'ps', '--all'], { cwd: target })
     .then((r) => r.stdout)
     .catch((error) => `(ps failed: ${error.message})`);
-  const logs = await run('docker', ['compose', 'logs', '--no-color', '--tail', '200'], {
-    cwd: target,
-    maxBuffer: 64 * 1024 * 1024,
-  })
+  const logs = await run(
+    'docker',
+    ['compose', '-p', projectName, 'logs', '--no-color', '--tail', '200'],
+    { cwd: target, maxBuffer: 64 * 1024 * 1024 },
+  )
     .then((r) => r.stdout)
     .catch((error) => `(logs failed: ${error.message})`);
   return `--- docker compose ps --all ---\n${ps}\n--- docker compose logs (tail 200) ---\n${logs}`;
@@ -58,6 +59,20 @@ test(
       interactive: false,
     });
 
+    // `generate()` always resolves the target to `<out>/dockerapp`, so the project
+    // directory basename — and therefore Compose's default project name, and the
+    // container/volume names it derives from that — would be identical on every run
+    // of this test on this machine. Without an explicit project name, a run that
+    // dies before its `finally` (kill -9, CI cancel, OOM) leaves a `dockerapp_pgdata`
+    // volume that the *next* run silently attaches to and reuses instead of getting
+    // a fresh database. Derive a project name from the already-unique temp dir and
+    // pass it to every compose invocation below so they always agree.
+    const projectName = `forge-e2e-${path.basename(out).replace(/[^a-z0-9]/gi, '').toLowerCase()}`;
+    const compose = (...args) => run('docker', ['compose', '-p', projectName, ...args], {
+      cwd: target,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+
     // A real user runs `npm install` before `npm run dev:up` (see the generator's own
     // "Next steps" output) — the template ships no package-lock.json, and the backend/
     // webapp Dockerfiles COPY it unconditionally, so `docker compose build` on a bare
@@ -66,16 +81,19 @@ test(
 
     await fs.copyFile(path.join(target, '.env.example'), path.join(target, '.env'));
 
-    // Pick free host ports rather than trusting the compose defaults (5432/3000/3001)
-    // are unoccupied on this machine; compose.yaml reads these as overrides.
-    const [postgresPort, backendPort, webappPort] = await Promise.all([
+    // Pick free host ports rather than trusting the compose defaults (5432/3000/3001/9229)
+    // are unoccupied on this machine; compose.yaml reads these as overrides. This covers
+    // the debug port too — 9229 is the Node inspector default, so it's not a hypothetical.
+    const [postgresPort, backendPort, webappPort, backendDebugPort] = await Promise.all([
+      getFreePort(),
       getFreePort(),
       getFreePort(),
       getFreePort(),
     ]);
     await fs.appendFile(
       path.join(target, '.env'),
-      `\nPOSTGRES_PORT=${postgresPort}\nBACKEND_PORT=${backendPort}\nWEBAPP_PORT=${webappPort}\n`,
+      `\nPOSTGRES_PORT=${postgresPort}\nBACKEND_PORT=${backendPort}\nWEBAPP_PORT=${webappPort}\n` +
+        `BACKEND_DEBUG_PORT=${backendDebugPort}\n`,
     );
 
     try {
@@ -84,13 +102,9 @@ test(
         // (bounded by --wait-timeout) as soon as a container exits or a
         // healthcheck condition can't be satisfied, instead of us blindly
         // polling an HTTP endpoint that a dead container would never answer.
-        await run(
-          'docker',
-          ['compose', 'up', '-d', '--build', '--wait', '--wait-timeout', '300'],
-          { cwd: target, maxBuffer: 64 * 1024 * 1024 },
-        );
+        await compose('up', '-d', '--build', '--wait', '--wait-timeout', '300');
       } catch (error) {
-        const diagnostics = await composeDiagnostics(target);
+        const diagnostics = await composeDiagnostics(target, projectName);
         throw new Error(`docker compose up --wait failed: ${error.message}\n\n${diagnostics}`);
       }
 
@@ -99,7 +113,7 @@ test(
       const body = await response.json();
       assert.deepEqual(body, { status: 'ok' });
     } finally {
-      await run('docker', ['compose', 'down', '-v'], { cwd: target }).catch((error) => {
+      await compose('down', '-v').catch((error) => {
         process.stderr.write(`warning: docker compose down -v failed: ${error.message}\n`);
       });
     }
