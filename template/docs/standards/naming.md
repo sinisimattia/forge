@@ -5,8 +5,8 @@ framework conventions (Vue `props`/`emit`, NestJS decorators) do not override th
 
 ## Principles
 
-- **Descriptive names over short ones.** Prefer `userPaymentSummaryByEvent` over
-  `summary`, `eventId` over `id` when context matters. Long, self-documenting names
+- **Descriptive names over short ones.** Prefer `userCommentSummaryByArticle` over
+  `summary`, `articleId` over `id` when context matters. Long, self-documenting names
   are always preferable to short, opaque ones. Long names are fine; ambiguous names
   are not.
 - **Semantically meaningful variables.** Every variable name must communicate what it
@@ -38,7 +38,7 @@ expansions:
 | `opts` | `options` |
 | `params` | `parameters` |
 | `str` | `string` (name the actual value) |
-| `arr` | name the collection (e.g. `events`) |
+| `arr` | name the collection (e.g. `articles`) |
 | `obj` | name the actual object |
 | `num` | name the actual number |
 | single-letter loop variables | `index`, `itemIndex`, or use `.map()`/`.forEach()` with descriptive parameter names |
