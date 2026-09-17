@@ -1,0 +1,52 @@
+{
+  "name": "__FORGE_SCOPE__/webapp",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "description": "__FORGE_TITLE__ — webapp",
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "nuxt typecheck",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "start:prod": "node .output/server/index.mjs"
+  },
+  "dependencies": {
+    "__FORGE_SCOPE__/core": "*",
+    "nuxt": "^4.3.1",
+    "vue": "^3.5.28",
+    "vue-router": "^5.1.0"
+  },
+  "devDependencies": {
+    "@nuxt/eslint": "^1.15.1",
+    "@nuxtjs/i18n": "^10.4.0",
+    "@nuxtjs/storybook": "^9.0.1",
+    "@nuxtjs/tailwindcss": "^6.14.0",
+    "@storybook-vue/nuxt": "^9.0.1",
+    "@storybook/addon-a11y": "~9.0.5",
+    "@storybook/addon-docs": "~9.0.5",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "@vue/test-utils": "^2.4.11",
+    "eslint": "^9.39.3",
+    "eslint-plugin-storybook": "~9.0.5",
+    "happy-dom": "^20.10.6",
+    "storybook": "~9.0.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9",
+    "vue-tsc": "^3.2.5"
+  },
+  "overrides": {
+    "jiti": "2.6.1"
+  },
+  "engines": {
+    "node": ">=22 <23"
+  }
+}

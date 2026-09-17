@@ -1,0 +1,14 @@
+{
+  // Nuxt generates the actual project-reference tsconfigs (module: preserve,
+  // moduleResolution: bundler — its own choices, independent of the monorepo's
+  // ../../tsconfig.base.json) into .nuxt/ on `nuxt prepare` (this package's
+  // `postinstall`). This file never extends tsconfig.base.json — see
+  // https://nuxt.com/docs/guide/concepts/typescript.
+  "files": [],
+  "references": [
+    { "path": "./.nuxt/tsconfig.app.json" },
+    { "path": "./.nuxt/tsconfig.server.json" },
+    { "path": "./.nuxt/tsconfig.shared.json" },
+    { "path": "./.nuxt/tsconfig.node.json" }
+  ]
+}
