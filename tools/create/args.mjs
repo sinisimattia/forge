@@ -40,9 +40,13 @@ export function parseArgs(argv) {
     i += 1;
   }
 
-  if (parsed.into) {
-    if (parsed.name) throw new UsageError('--into cannot be combined with --name');
-    if (parsed.out) throw new UsageError('--into cannot be combined with --out');
+  // Presence checks must be `!== undefined`, never truthiness: an empty-string
+  // value would otherwise skip adopt mode entirely and let the forbidden
+  // `--into` + `--name` combination through.
+  if (parsed.into !== undefined) {
+    if (parsed.into === '') throw new UsageError('--into requires a directory path');
+    if (parsed.name !== undefined) throw new UsageError('--into cannot be combined with --name');
+    if (parsed.out !== undefined) throw new UsageError('--into cannot be combined with --out');
     return { ...parsed, mode: 'adopt', out: process.cwd() };
   }
 
