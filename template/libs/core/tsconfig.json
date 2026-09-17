@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": true,
+    "declaration": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "outDir": "./dist",
+    "types": ["node", "jest"],
+    "paths": {
+      "__FORGE_SCOPE__/core/shared/errors": ["./src/shared/errors/index.ts"],
+      "__FORGE_SCOPE__/core/shared/testing": ["./src/shared/testing/index.ts"],
+      "__FORGE_SCOPE__/core/shared/types": ["./src/shared/types/index.ts"]
+    }
+  },
+  "include": ["./src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

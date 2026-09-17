@@ -1,0 +1,39 @@
+{
+  "name": "__FORGE_SCOPE__/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "exports": {
+    "./shared/errors": {
+      "types": "./dist/shared/errors/index.d.ts",
+      "default": "./dist/shared/errors/index.js"
+    },
+    "./shared/testing": {
+      "types": "./dist/shared/testing/index.d.ts",
+      "default": "./dist/shared/testing/index.js"
+    },
+    "./shared/types": {
+      "types": "./dist/shared/types/index.d.ts",
+      "default": "./dist/shared/types/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "purity": "node ./scripts/check-purity.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.3",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^25.3.0",
+    "eslint": "^9.39.3",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.0.0"
+  }
+}
