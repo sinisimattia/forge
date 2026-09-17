@@ -48,19 +48,47 @@ test('a generated project passes every gate it ships with', async (t) => {
   // subtests above only prove `lint`/`purity` exit 0 on a clean project, which they would do
   // whether or not the underlying rules actually fire. Reuses the project already generated
   // and installed above rather than generating a third one.
+  //
+  // The probe exercises all three mechanisms `libs/core/eslint.config.mjs` uses to enforce
+  // purity, not just the static-import ban: `@typescript-eslint/no-restricted-imports` only
+  // sees static import/export declarations, so a separate `no-restricted-syntax` rule guards
+  // dynamic `import()` and `require()` specifically (its own comment there says so — "Without
+  // these, `await import('typeorm')` and `require('typeorm')` walk straight past it"). A probe
+  // covering only the static form would never notice if that second rule regressed.
   await t.test('D2/D14: the core-purity gates actually discriminate', async () => {
     const probePath = path.join(project, 'libs/core/src/shared/types/D2D14Probe.ts');
-    // One probe file covers both faults: D2 (a framework import must fail lint) and D14
-    // (transport vocabulary in prose must fail the purity check).
+    // One probe file covers both faults: D2 (a framework import must fail lint — static,
+    // dynamic, and require forms) and D14 (transport vocabulary in prose must fail the purity
+    // check).
     await fs.writeFile(
       probePath,
       "import type { Repository } from 'typeorm';\n" +
-        '/** Returns the JWT for the session. */\n' +
-        'export type D2D14Probe = Repository<unknown>;\n',
+        '\n' +
+        '/** Returns the JWT for the session cookie. */\n' +
+        'export type D2D14Probe = Repository<unknown>;\n' +
+        '\n' +
+        "// Dynamic import and require are guarded by `no-restricted-syntax`, a rule separate\n" +
+        '// from the static-import ban above — without these two lines, a regression that\n' +
+        '// removed only that rule would ship silently even though the static-import probe\n' +
+        '// above still failed.\n' +
+        'export async function probeDynamicImport() {\n' +
+        "  return import('typeorm');\n" +
+        '}\n' +
+        '\n' +
+        "export const probeRequire = require('typeorm');\n",
     );
 
     try {
-      // D2 — a framework import (`typeorm`) must fail `nx lint core`.
+      // D2 — a framework import must fail `nx lint core`, in every form it can take:
+      //   - static:  `@typescript-eslint/no-restricted-imports`
+      //   - dynamic: `no-restricted-syntax` (ImportExpression selector) — no other rule here
+      //     covers this form, so this is the one that would go silently missing if that rule
+      //     regressed.
+      //   - require: both `no-restricted-syntax` (CallExpression selector) AND
+      //     `@typescript-eslint/no-require-imports` (from the recommended ruleset) fire
+      //     together — verified below that removing `no-restricted-syntax` still leaves
+      //     `no-require-imports` catching this particular form, so require() alone would not
+      //     prove `no-restricted-syntax` matters; the dynamic-import case is what does.
       await assert.rejects(
         () => run('npx', ['nx', 'lint', 'core'], { cwd: project, maxBuffer: 64 * 1024 * 1024 }),
         'expected `nx lint core` to fail while the typeorm import is present — D2 is decorative',
