@@ -67,3 +67,8 @@ its public `__FORGE_SCOPE__/core/*` subpath — never via relative paths into `s
 | K4 | Contracts speak in entities, not DTOs | review `src/*/contracts/*.ts` for shapes that are neither an entity, a create-input type, nor a JSON wire shape | blocking | STANDARDS.md — Entities, not DTOs |
 | K5 | TSDoc on every export | `grep -rnB1 "^export " src/ \| grep -v "\*/"` | blocking | STANDARDS.md — TSDoc is definition-of-done |
 | K6 | One symbol per file, PascalCase filename | file basename matches the exported symbol | warning | STANDARDS.md — File layout |
+
+K2 is a text check over prose: it catches accidental transport vocabulary, including camelCase,
+PascalCase and snake_case/kebab-case compounds, with real `http(s)://` links exempted. It does not
+defend against deliberate evasion — a word split across two lines, or unicode look-alikes, will
+pass. It is a guard against mistakes, not an adversary.

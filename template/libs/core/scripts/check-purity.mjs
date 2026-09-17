@@ -4,9 +4,11 @@
  *
  * The purity rule forbids naming framework or transport specifics in libs/core —
  * in comments and TSDoc, not only in imports. Lint covers imports; this covers
- * the words. Only the URL span of a line is stripped before matching, since a
- * `@see https://...` link is a reference, but prose sharing that line must stay
- * under scrutiny.
+ * the words. Only a real `http(s)://` link span is stripped before matching,
+ * since a `@see https://...` link is a reference, but prose sharing that line
+ * must stay under scrutiny. Any other `scheme://` is left alone on purpose —
+ * stripping arbitrary schemes would let a forbidden word smuggle itself out of
+ * the line by posing as one (`jwt://...`).
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -26,17 +28,24 @@ const FORBIDDEN = [
   ['pinia', /pinia/i],
   ['nuxt', /nuxt/i],
   ['vue', /vue/i],
-  ['nestjs', /nest\.?js|@nestjs/i],
-  // Unambiguous once URLs have been stripped from the line.
+  ['nestjs', /nest[._-]?js|@nestjs/i],
+  // Unambiguous once real documentation links have been stripped from the line.
   ['http', /https?/i],
-  // `express` is an ordinary English verb ("must express the invariant"), so only
-  // the framework's own spelling is forbidden in prose. A real import is caught
-  // by the lint rule, which has no such ambiguity.
-  ['expressjs', /express\.?js|@express\b/i],
+  // `express` is an ordinary English verb ("must express the invariant"), so the
+  // lowercase word is allowed. The capitalised proper noun is the framework, and
+  // naming a consumer's framework in core prose is exactly what K2 forbids.
+  // Accepted trade-off: a sentence that *begins* with the verb ("Express the
+  // invariant clearly.") will be flagged; rewording one line is cheaper than
+  // silently permitting transport coupling. No `/i` flag — that is deliberate.
+  ['express', /express\.?js|@express\b|\bExpress\b/],
 ];
 
-/** Any scheme://rest-of-url. */
-const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/\S*/gi;
+/**
+ * Only real documentation links are stripped. Matching any `scheme://token`
+ * would let a forbidden word smuggle itself out of the line by posing as a
+ * scheme — `jwt://the-session-token` would erase the very word being checked.
+ */
+const URL_PATTERN = /\bhttps?:\/\/\S*/gi;
 
 async function* walk(dir) {
   for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
