@@ -16,6 +16,11 @@
 - **Forge has zero runtime and zero test dependencies.** Use `node --test`. If you reach for a package, you have taken a wrong turn.
 - **`~/Progetti/Voku` is strictly read-only.** Never write, never `git add`, never branch. Extraction is copy-out only. After every task that touches it, `git -C ~/Progetti/Voku status --porcelain` must be empty and `git -C ~/Progetti/Voku rev-parse --short HEAD` must be `fdfdbde`.
 - **Tokens are `__FORGE_NAME__`, `__FORGE_TITLE__`, `__FORGE_SCOPE__`, `__FORGE_DESCRIPTION__`, `__FORGE_DB_NAME__`.** No other token spelling is valid. The unresolved-token guard matches `/__FORGE_[A-Z0-9_]*__/g` and nothing else — `window.__NUXT__` and `__dirname` must never match.
+- **Domain greps must be substring, not word-boundary.** `\bevent\b` does NOT match `events`,
+  `eventId` or `userPaymentSummaryByEvent` — the boundary is not where it looks. Use substring
+  matching and triage the hits by hand: `prevent`/`eventually` contain `event` and are fine, as are
+  genuinely generic uses ("emitted events" in Vue, "issue tickets"). A leaked domain noun in an
+  *example identifier* is never fine.
 - **Zero Voku traces.** `grep -ri voku template/ tools/` must return nothing. Neutral example vocabulary for docs is `Article` / `Comment` / `Tag` — never Event, Ticket, RSVP, Invitation, Payment.
 - **No secrets, ever.** `.env.example` carries empty values only. `grep -rE "sk_|pk_live|SECRET=|PASSWORD=|BEGIN .* PRIVATE KEY" template/` must return nothing.
 - **`libs/core` purity.** No framework imports, and no transport vocabulary (`jwt`, `cookie`, `http`) in code *or* prose.
@@ -1264,7 +1269,7 @@ done
 
 ```bash
 cd ~/Progetti/forge
-grep -rniE 'voku|\bevent\b|\bticket\b|\brsvp\b|invitation|\bpayment\b' template/docs/standards/
+grep -rniE 'voku|event|ticket|rsvp|invit|payment|stripe|organizer|refund' template/docs/standards/
 ```
 
 Expected: a handful of hits, concentrated in `naming.md` (≈4), `data-conventions.md` (≈2), `typing.md` (≈1), `git.md` (≈1).
@@ -1292,7 +1297,7 @@ Rules while rewriting:
 
 ```bash
 cd ~/Progetti/forge
-grep -rniE 'voku|\bevent\b|\bticket\b|\brsvp\b|invitation|\bpayment\b' template/docs/standards/ && echo "STILL DIRTY" || echo "CLEAN"
+grep -rniE 'voku|event|ticket|rsvp|invit|payment|stripe|organizer|refund' template/docs/standards/ && echo "STILL DIRTY" || echo "CLEAN"
 ```
 
 Expected: `CLEAN`
@@ -1398,7 +1403,7 @@ Expected: `CLEAN`
 
 ```bash
 cd ~/Progetti/forge
-grep -rniE '\bevent\b|\bticket\b|\brsvp\b|invitation|\bpayment\b|stripe|organizer|guest' template/.claude/agents/
+grep -rniE 'event|ticket|rsvp|invit|payment|stripe|organizer|guest|refund' template/.claude/agents/
 ```
 
 Rewrite every hit using the `Article` / `Comment` / `Tag` vocabulary from Task 7. `core-implementer.md` and `core-tester.md` carry the most (they name `IEventService`, `runIEventServiceContract`, `Event.ts`); these become `IArticleService`, `runIArticleServiceContract`, `Article.ts`. `webapp-tester.md` references RSVP flows and `pages/events/**` — replace with `pages/articles/**`.
@@ -1434,8 +1439,8 @@ In `template/.claude/agents/README.md`:
 ```bash
 cd ~/Progetti/forge
 ls template/.claude/agents/ | wc -l                                  # must be 12
-grep -rniE 'voku|\bevent\b|\bticket\b|\brsvp\b|invitation|\bpayment\b' template/.claude/agents/ \
-  && echo "STILL DIRTY" || echo "CLEAN"
+grep -rniE 'voku|event|ticket|rsvp|invit|payment|stripe|organizer|refund' template/.claude/agents/ \
+  && echo "REVIEW EACH HIT" || echo "CLEAN"
 for f in template/.claude/agents/*.md; do
   head -1 "$f" | grep -q '^---$' || echo "MISSING FRONTMATTER: $f"
 done
@@ -2008,7 +2013,7 @@ touch "$T/apps/backend/src/db/migrations/.gitkeep"
 
 ```bash
 cd ~/Progetti/forge
-grep -rniE 'voku|\bevent\b|\bticket\b|\brsvp\b|invitation|\bpayment\b|stripe|organizer|guest' template/apps/backend/src/common/
+grep -rniE 'voku|event|ticket|rsvp|invit|payment|stripe|organizer|guest|refund' template/apps/backend/src/common/
 ```
 
 Delete any file under `common/` that exists solely for a Voku domain concern. Keep the genuinely cross-cutting pieces: the exception filter, the response/pagination interceptor, validation pipes, shared types and the i18n plumbing. Rewrite remaining references with the `Article` / `Comment` / `Tag` vocabulary. Re-run the grep until it is empty.
@@ -2191,7 +2196,7 @@ Then:
 
 ```bash
 cd ~/Progetti/forge
-grep -rniE 'voku|\bevent\b|\bticket\b|\brsvp\b|invitation|\bpayment\b|stripe|organizer' template/apps/webapp/
+grep -rniE 'voku|event|ticket|rsvp|invit|payment|stripe|organizer|refund' template/apps/webapp/
 ```
 
 Rewrite every hit with the `Article` / `Comment` / `Tag` vocabulary; re-run until empty.
@@ -2401,7 +2406,15 @@ const ROOTS = ['template', 'tools'];
 
 const RULES = [
   ['source-project trace', /voku/i],
-  ['source-domain term', /\b(rsvp|stripe)\b/i],
+  // Terms with no innocent generic use — always a leak.
+  ['source-domain term', /\b(rsvp|stripe|organizers?|refunds?|invitations?)\b/i],
+  // `event`, `payment` and `ticket` DO have innocent uses ("emitted events" in Vue,
+  // "issue tickets"), so flagging the bare word produces false positives. Flag them
+  // only in identifier shape, which is how a leaked domain name actually looks —
+  // `eventId`, `userPaymentSummaryByEvent`, `events.module.ts`.
+  ['source-domain identifier', /\b(event|payment|ticket)(?=[A-Z])/],
+  ['source-domain identifier', /[a-z](Event|Payment|Ticket)/],
+  ['source-domain module', /\b(event|payment|ticket|invitation)s?\.(module|service|controller|entity)\b/i],
   ['stripe-style key', /\b(sk_|pk_live)/],
   // Only a POPULATED value is a finding — `POSTGRES_PASSWORD=` in .env.example is fine.
   ['populated secret', /(SECRET|PASSWORD|TOKEN|API_KEY)=\S+/],
