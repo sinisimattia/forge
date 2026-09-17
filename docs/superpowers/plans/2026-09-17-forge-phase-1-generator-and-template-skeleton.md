@@ -67,8 +67,8 @@
   "description": "Application template workspace — generates new projects from one template tree.",
   "scripts": {
     "create": "node tools/create/index.mjs",
-    "test": "node --test tests/unit",
-    "test:integration": "node --test --test-timeout=1800000 tests/integration",
+    "test": "node --test 'tests/unit/**/*.test.mjs'",
+    "test:integration": "node --test --test-timeout=1800000 'tests/integration/**/*.test.mjs'",
     "test:all": "npm test && npm run test:integration"
   },
   "engines": { "node": ">=22 <23" }
