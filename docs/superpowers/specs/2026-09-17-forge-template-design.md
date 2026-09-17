@@ -1,198 +1,176 @@
 # Forge — Application Template Workspace
 
-**Status:** approved design, pending implementation plan
+**Status:** approved design (v2), pending implementation plan
 **Date:** 2026-09-17
 **Source of truth for extraction:** `~/Progetti/Voku` @ `fdfdbde` (read-only)
+**Supersedes:** v1 (layered composition + minimal auth), replaced per review
 
 ---
 
 ## 1. Context
 
-Voku is an NX/npm-workspaces monorepo whose *reusable* value is not its domain but its
+Voku is an NX/npm-workspaces monorepo whose reusable value is not its domain but its
 scaffolding: a consolidated agent roster, single-source standards docs, a framework-agnostic
-`libs/core` that acts as an executable contract, a containerized Node 22 dev environment, and
-a documented lifecycle (`planner → core-implementer → implementers → testers ‖ reviewer →
+`libs/core` acting as an executable contract, a containerized Node 22 dev environment, and a
+documented lifecycle (`planner → core-implementer → implementers → testers ‖ reviewer →
 documenter → closer → pr`).
 
-Rebuilding that by hand for each new application is expensive and lossy. Forge extracts it
-once into a standalone template workspace that generates new projects.
+Rebuilding that by hand per application is expensive and lossy. Forge extracts it once into a
+standalone template that generates new projects.
 
-Forge is a **clean one-time snapshot**. It does not stay coupled to Voku, and Voku is never
-modified — not now, not by forge later.
+Forge is a **clean one-time snapshot**. It is not an upstream, does not sync, and never
+modifies Voku.
 
 ## 2. Goals
 
-- G1. A new application, correctly structured and passing its own lint/typecheck/test/build
-  gates, is one command away.
-- G2. The "how we work" layer (agents, standards, docs conventions) is usable **on its own**,
-  droppable into a repo that already exists.
-- G3. Adding a second stack later is additive — a new directory, not a redesign.
+- G1. A new application — correctly structured, fully authenticated, passing its own
+  lint/typecheck/test/build gates — is one command away.
+- G2. The "how we work" layer (agents, standards, docs conventions) can also be adopted into a
+  repository that already exists.
+- G3. Exactly one way to generate a project. No composition, no variants, no matrix.
 - G4. Zero Voku domain concepts survive extraction (no Events, Tickets, Invitations/RSVP,
   Payments, refunds, Stripe, or Voku branding).
 
 ## 3. Non-goals
 
 - N1. No changes of any kind to `~/Progetti/Voku`.
-- N2. No GitHub remote creation, no push, no npm publish. Local repo only.
-- N3. No drift/update tooling (`forge update`, `forge diff`). A receipt is written so this
-  stays *possible*; it is not built.
-- N4. No third stack beyond `nest-nuxt` and `minimal`.
-- N5. Forge does not dogfood its own process layer on itself. Circular and not worth it.
+- N2. No layer system, presets, or stack variants. One template. (See §12.)
+- N3. No second stack. The template is NX + NestJS/TypeORM/Postgres + Nuxt 4/Vue 3, always.
+- N4. No GitHub remote creation, no push, no npm publish. Local repo only.
+- N5. No drift/update tooling. A receipt is written so it stays possible; it is not built.
+- N6. Forge does not dogfood its own template on itself.
 
 ## 4. Approach
 
-**Chosen: overlay directories + manifest.** Each layer is an ordinary file tree plus a small
-JSON manifest. The generator copies layers in dependency order, overlays later onto earlier,
-substitutes tokens, and merges a short list of JSON files.
+**One template tree, copied wholesale.** `template/` is an ordinary, complete, bootable
+monorepo. The generator copies it, substitutes tokens, and initializes git. That is the entire
+mechanism.
 
 Rejected:
 
-- *Template engine (Plop/Hygen).* Turning every file into a `.hbs` template makes the layers
-  unrunnable and unlintable in place — you could no longer boot the stack layer to check it
-  still works. Heavy machinery for what is copy-and-substitute.
-- *Forge as a working monorepo whose generator strips the domain.* "Delete the right things"
-  is more fragile and goes stale faster than "copy the right things", and it cannot express a
-  minimal layer at all.
+- *Layered composition (v1).* Overlay directories, a dependency graph, topological sort, and
+  JSON deep-merge bought the ability to mix stacks — a capability not wanted (N3). Everything
+  it cost (merge semantics, seam files to avoid merging prose, a whole class of
+  composition-order bugs) was pure overhead for a single fixed stack.
+- *Template engine (Plop/Hygen).* Turning every file into a `.hbs` template makes the template
+  unrunnable and unlintable in place — you could no longer boot it to check it still works.
+
+Dropping layers deletes three subsystems outright: the manifest/dependency resolver, JSON deep
+merge, and the seam-file indirection (`package-map.md`, `stack-roster.md`, `toolchain.md`).
+With one template, the root `CLAUDE.md`, the agent playbook, and the agents README simply
+state the real package table directly.
 
 ## 5. Repository layout
 
 ```
 forge/
-├── layers/
-│   ├── process/          # deps: []          — stack-agnostic: agents, standards, docs
-│   │   ├── layer.json    #   manifest (never copied into the target)
-│   │   └── files/        #   the tree, rooted at the target repo root
-│   ├── nx-base/          # deps: [process]   — NX workspace shell + empty libs/core
-│   ├── nest-nuxt/        # deps: [nx-base]   — NestJS + Nuxt + the Users/auth slice
-│   └── minimal/          # deps: [nx-base]   — one plain TS app, no framework
+├── template/             # THE template — a complete monorepo, rooted at the target repo root
 ├── tools/create/         # the generator (zero runtime dependencies)
 ├── tests/                # unit + integration tests for the generator
-├── docs/                 # forge's OWN docs (adding a layer, forge ADRs, this spec)
+├── docs/                 # forge's OWN docs (forge ADRs, this spec)
 ├── CLAUDE.md
 └── README.md
 ```
 
-## 6. The layer model
-
-### 6.1 Manifest
-
-```jsonc
-// layers/<name>/layer.json
-{
-  "name": "nest-nuxt",
-  "description": "NestJS + TypeORM/Postgres backend, Nuxt 4 webapp, shared core",
-  "dependsOn": ["nx-base"],
-  "merge": ["package.json", "nx.json"],
-  "prompts": [
-    { "token": "__FORGE_DB_NAME__", "question": "Postgres database name",
-      "default": "derive:project_name_snake", "pattern": "^[a-z][a-z0-9_]*$" }
-  ]
-}
-```
-
-Everything under `layers/<name>/files/` is the tree, rooted at what becomes the target repo
-root. `layer.json` sits beside `files/`, not inside it, so it is never copied.
-
-### 6.2 Composition algorithm
-
-1. Resolve preset → layer set; expand `dependsOn` transitively.
-2. Topologically sort. A missing or cyclic dependency is a hard failure, named explicitly.
-3. For each layer in order, walk `files/` and copy into the staging tree.
-   - Default for a path that already exists: **overwrite**.
-   - If the path is named in the *incoming* layer's `merge` list: **deep-merge** instead.
-   - A path in a `merge` list that does not yet exist in staging is simply copied.
-4. Substitute tokens (§6.4).
-5. Fail if any `__FORGE_*__` token remains anywhere in the staged tree.
-
-### 6.3 Merge semantics
-
-**Only `.json` files may appear in a `merge` list.** This is a deliberate constraint: it keeps
-the generator dependency-free (no YAML parser) and keeps merge behaviour predictable.
-
-Deep merge, applied in layer order, incoming = the later layer:
-
-| Case | Rule |
-|---|---|
-| both plain objects | recurse key-wise |
-| both arrays | concatenate, then drop duplicate primitives preserving first occurrence; objects concatenated as-is |
-| anything else | incoming wins |
-
-Merge exists to stop duplication, not for cleverness. `package.json` is the real case:
-`nx-base` owns `workspaces`, the `build`/`test`/`lint`/`typecheck`/`affected` scripts, `nx`,
-and `engines`; `nest-nuxt` adds the `dev:*`/`prod:*` scripts and its overrides. Without merge,
-both `nest-nuxt` and `minimal` would carry a full copy of nx-base's root `package.json` and
-they would drift.
-
-### 6.4 Tokens
+## 6. Tokens
 
 Substituted in **file contents and in path segments**, so `libs/core/package.json` holding
 `"name": "__FORGE_SCOPE__/core"` generalizes `@voku/core` correctly.
 
-| Token | Example | Default |
+| Token | Example | Source |
 |---|---|---|
-| `__FORGE_NAME__` | `my-app` | prompted; `^[a-z][a-z0-9-]*$` |
+| `__FORGE_NAME__` | `my-app` | prompted; must match `^[a-z][a-z0-9-]*$` |
 | `__FORGE_TITLE__` | `My App` | derived: title-cased from name |
 | `__FORGE_SCOPE__` | `@my-app` | derived: `@` + name |
 | `__FORGE_DESCRIPTION__` | `An app.` | prompted, may be empty |
-| `__FORGE_DB_NAME__` | `my_app` | derived: name with `-` → `_` (nest-nuxt only) |
+| `__FORGE_DB_NAME__` | `my_app` | derived: name with `-` → `_`; `^[a-z][a-z0-9_]*$` |
 
-The `__FORGE_` prefix is load-bearing. A bare `__NAME__`-style convention would make the
-"no unresolved tokens" guard (§6.2, step 5) fire on legitimate shipped content - Nuxt's
-`window.__NUXT__` is the obvious casualty. Namespacing lets the guard match
-`__FORGE_[A-Z0-9_]*__` exactly and stay a hard failure instead of a warning.
+After substitution the generator **fails** if any `__FORGE_[A-Z0-9_]*__` token survives.
+
+The `__FORGE_` prefix is load-bearing. A bare `__NAME__` convention would make that guard fire
+on legitimate shipped content — Nuxt's `window.__NUXT__` is the obvious casualty. Namespacing
+lets the guard stay a hard failure rather than degrade to a warning.
 
 Binary files are detected by a NUL byte in the first 8 KiB and copied verbatim, never
 substituted. Extension allowlists were rejected — they surprise on unusual files.
 
-### 6.5 Seam files
+## 7. The generator
 
-Markdown cannot be merged without a parser and heuristics, and concatenating prose produces
-garbage. Instead, stable process-layer documents **link** to small, dedicated files that a
-stack layer wholly owns and overwrites. This is Voku's own single-source rule ("link, don't
-restate") turned on the template itself.
-
-| Seam file | Owned by | Contents |
-|---|---|---|
-| `docs/standards/package-map.md` | each stack layer | the package table the root `CLAUDE.md` links to |
-| `docs/standards/stack-roster.md` | each stack layer | stack-specific agents, linked from the playbook and `.claude/agents/README.md` |
-| `docs/standards/toolchain.md` | each stack layer | canonical commands: build, test, lint, typecheck, dev, migrate |
-
-`toolchain.md` is what makes `closer` and the testers genuinely stack-neutral: they read the
-commands rather than hardcoding `nx`/`docker compose`. `process` ships a stub of each, so the
-`process`-only preset is coherent on its own.
-
-## 7. Layer contents
-
-### 7.1 `process` (deps: none)
-
-Ships roles, lifecycle, and rules — never per-package specifics.
+Two modes, one template.
 
 ```
-CLAUDE.md                            # generic root orientation → links package-map.md
-.claude/agents/                      # planner, reviewer, documenter, closer, pr + README
+# create mode — a new project
+npm run create -- --name <kebab> [--title <s>] [--scope <@s>] [--description <s>]
+                  [--db-name <s>] [--out <parent-dir>] [--no-git] [--yes]
+
+# adopt mode — the process subset into a repo that already exists (G2)
+npm run create -- --into <existing-dir>
+```
+
+Zero runtime dependencies — `node:fs`, `node:path`, `node:readline/promises` on Node 22.
+
+**Create mode pipeline:**
+
+1. **Prompt** for anything unanswered. `--yes` takes all derivable defaults and fails on
+   anything genuinely required.
+2. **Stage** into a temp directory — never the target. Copy `template/` wholesale.
+3. **Substitute** tokens in contents and paths; fail on any surviving `__FORGE_*__`.
+4. **Commit** — refuse a non-empty target; atomically rename temp → target. A failed run
+   leaves nothing behind, so there is never a half-generated repo to clean up.
+5. **Seal** — write `forge.json`, then `git init` + one initial commit unless `--no-git`.
+6. **Report** next steps (`npm install`, `npm run dev:up`).
+
+`--out` defaults to the current working directory; the target is `<out>/<name>`.
+
+**Adopt mode** copies only the **process subset** and **never overwrites**. Existing files are
+skipped and listed in a closing report so you can merge them by hand. The subset is one
+declared list in `tools/create/subset.mjs` — a plain array, not a manifest system:
+
+```
+CLAUDE.md
+.claude/agents/**
+.claude/agent-memory/**
+docs/standards/**
+docs/adrs/0000-template.md
+docs/adrs/000{1,2,3,4}-*.md
+```
+
+`forge.json` receipt — `{ forgeCommit, generatedAt, mode, tokens{} }`. All token values are
+non-secret by construction. It costs one line and keeps N5 possible later.
+
+Exit codes: `0` success · `1` validation error · `2` target conflict · `3` internal error.
+
+## 8. Template contents
+
+### 8.1 Workspace shell
+
+`package.json` (workspaces `apps/*` + `libs/*`, the NX `build`/`test`/`lint`/`typecheck`/
+`affected` scripts, the `dev:*`/`prod:*` docker scripts, `engines: node >=22 <23`), `nx.json`
+(target defaults + caching), `eslint.config.base.mjs`, base `tsconfig`, `.editorconfig`,
+`.gitignore`, `.env.example`, `compose.yaml` + `compose.prod.yaml` (workspace + postgres),
+`.github/workflows/ci.yml` (nx-affected on Node 22).
+
+### 8.2 Agents and docs
+
+```
+CLAUDE.md                            # root orientation, real package table
+.claude/agents/                      # all 11 agents + README
 .claude/agent-memory/reviewer/       # .gitkeep
 docs/standards/                      # README, agent-playbook, data-conventions, formatting,
                                      #   git, i18n, naming, testing, typing
-                                     #   + the three seam-file stubs
-docs/adrs/                           # 0000-template.md + inherited convention ADRs 0001-0004
+docs/adrs/                           # 0000-template.md + convention ADRs 0001-0004
 docs/{rfcs,architecture,guides,concepts,api}/   # skeletons, each with a README
 docs/superpowers/{specs,plans}/      # where brainstorming and writing-plans land
 ```
 
-Agent split. The rule: process ships stack-neutral roles; stack layers ship the rest.
+The full roster carries over unchanged in shape: `planner`, `reviewer`, `documenter`,
+`closer`, `pr`, `core-implementer`, `core-tester`, `backend-implementer`, `backend-tester`,
+`webapp-implementer`, `webapp-tester`. Frontmatter keeps Voku's fields (`name`,
+`description`, `model`, `color`, optional `memory`) and model assignments, which a generated
+project is free to change.
 
-| Agent | Layer |
-|---|---|
-| `planner`, `reviewer`, `documenter`, `closer`, `pr` | `process` |
-| `core-implementer`, `core-tester` | `nx-base` |
-| `backend-implementer`, `backend-tester`, `webapp-implementer`, `webapp-tester` | `nest-nuxt` |
-
-Agent frontmatter keeps Voku's shape (`name`, `description`, `model`, `color`, optional
-`memory`) and its model assignments, which a generated project is free to change.
-
-**Reviewer generalization.** Voku's `reviewer` hardcodes its backend/webapp/core dimensions.
-In forge it keeps the dimension-*selection* machinery — map changed file → owning package →
-run that package's checklist — but the checklists move into each package's `STANDARDS.md`
+**Reviewer.** Voku's reviewer hardcodes its dimension checklists. Forge keeps the
+dimension-*selection* machinery but moves the checklists into each package's `STANDARDS.md`
 under a `## Review dimensions` section:
 
 ```markdown
@@ -202,12 +180,12 @@ under a `## Review dimensions` section:
 | B1 | Controllers contain no business logic | `grep -n "await this\..*Repository" src/**/*.controller.ts` | blocking | STANDARDS.md §3 |
 ```
 
-The reviewer discovers packages via `package-map.md` and reads each changed package's table.
-A new stack layer therefore contributes its review dimensions with no edit to the reviewer.
+This is retained from v1 even though layers are gone, on its own merit: the rules live next to
+the package they govern, the reviewer prompt stays thin, and it obeys the single-source rule
+the ADRs establish. It is not required by anything else in this design.
 
-**Inherited convention ADRs.** Re-authored from Voku ADRs that are reusable *conventions*
-rather than product decisions, framed as defaults the generated project inherits and may
-supersede:
+**Inherited convention ADRs**, re-authored from Voku ADRs that are reusable conventions rather
+than product decisions, framed as defaults the generated project inherits and may supersede:
 
 - `0001-single-source-documentation.md` (from Voku ADR-0008's surviving rule)
 - `0002-consolidated-agent-roster.md` (from ADR-0009)
@@ -218,20 +196,19 @@ Voku's product ADRs (0001–0007, 0011, 0012, 0017, 0018) do not cross over.
 
 **Scope limit, stated honestly:** `docs/standards/*` is framework-agnostic but unmistakably
 TypeScript-flavored. It is not abstracted into language-neutral prose — that would remove
-everything that makes it useful. `process` means "any TypeScript repo", not "any repo".
+everything that makes it useful.
 
-### 7.2 `nx-base` (deps: `process`)
+### 8.3 `libs/core`
 
-`nx.json` (target defaults + caching), root `package.json` (workspaces `apps/*`+`libs/*`, the
-NX scripts, `engines: node >=22 <23`), `eslint.config.base.mjs`, base `tsconfig`,
-`.editorconfig`, `.gitignore`, `.github/workflows/ci.yml` (nx-affected on Node 22), and:
+The framework-agnostic domain and executable contract. `src/shared/{errors,testing,types}`
+(base `DomainError`, `ConformanceExpect`), `src/users/` (§9), `tests/` mirroring `src/`,
+`package.json` with subpath `exports`, `tsconfig` with `verbatimModuleSyntax`, jest config,
+`CLAUDE.md`, `STANDARDS.md`.
 
-`libs/core` — the framework-agnostic package, wired but empty of domain:
-`src/shared/{errors,testing,types}` (base `DomainError`, `ConformanceExpect`), `tests/`
-mirroring `src/`, `package.json` with subpath `exports`, `tsconfig` with
-`verbatimModuleSyntax`, jest config, `CLAUDE.md`, `STANDARDS.md`.
-
-Agents: `core-implementer`, `core-tester`.
+Voku's layout rules carry over verbatim: per-domain folders
+(`entities/ contracts/ enums/ errors/ types/ testing/`), one file per symbol, barrel
+`index.ts` per folder, subpath-only exports, specific `DomainError` subclasses, TSDoc as
+definition-of-done, money as integer cents, UTC `Date` in entities and ISO-8601 on the wire.
 
 **Purity is enforced structurally, not only by review.** Voku relies on the reviewer agent for
 core purity; there is no lint rule. Forge adds `no-restricted-imports` to
@@ -240,126 +217,144 @@ core purity; there is no lint rule. Forge adds `no-restricted-imports` to
 must also never name its consumers in TSDoc or comments — but import purity becomes a
 guarantee rather than a check that can be skipped.
 
-`nx-base` ships **no** `compose.yaml` and no `.env.example`; those belong to a stack.
+### 8.4 `apps/backend`
 
-### 7.3 `nest-nuxt` (deps: `nx-base`)
+NestJS: `src/{auth,users,common,db/migrations,health,i18n,mail}`, `Dockerfile`,
+`project.json`, jest config, `CLAUDE.md`, `STANDARDS.md` (with its review-dimension table).
 
-- `apps/backend` — NestJS: `src/{auth,common,db/migrations,health,i18n,users}`, `Dockerfile`,
-  `project.json`, jest config, `CLAUDE.md`, `STANDARDS.md` (with its review-dimension table).
-- `apps/webapp` — Nuxt 4: `app/{components,composables,fetchers,services,stores,pages,layouts,
-  locales,middleware,utils,types}`, Storybook (atoms/molecules/organisms), Tailwind, vitest,
-  `Dockerfile`, `CLAUDE.md`, `STANDARDS.md` (with its review-dimension table).
-- `libs/core/src/users/` — the core half of the Users slice (§8), added on top of nx-base's
-  `libs/core`. Layers overlay additively at file level, so this is a plain addition.
-- `compose.yaml` + `compose.prod.yaml` (workspace + postgres), `.env.example`.
-- Seam files: `package-map.md`, `stack-roster.md`, `toolchain.md`.
-- Agents: `backend-implementer`, `backend-tester`, `webapp-implementer`, `webapp-tester`.
-- `merge`: `package.json` (adds `dev:*`/`prod:*` scripts), `nx.json` (adds storybook target
-  defaults).
+### 8.5 `apps/webapp`
 
-### 7.4 `minimal` (deps: `nx-base`)
+Nuxt 4: `app/{components,composables,fetchers,services,stores,pages,layouts,locales,
+middleware,utils,types}`, Storybook (atoms/molecules/organisms), Tailwind, vitest,
+`Dockerfile`, `CLAUDE.md`, `STANDARDS.md` (with its review-dimension table).
 
-`apps/cli` — a plain TypeScript entrypoint with `tsx`/`tsup` and jest. No framework, no
-Docker, no Postgres. Its own `CLAUDE.md`/`STANDARDS.md` and the three seam files.
+## 9. Authentication and users — shipped in full
 
-**Accepted trade-off:** the `minimal` preset ships an empty `libs/core` and therefore no
-worked example of the core-first pattern. The Users slice lives entirely in `nest-nuxt`
-because a `User` entity and an `IUserService` conformance suite with no implementor would be
-dead weight in a CLI project. `minimal` is for scripts and tools, where the pattern is
-lighter; adding an example slice there is deliberately deferred.
+Every generated project starts with a complete, production-shaped authentication system as
+real, kept code. It is also the worked example of the core-first pattern: one contract in
+`libs/core`, implemented by both apps, checked by one conformance suite.
 
-## 8. The Users / auth slice
+### 9.1 Core (`libs/core/src/users/`)
 
-Real, kept code — not a throwaway example. Every application needs authentication, so nobody
-deletes it, which is exactly what makes it a durable worked example of the core-first flow.
+- **entities** — `User`
+- **contracts** — `IUserService`, `IAuthService`
+- **enums** — `UserRole` (`ADMIN | USER`), `UserStatus`
+  (`PENDING_VERIFICATION | ACTIVE | SUSPENDED | DELETED`)
+- **errors** — `UserNotFoundError`, `EmailAlreadyRegisteredError`, `InvalidCredentialsError`,
+  `EmailNotVerifiedError`, `AccountSuspendedError`, `TokenExpiredError`,
+  `TokenAlreadyUsedError`, `WeakPasswordError`
+- **types** — `UserJSON`, `CreateUserInput`, `UpdateUserInput`, `AuthTokens`, `JwtPayload`
+- **testing** — `runIUserServiceContract`, `runIAuthServiceContract`, fixtures
 
-**Core (`libs/core/src/users/`)** — `entities/User.ts`, `contracts/IUserService.ts`,
-`enums/UserRole.ts` (`USER | ADMIN`), `errors/*` (`UserNotFoundError`,
-`EmailAlreadyRegisteredError`, `InvalidCredentialsError`), `types/*` (`UserJSON`,
-`CreateUserInput`), `testing/runIUserServiceContract.ts` + fixtures. TSDoc on every export.
+`UserRole` ships as `ADMIN | USER` behind a `@Roles` guard, so adding a role is a one-line
+enum change rather than a new mechanism.
 
-**Backend** — `auth/` (JWT strategy, guards, decorators, login/register/refresh DTOs),
-`users/` implementing `IUserService`, the initial TypeORM migration, and a conformance test
-driving the core suite against the real service.
+### 9.2 Backend flows
 
-**Webapp** — `app/services/user.service.ts` implementing the *same* `IUserService` over HTTP,
-driven by the *same* conformance suite; `auth.fetcher.ts`, `useAuth` composable, auth store,
-login/register pages, route middleware.
+| Flow | Endpoints |
+|---|---|
+| Registration | `POST /auth/register`, `POST /auth/verify-email`, `POST /auth/resend-verification` |
+| Session | `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/logout-all` |
+| Password | `POST /auth/forgot-password`, `POST /auth/reset-password`, `PATCH /auth/change-password` |
+| Profile | `GET /users/me`, `PATCH /users/me`, `DELETE /users/me` |
+| Administration | `GET /users`, `GET /users/:id`, `PATCH /users/:id/role`, `PATCH /users/:id/status` |
+
+Mechanics: Passport `local`/`jwt`/`jwt-refresh` strategies; a globally-applied `JwtAuthGuard`
+with an explicit `@Public()` opt-out (secure by default — a new endpoint is protected unless
+it says otherwise); `RolesGuard` + `@Roles()`; `@CurrentUser()` decorator; argon2id password
+hashing; short-lived access tokens with **rotating refresh tokens**; `@nestjs/throttler` rate
+limiting on every auth endpoint.
+
+Security properties the implementation must hold, each covered by a test in §11:
+
+- Refresh tokens are **rotated on use**, persisted **hashed**, and revocable; presenting an
+  already-used refresh token **revokes the whole family** (reuse detection).
+- Verification and password-reset tokens are single-use, expiring, and stored hashed.
+- Login and forgot-password return **identical responses for unknown and known emails**, so
+  neither enumerates accounts.
+- An unverified or suspended account cannot obtain tokens.
+- Soft delete — `DELETE /users/me` sets `UserStatus.DELETED` and revokes all sessions.
+
+**Mail is an adapter, not a vendor.** `mail/` defines an `IMailer` port with a console/dev
+adapter shipped and wired. No third-party provider, no API keys, nothing to leak — a generated
+project picks its provider by writing one adapter.
+
+Migrations: initial TypeORM migration for `users`, `refresh_tokens`, `email_verification_tokens`,
+`password_reset_tokens`.
+
+### 9.3 Webapp
+
+`app/services/{user,auth}.service.ts` implement the *same* `IUserService`/`IAuthService` over
+HTTP, driven by the *same* core conformance suites. Plus `auth.fetcher.ts`/`users.fetcher.ts`,
+`useAuth`/`useCurrentUser` composables, a Pinia auth store with silent refresh, route
+middleware (`auth`, `guest`, `role`), pages for login, register, verify-email,
+forgot-password, reset-password, `account/profile` and `account/security`, the auth form
+components with Storybook stories, and `en` locale strings.
 
 That both apps implement one contract, checked by one suite, is the distinctive property of
-this architecture, and the slice exists primarily to demonstrate it.
+this architecture, and this slice exists to demonstrate it as much as to provide auth.
 
-**Stripped from Voku:** optional guest auth and guest tokens (Voku ADR-0004), event-scoped
-roles, and every domain-coupled auth path. `UserRole` is reduced to `USER | ADMIN` — a role
-enum is harder to add later than to delete.
+### 9.4 Explicitly deferred
 
-## 9. The generator
+Not shipped, listed so the boundary is visible rather than discovered later: OAuth/social
+login, TOTP/WebAuthn multi-factor, organizations/teams/multi-tenancy, per-resource
+permissions (beyond roles), audit logging, and account-linking.
+
+## 10. What the generated project looks like
 
 ```
-npm run create -- --name <kebab>
-                  [--title <s>] [--scope <@s>] [--description <s>]
-                  [--preset full|minimal|process] [--layers a,b,c]
-                  [--out <parent-dir>] [--into <existing-dir>]
-                  [--force] [--no-git] [--yes]
+my-app/
+├── CLAUDE.md, README.md, forge.json
+├── package.json, nx.json, tsconfig.base.json, eslint.config.base.mjs
+├── compose.yaml, compose.prod.yaml, .env.example
+├── .github/workflows/ci.yml
+├── .claude/agents/ (11), .claude/agent-memory/
+├── docs/{standards,adrs,rfcs,architecture,guides,concepts,api,superpowers}/
+├── libs/core/        → shared/ + users/ (entities, contracts, enums, errors, types, testing)
+└── apps/
+    ├── backend/      → auth, users, common, db/migrations, health, i18n, mail
+    └── webapp/       → auth pages, services, stores, composables, middleware, stories
 ```
 
-`--preset` and `--layers` are mutually exclusive. `--out` defaults to the current working
-directory; the target is `<out>/<name>`.
+`npm install && npm run dev:up` gives a running stack where you can register, verify, log in,
+refresh, and reset a password — with no domain code to delete first.
 
-Presets: `full` = process+nx-base+nest-nuxt · `minimal` = process+nx-base+minimal ·
-`process` = process alone (G2).
+## 11. Testing
 
-Zero runtime dependencies — `node:fs`, `node:path`, `node:readline/promises` on Node 22.
+**Unit** (`tools/create/__tests__/`) — token substitution (contents, paths, binary
+passthrough, unresolved-token failure), adopt-mode subset selection, and the never-overwrite
+rule.
 
-Pipeline:
+**Integration** (`tests/integration/`) — generate into a temp directory, assert the file
+inventory, then run `npm install && npm run lint && npm run typecheck && npm run test &&
+npm run build` *inside the generated repo*. If a generated repo cannot pass its own gates,
+forge is broken, and only running them proves otherwise.
 
-1. **Resolve** preset/layers → transitive closure → topological sort.
-2. **Prompt** for anything unanswered, including layer-declared prompts. `--yes` takes all
-   derivable defaults and fails on anything genuinely required.
-3. **Stage** into a temp directory — never the target. Copy in order, overwrite by default,
-   deep-merge the JSON files each incoming layer names.
-4. **Substitute** tokens in contents and paths; fail on any surviving `__FORGE_*__`.
-5. **Commit** — refuse a non-empty target unless `--force`; atomically rename temp → target.
-   A failed run leaves nothing behind, so there is never a half-generated repo to clean up.
-6. **Seal** — write `forge.json`, then `git init` + one initial commit unless `--no-git`.
-7. **Report** next steps.
-
-`--into <existing>` is the G2 path: it **never overwrites**. Existing files are skipped and
-listed in a closing report so you can merge them by hand.
-
-`forge.json` receipt — `{ forgeCommit, generatedAt, preset, layers[], tokens{} }`. All token
-values are non-secret by construction. It costs one line and keeps N3 possible later.
-
-Exit codes: `0` success · `1` validation error · `2` target conflict · `3` internal error.
-
-## 10. Testing
-
-**Unit** (`tools/create/__tests__/`) — the three pieces with real logic: topological sort
-(including cycle and missing-dependency detection), deep merge (table-driven across the three
-cases), token substitution (including binary passthrough and path substitution).
-
-**Integration** (`tests/integration/`) — for each preset: generate into a temp directory,
-assert the file inventory, then run `npm install && npm run lint && npm run typecheck &&
-npm run test && npm run build` *inside the generated repo*. If a generated repo cannot pass
-its own gates, forge is broken, and only running them proves otherwise.
-
-**Docker e2e** — for `full`: `docker compose up -d`, poll `/health` until 200, tear down.
-Gated behind `FORGE_E2E=1` so the default suite needs no Docker; CI sets it.
+**Docker e2e** — `docker compose up -d`, then drive the real flow against the running stack:
+register → verify → login → call a protected route → refresh → reuse the old refresh token
+(must fail) → forgot/reset password → login with the new password. Gated behind `FORGE_E2E=1`
+so the default suite needs no Docker; CI sets it.
 
 **Discriminating (negative) tests.** A green suite is not evidence on its own; each of these
 asserts a *failure* that must occur:
 
-| # | Injected fault | Must fail |
+| # | Injected fault / probe | Must fail |
 |---|---|---|
-| D1 | fixture layer containing an unresolved `__FORGE_MISSING__` token | generation, exit 1 |
-| D2 | `import { Repository } from 'typeorm'` added to `libs/core/src/shared/` in a generated repo | `npm run lint` |
+| D1 | fixture containing an unresolved `__FORGE_MISSING__` token | generation, exit 1 |
+| D2 | `import { Repository } from 'typeorm'` added to `libs/core/src/` | `npm run lint` |
 | D3 | an assertion removed from the `IUserService` conformance suite | the backend conformance test |
-| D4 | two layers both defining `scripts.test`, plus nx-base-only scripts | merge must keep the nx-base-only scripts *and* let the later `test` win — proves merge ≠ overwrite |
-| D5 | `grep -ri voku layers/ tools/` | must return zero hits (G4) |
+| D4 | adopt mode run against a repo with an existing `CLAUDE.md` | must skip it, leaving bytes identical |
+| D5 | `grep -ri voku template/ tools/` | must return zero hits (G4) |
+| D6 | a new endpoint added with no decorator | must be **401 without a token** — proves the global guard, not a per-route habit |
+| D7 | login with a known email + wrong password vs. an unknown email | responses must be indistinguishable |
+| D8 | a refresh token presented twice | second use rejected **and** the family revoked |
 
-CI: unit + integration on every push; the Docker matrix on PRs.
+D6–D8 exist because auth that compiles and returns 200 on the happy path is not auth that
+works; these are the assertions that would actually catch a regression.
 
-## 11. Extraction procedure
+CI: unit + integration on every push; the Docker e2e matrix on PRs.
+
+## 12. Extraction procedure
 
 Voku is read-only throughout (N1).
 
@@ -367,34 +362,36 @@ Voku is read-only throughout (N1).
    excludes `node_modules/`, `dist/`, `coverage/`, `.git/`, `.nx/`, `storybook-static/`, and
    any `.env`, rather than relying on ignore patterns to catch them.
 2. Generalize: strip Voku domain code and naming; replace `@voku/*` and `Voku` with
-   `__FORGE_SCOPE__`/`__FORGE_TITLE__`; rewrite the four convention ADRs; split agents by layer;
-   rewrite `reviewer` for table-driven dimension discovery; extract the seam files.
-3. **Sanitization gate before the first content commit** — grep the staged layers for
-   `sk_`, `pk_live`, `SECRET=`, `PASSWORD=`, `BEGIN .* PRIVATE KEY`, and `voku` (case
-   insensitive). All must return zero hits. This is D5, run as a gate rather than only a test.
-4. **Verify the constraint:** `git -C ~/Progetti/Voku status --porcelain` must be empty, and
+   `__FORGE_SCOPE__`/`__FORGE_TITLE__`; rewrite the four convention ADRs; rewrite `reviewer`
+   for table-driven dimension discovery.
+3. **Extend** Voku's auth into the full system in §9. Voku's auth is the starting point, not
+   the destination: its optional-guest-auth and guest-token paths (ADR-0004) and any
+   event-scoped roles are removed, and verification, password reset, refresh rotation with
+   reuse detection, throttling, and the mail port are added.
+4. **Sanitization gate before the first content commit** — grep the staged template for `sk_`,
+   `pk_live`, `SECRET=`, `PASSWORD=`, `BEGIN .* PRIVATE KEY`, and `voku` (case-insensitive).
+   All must return zero hits. This is D5, run as a gate rather than only as a test.
+5. **Verify the constraint:** `git -C ~/Progetti/Voku status --porcelain` must be empty and
    `git -C ~/Progetti/Voku rev-parse HEAD` must still be `fdfdbde`.
 
-## 12. Deltas from the approved outline
+## 13. Changes from v1
 
-Four changes surfaced while specifying, all flagged rather than made silently:
+1. **The layer system is gone** (N2). No `layers/`, manifests, `dependsOn`, topological sort,
+   presets, or JSON deep-merge. One `template/` tree, copied wholesale.
+2. **Seam files are gone.** They existed only to avoid merging prose across layers. The root
+   `CLAUDE.md`, the playbook, and the agents README now state the package table directly.
+3. **No `minimal` variant** (N3). The template is always the full NestJS + Nuxt monorepo.
+4. **Auth ships in full** (§9) rather than as a reduced `USER | ADMIN` slice — verification,
+   password reset, refresh rotation with reuse detection, throttling, admin user management,
+   and a mail port.
+5. **Adopt mode replaces the `process` preset** as the way to satisfy G2, via a declared path
+   list rather than a layer.
+6. **Retained from v1:** `__FORGE_*__` token namespacing, staging + atomic rename, the
+   `forge.json` receipt, structural core-purity lint, table-driven reviewer dimensions, and
+   the discriminating-test discipline (now extended with D6–D8 for auth).
 
-1. **No YAML merging.** `compose.yaml` is wholly owned by the stack layer (only ever one is
-   selected), and `nx-base` ships none. `merge` is restricted to JSON. This removes the only
-   thing that would have forced a dependency. Merge still earns its place for
-   `package.json`/`nx.json` (§6.3).
-2. **Seam files introduced** (§6.5) — needed because the root `CLAUDE.md`, the playbook, and
-   the agents README all contain stack-specific content in otherwise stable process files.
-   `toolchain.md` additionally removes hardcoded commands from `closer` and the testers.
-3. **The Users slice lives entirely in `nest-nuxt`**, not split into `nx-base`, so `minimal`
-   does not inherit a contract with no implementor (§7.4).
-4. **Core purity gains a lint rule** (§7.2), upgrading Voku's review-only check to a
-   structural guarantee. The prose-level reviewer dimension stays, since lint cannot read
-   TSDoc intent.
-
-## 13. Deferred
+## 14. Deferred
 
 - `forge update` / drift detection (receipt written, tooling not built).
-- A third stack layer.
-- An example slice for `minimal`.
+- The auth features listed in §9.4.
 - Publishing forge to a remote or to npm.
