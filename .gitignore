@@ -2,3 +2,8 @@ node_modules/
 dist/
 .DS_Store
 .superpowers/
+template/**/node_modules/
+template/**/dist/
+template/**/.nuxt/
+template/**/.output/
+template/**/coverage/
