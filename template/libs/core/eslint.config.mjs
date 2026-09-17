@@ -8,11 +8,11 @@ import houseStyle from '../../eslint.config.base.mjs';
  * item that can be skipped.
  */
 const FRAMEWORK_PACKAGES = [
-  'typeorm', 'typeorm/*',
-  '@nestjs/*',
-  'nuxt', 'nuxt/*', 'vue', 'vue/*', 'pinia',
-  '@prisma/*',
-  '@simplewebauthn/*',
+  'typeorm', 'typeorm/**',
+  '@nestjs/**',
+  'nuxt', 'nuxt/**', 'vue', 'vue/**', 'pinia',
+  '@prisma/**',
+  '@simplewebauthn/**',
   'otplib', 'express', 'argon2', 'bcrypt', 'jsonwebtoken',
 ];
 
@@ -33,6 +33,19 @@ export default tseslint.config(
           message: 'libs/core is framework-agnostic — no framework or runtime-specific imports.',
         }],
       }],
+      // no-restricted-imports only sees STATIC import/export declarations.
+      // Without these, `await import('typeorm')` and `require('typeorm')` walk
+      // straight past it, and the "structurally unreachable" claim is false.
+      'no-restricted-syntax': ['error',
+        {
+          selector: 'ImportExpression[source.value=/^(typeorm|@nestjs|nuxt|vue|pinia|@prisma|@simplewebauthn|otplib|express|argon2|bcrypt|jsonwebtoken)($|\\u002f)/]',
+          message: 'libs/core is framework-agnostic — no dynamic import of framework packages.',
+        },
+        {
+          selector: 'CallExpression[callee.name="require"]',
+          message: 'libs/core is framework-agnostic and ESM-only — require() is not permitted.',
+        },
+      ],
     },
   },
   {

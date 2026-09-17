@@ -61,8 +61,8 @@ its public `__FORGE_SCOPE__/core/*` subpath — never via relative paths into `s
 
 | ID | Check | Signal | Severity | Source |
 |----|-------|--------|----------|--------|
-| K1 | No framework or runtime imports | `npx nx run core:lint` reports `@typescript-eslint/no-restricted-imports` | blocking | STANDARDS.md — Framework purity |
-| K2 | No transport vocabulary in prose | `npm run purity -w libs/core` exits non-zero | blocking | STANDARDS.md — Framework purity |
+| K1 | No framework or runtime imports — static, dynamic, or `require` | `npx nx run core:lint` reports `@typescript-eslint/no-restricted-imports` or `no-restricted-syntax` | blocking | STANDARDS.md — Framework purity |
+| K2 | No transport vocabulary in prose, including camelCase/PascalCase compounds (URLs exempted, not whole lines) | `npm run purity -w libs/core` exits non-zero | blocking | STANDARDS.md — Framework purity |
 | K3 | Service contracts are `I`-prefixed | `grep -rn "export interface [^I]" src/*/contracts/` | blocking | STANDARDS.md — I-prefix contracts |
 | K4 | Contracts speak in entities, not DTOs | review `src/*/contracts/*.ts` for shapes that are neither an entity, a create-input type, nor a JSON wire shape | blocking | STANDARDS.md — Entities, not DTOs |
 | K5 | TSDoc on every export | `grep -rnB1 "^export " src/ \| grep -v "\*/"` | blocking | STANDARDS.md — TSDoc is definition-of-done |
