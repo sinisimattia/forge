@@ -12,6 +12,7 @@ name: CI
 #                         currently fails and doesn't yet block the PR.
 #   - docker:             PR-only and slowest. Boots the generated stack for real and checks
 #                         `/health`.
+#   - lockfile-refresh:   scheduled only (weekly), never on push/PR. See its own comment below.
 #
 # Forge ships zero runtime and zero test dependencies (ADR-0002), so there is no lockfile and
 # no `npm install`/`npm ci` step for forge's own package.json — there is nothing to install.
@@ -25,6 +26,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Weekly, Monday 06:00 UTC. `template/package-lock.json` pins the generated-project
+    # dependency graph as of the day it was last refreshed — that is the whole point of
+    # shipping it, but it also means it goes stale the moment anything it pins gets a new
+    # release. A stale-but-still-installable lockfile fails silently: `npm ci` keeps
+    # succeeding against old versions forever, so nothing in the PR-tier jobs above would
+    # ever notice drift building back up. This job re-resolves the lockfile from scratch on
+    # a schedule so that drift is caught here, by forge, before it reaches a user who
+    # generates a project on a bad day — see the `lockfile-refresh` job below.
+    - cron: '0 6 * * 1'
 
 # Least privilege by default — none of these jobs need to write anything.
 permissions:
@@ -33,6 +44,9 @@ permissions:
 jobs:
   unit:
     name: unit (sanitize + generator tests)
+    # Push/PR only — the schedule trigger exists solely to drive `lockfile-refresh` below,
+    # not to re-run the ordinary push/PR tiers against an unchanged commit.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -62,15 +76,17 @@ jobs:
   # invokes, so a broken story would otherwise pass every check — this job is the only
   # thing that exercises it.
   #
-  # NON-BLOCKING for now: on a vanilla generated project this currently fails with
-  # `[vite:build-html] Missing field 'moduleType'` while building iframe.html — unrelated
-  # to story content. Root cause: the template ships no package-lock.json, so each
-  # generated project resolves the Storybook/Vite chain fresh and drifts from the
-  # combination that is known to work (builder-vite 9.1.2 / vue3-vite 9.1.2). The job still
-  # runs and surfaces the error; flip `continue-on-error` off once the template pins its
-  # dependencies. The cause is the *template*'s missing lockfile, not the generator's own
-  # dependency-freedom (ADR-0002 is about the latter) — see the README's "Generated projects
-  # are not reproducible" bullet under Known limitations.
+  # NON-BLOCKING for now, and NOT because of a missing lockfile: `template/package-lock.json`
+  # was added (see docs/superpowers/lockfile-report.md) and pins the exact combination once
+  # believed to be the fix (@storybook/builder-vite@9.1.2, @storybook/vue3-vite@9.1.2,
+  # @rolldown/pluginutils@1.0.1). Installing with `npm ci` against that lockfile still
+  # produces the identical failure: `[vite:build-html] Missing field 'moduleType'` while
+  # building iframe.html — unrelated to story content. That disproves the earlier
+  # dependency-drift hypothesis recorded in docs/superpowers/phase-1-decision-log.md: the
+  # exact same resolved versions fail with or without the lockfile. Root cause is unknown.
+  # Leave this non-blocking until it is actually root-caused — do not flip
+  # `continue-on-error` off just because a lockfile now exists, and do not re-attribute the
+  # failure to "no lockfile" again without re-testing. See the README's "Known limitations".
   storybook:
     name: template Storybook build (PR-tier; slow, not part of the fast unit push job)
     needs: unit
@@ -85,9 +101,9 @@ jobs:
           node-version: 22
       - name: Generate a throwaway project
         run: npm run create -- --name storybookapp --out "$RUNNER_TEMP" --yes --no-git
-      - name: Install the generated project's dependencies
+      - name: Install the generated project's dependencies from its committed lockfile
         working-directory: ${{ runner.temp }}/storybookapp
-        run: npm install
+        run: npm ci
       - name: Build Storybook (a separate nx target that `nx run-many -t build` never invokes)
         working-directory: ${{ runner.temp }}/storybookapp
         run: npx nx run webapp:build-storybook
@@ -106,3 +122,32 @@ jobs:
       - run: npm run test:integration
         env:
           FORGE_E2E: '1'
+
+  # Scheduled only (see the `schedule:` trigger's comment at the top of this file). This is
+  # the condition that makes shipping a lockfile sound rather than a slow-motion staleness
+  # problem: `template/package-lock.json` records dependency resolution as of the day it was
+  # generated, and nothing about a normal push/PR ever re-resolves it from scratch, so drift
+  # could rebuild silently for months and only surface the day someone happens to delete
+  # node_modules and reinstall, or the day the pinned versions stop being mirrored. This job
+  # regenerates the lockfile for real (`npm run refresh-lockfile`, which works around
+  # `template/`'s own package.json files not being installable directly — see that script's
+  # comment) and runs the same gate a PR would (`npm run test:integration`) against the
+  # result. It deliberately does NOT commit the regenerated lockfile — a red run here is the
+  # signal a human needs to look, not something to silently paper over with an auto-commit
+  # that could just as easily land a broken lockfile on `main` unattended. On failure, a
+  # human runs `npm run refresh-lockfile` locally, reviews the diff, fixes whatever broke,
+  # and commits it themselves.
+  lockfile-refresh:
+    name: weekly lockfile drift check (schedule-only; never commits)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Regenerate template/package-lock.json from scratch
+        run: npm run refresh-lockfile
+      - name: Run the generated-project gate against the regenerated lockfile
+        run: npm run test:integration
