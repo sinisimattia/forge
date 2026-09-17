@@ -1304,7 +1304,9 @@ V=~/Progetti/Voku
 T=~/Progetti/forge/template
 mkdir -p "$T/docs/adrs"
 cp "$V/docs/adrs/0000-template.md" "$T/docs/adrs/0000-template.md"
-cp "$V/docs/adrs/README.md" "$T/docs/adrs/README.md"
+# NOTE: do NOT copy Voku's docs/adrs/README.md — its index lists all 18 of that
+# project's real ADRs (Stripe, refunds, guest auth), which is itself a major trace.
+# Write a fresh README.md indexing only the five template ADRs (0000 + 0001-0004).
 ```
 
 Then write four ADRs, each following `0000-template.md`'s structure, each sourced from the Voku ADR named below but rewritten as a **template default the project inherits and may supersede** — not as a decision someone else made about a different product:
