@@ -80,7 +80,13 @@ Not present yet (Phase 2): `app/components/{molecules,organisms,templates}/`,
   `NUXT_PUBLIC_API_BASE`) and `runtimeConfig.apiBaseServer` (from `NUXT_API_BASE_SERVER`,
   used by SSR inside the Docker network); `@nuxtjs/tailwindcss`, `@nuxt/eslint`,
   `@nuxtjs/i18n` modules; components auto-import from `~/components/atoms` without a path
-  prefix.
+  prefix; `typescript.tsConfig.compilerOptions` re-states `noUnusedLocals`/
+  `noUnusedParameters`/`noImplicitReturns`. **This package's TypeScript strictness comes
+  from `nuxt.config.ts`, not from `../../tsconfig.base.json`** — Nuxt generates its own
+  `.nuxt/tsconfig.*.json` and never extends the monorepo base config (see
+  `apps/webapp/tsconfig.json`'s own comment). If you tighten `tsconfig.base.json`, this
+  package will not pick it up automatically — update `nuxt.config.ts`'s `typescript` block
+  to match.
 - `app/app.vue` — `<NuxtLayout><NuxtPage /></NuxtLayout>`, nothing else.
 - `app/pages/index.vue` — renders the translated home title/subtitle via `useI18n` and
   sets the page title via `useHead`.

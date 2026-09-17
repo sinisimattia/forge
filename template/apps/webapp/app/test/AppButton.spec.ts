@@ -26,4 +26,16 @@ describe('AppButton', () => {
     const wrapper = mount(AppButton, { props: { disabled: true } });
     expect(wrapper.attributes('disabled')).toBeDefined();
   });
+
+  it('is not disabled by default', () => {
+    // Without this, an implementation that hardcodes :disabled="true" passes the suite.
+    const wrapper = mount(AppButton);
+    expect(wrapper.attributes('disabled')).toBeUndefined();
+  });
+
+  it('does not apply primary classes to the secondary variant', () => {
+    // Without this, an implementation that applies both class sets passes the suite.
+    const wrapper = mount(AppButton, { props: { variant: 'secondary' } });
+    expect(wrapper.classes()).not.toContain('bg-slate-900');
+  });
 });

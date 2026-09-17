@@ -17,6 +17,12 @@ import { vi } from 'vitest';
  * `@vue/test-utils` works without touching production code.
  *
  * Call this in a `beforeEach`, and pair it with `vi.unstubAllGlobals()` in `afterEach`.
+ *
+ * This only stubs the globals this skeleton's components happen to use today. If you
+ * unit-test a component/page that calls a Nuxt auto-import not listed here (`useHead`,
+ * `useRuntimeConfig`, and `navigateTo` are likely the next ones — `index.vue` already
+ * calls `useHead`), add it as another `vi.stubGlobal(...)` line rather than working
+ * around the missing global in the test.
  */
 export function stubNuxtAutoImports(): void {
   vi.stubGlobal('ref', ref);

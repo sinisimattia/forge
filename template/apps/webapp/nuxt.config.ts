@@ -37,6 +37,18 @@ export default defineNuxtConfig({
 
   typescript: {
     strict: true,
+    // Nuxt generates its own tsconfigs (.nuxt/tsconfig.*.json) and does not extend
+    // ../../tsconfig.base.json, so these three are re-stated here to keep the webapp at
+    // the same strictness as apps/backend and libs/core, which do extend it. Without
+    // this, an unused local/parameter or an inconsistent return type passes
+    // `nx typecheck webapp` while identical code fails in the other two packages.
+    tsConfig: {
+      compilerOptions: {
+        noUnusedLocals: true,
+        noUnusedParameters: true,
+        noImplicitReturns: true,
+      },
+    },
   },
 
   // Atomic Design layers register without a path prefix (AppButton, not

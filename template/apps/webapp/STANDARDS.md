@@ -82,6 +82,10 @@ them.
   **only** when no atom fits: it holds a template `ref`/`id` consumed as a DOM element, it
   is an SFC/app root where wrapping adds nothing (as in `app.vue`), or it is a pure
   positioning/`relative`/`absolute`/`overflow` shim — add a short comment explaining why.
+- **Exception — the generated placeholder page.** `app/pages/index.vue` ships raw
+  `h1`/`p` and is exempt from this rule. It exists to prove the app renders and is meant
+  to be deleted when you build your first real page. Do not treat it as the pattern to
+  copy; every page you write composes from atoms.
 - **CSS-only-in-atoms:** raw CSS — `<style>`/`<style scoped>` blocks and inline
   `style=""` / `:style` bindings — appears **exclusively inside atoms**. Everywhere else,
   style only through Tailwind utility classes and atom props — never raw CSS. Global
@@ -185,11 +189,11 @@ only locale) is in `docs/standards/i18n.md`. The Nuxt-specific mechanics:
 
 | ID | Check | Signal | Severity | Source |
 |----|-------|--------|----------|--------|
-| W1 | Component sits at the right atomic level | a `.vue` under `components/` whose imports contradict its level | blocking | STANDARDS.md — Atomic design |
-| W2 | Components never call fetchers directly | `grep -rn "fetcher" app/components/` | blocking | STANDARDS.md — fetcher → composable → component |
-| W3 | Tailwind tokens only, no arbitrary values | `grep -rnE "\[[0-9]+px\]" app/` | warning | STANDARDS.md — Tailwind tokens |
-| W4 | No `any` or `never` escapes | `grep -rnE ": (any\|never)\b" app/` | blocking | `docs/standards/typing.md` |
+| W1 | Component sits at the right atomic level | `grep -rnE "from ['\"]~/components/(molecules\|organisms\|templates)" app/components/atoms/`; `grep -rnE "from ['\"]~/components/(organisms\|templates)" app/components/molecules/`; `grep -rnE "from ['\"]~/components/templates" app/components/organisms/` — any hit is a layer importing from a level the Atomic Design table forbids it | blocking | STANDARDS.md — Atomic design |
+| W2 | Components never call fetchers directly | `grep -rnE '\$fetch\(\|useFetch\(\|useAsyncData\(\|from .~?/?fetchers/' app/components/` | blocking | STANDARDS.md — fetcher → composable → component |
+| W3 | Tailwind tokens only, no arbitrary values | `grep -rnE '\b[a-z][a-z0-9-]*-\[[^]]+\]' app/` | warning | STANDARDS.md — Tailwind tokens |
+| W4 | No `any` or `never` escapes | `grep -rnE '\b(as\|:)\s*(any\|never)\b\|<any>' app/` | blocking | `docs/standards/typing.md` |
 | W5 | Every component has a story | a `.vue` under `components/` with no matching `stories/**/*.stories.ts` | warning | STANDARDS.md — Storybook |
-| W6 | UI strings are translated, never inline | `grep -rnE ">[A-Z][a-z]+ " app/**/*.vue` | blocking | `docs/standards/i18n.md` |
-| W7 | SSR pages set title and meta | a changed `pages/**/*.vue` with no `useHead`/`useSeoMeta` | warning | STANDARDS.md — SEO |
-| W8 | Interactive elements are reachable and labelled | `grep -rn "@click" app/**/*.vue` on a non-button element | blocking | STANDARDS.md — Accessibility |
+| W6 | UI strings are translated, never inline. **Signal is a broad heuristic — read every hit and judge it; do not treat a match as a violation automatically.** It intentionally over-surfaces (over-surfacing beats missing a real one); it correctly skips `{{ }}` i18n interpolations since `{`/`}` fall outside the scanned run | `grep -rnE '>[^<>{}]*[A-Za-z]{2,}[^<>{}]*<' app/ --include=*.vue` | blocking | `docs/standards/i18n.md` |
+| W7 | SSR pages set title and meta | `grep -rLE "useHead\|useSeoMeta" app/pages/ --include=*.vue` (lists changed pages with neither call) | warning | STANDARDS.md — SEO |
+| W8 | Interactive elements are reachable and labelled | `grep -rn "@click" app/**/*.vue` then check the matched tag is not `button`/`a` (a `<button>`/`<a>` hit is not a violation) | blocking | STANDARDS.md — Accessibility |
