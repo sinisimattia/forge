@@ -135,10 +135,13 @@ token substitution.
 
 - **unit** — every push and PR: `npm run sanitize` (must run first — it's the cheapest gate
   and the one that catches an extraction mistake), then `npm test`.
-- **generated-project** and **storybook** — PR-only: generate a real project and run its own
-  gates (`npm run test:integration`), and separately build the template's Storybook
-  (`nx run webapp:build-storybook`, a target `nx run-many -t build` never invokes on its
-  own, so it needs its own step to be exercised at all).
+- **generated-project** — PR-only: generate a real project and run its own gates (`npm run
+  test:integration`).
+- **storybook** — PR-only, and currently **non-blocking** (`continue-on-error: true`):
+  builds the template's Storybook (`nx run webapp:build-storybook`, a target `nx run-many
+  -t build` never invokes on its own, so it needs its own step to be exercised at all). It
+  is not yet a hard gate because it currently fails for a known, pre-existing reason — see
+  "Known limitations" below.
 - **docker** — PR-only and slowest: `npm run test:integration` with `FORGE_E2E=1`, which
   boots the generated stack for real and asserts `/health` returns `{"status":"ok"}`.
 
@@ -159,6 +162,19 @@ explicit `npm install`.
   reference in that file would ship silently today. Validating it would need a YAML parser,
   which conflicts with the zero-dependency constraint (`docs/adrs/0002-dependency-free-generator.md`)
   — this is accepted as a known gap rather than an oversight.
+- **Generated projects are not reproducible — the template ships no `package-lock.json`.**
+  Every `npm install` inside a generated project resolves each dependency's version range
+  fresh, against whatever is newest on the registry that day, rather than against a set of
+  versions known to work together. The first observed casualty of this is the template's
+  own Storybook: it fails on a plain, freshly generated project with
+  `[vite:build-html] Missing field 'moduleType'` while building `iframe.html` — a
+  Storybook/Vite version-resolution mismatch, unrelated to any story's content. The CI
+  `storybook` job runs this build and surfaces the failure, but is currently
+  `continue-on-error: true` (non-blocking) precisely because the cause is this drift, not a
+  regression to fix per-PR. Whether the template should ship a lockfile to pin its
+  dependency graph is a real trade-off (reproducible builds vs. one more file for the
+  generator to keep in sync and one more thing extraction has to regenerate) and is an open
+  decision, not yet made.
 - **No drift/update tooling.** A generated project's `forge.json` records the Forge commit
   it was generated from, so re-syncing against a newer template stays *possible*, but no
   tooling to do it exists yet (`docs/adrs/0003-extraction-is-copy-out-only.md`).
