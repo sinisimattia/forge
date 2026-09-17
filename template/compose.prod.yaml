@@ -1,0 +1,111 @@
+# __FORGE_TITLE__ production images — build + run the prod targets:  npm run prod:up
+#
+# This runs the REAL production build (compiled backend, Nitro webapp output) on your
+# machine, so a fresh clone can smoke-test what gets deployed. It is a local harness,
+# not a deployment: every credential below must be supplied by the environment (no
+# defaults) so this file can never silently fall back to a dev credential.
+#
+# Schema migrations run automatically via the one-shot `migrate` service.
+
+# Backend image, shared by the `migrate` one-shot and the long-running `backend` service.
+# Both reference one image tag so it is built once.
+x-backend-image: &backend-image
+  build:
+    context: .
+    dockerfile: apps/backend/Dockerfile
+    target: prod
+  image: __FORGE_NAME__-backend:local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: ${POSTGRES_DB:?required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:?required} -d ${POSTGRES_DB:?required}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: applies TypeORM migrations, then exits. `backend` waits for it to succeed.
+  migrate:
+    <<: *backend-image
+    restart: 'no'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@postgres:5432/${POSTGRES_DB:?required}
+    command: ['npm', 'run', 'migration:run:prod']
+
+  backend:
+    <<: *backend-image
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - '3000:3000'
+    # NOTE: `environment:` takes precedence over `env_file:`, so these pinned values win
+    # over anything in apps/backend/.env.
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@postgres:5432/${POSTGRES_DB:?required}
+      PORT: '3000'
+      CORS_ORIGIN: http://localhost:3001
+    env_file:
+      - path: apps/backend/.env
+        required: false
+    # The slim runtime images ship no curl; Node 22 has a global fetch.
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  webapp:
+    build:
+      context: .
+      dockerfile: apps/webapp/Dockerfile
+      target: prod
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - '3001:3000'
+    environment:
+      NODE_ENV: production
+      NUXT_PUBLIC_API_BASE: http://localhost:3000
+      # SSR runs inside this container, where `localhost` is not the backend.
+      # Reach it over the compose network instead (container-internal port is fixed at 3000).
+      NUXT_API_BASE_SERVER: http://backend:3000
+      NUXT_PUBLIC_APP_NAME: __FORGE_TITLE__
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  pgdata:

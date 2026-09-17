@@ -1,0 +1,33 @@
+{
+  "name": "__FORGE_NAME__",
+  "version": "0.0.0",
+  "private": true,
+  "description": "__FORGE_DESCRIPTION__",
+  "workspaces": ["apps/*", "libs/*"],
+  "scripts": {
+    "build": "nx run-many -t build",
+    "test": "nx run-many -t test",
+    "lint": "nx run-many -t lint",
+    "typecheck": "nx run-many -t typecheck",
+    "affected": "nx affected -t lint test build typecheck",
+    "dev:up": "docker compose up --build",
+    "dev:down": "docker compose down",
+    "dev:reset": "docker compose down -v",
+    "dev:build": "docker compose build",
+    "dev:logs": "docker compose logs -f",
+    "dev:migrate": "docker compose exec backend npm run migration:run -w apps/backend",
+    "prod:build": "docker compose -f compose.prod.yaml build",
+    "prod:up": "docker compose -f compose.prod.yaml up --build",
+    "prod:down": "docker compose -f compose.prod.yaml down"
+  },
+  "devDependencies": {
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "nx": "^21.2.0"
+  },
+  "overrides": {
+    "@nuxt/schema": "4.4.8"
+  },
+  "engines": {
+    "node": ">=22 <23"
+  }
+}

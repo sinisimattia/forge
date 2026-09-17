@@ -1,0 +1,97 @@
+# __FORGE_TITLE__ dev environment — whole stack, one command:  npm run dev:up
+# (backend + webapp + postgres, all on Node 22 inside containers)
+#
+# Host-published ports are configurable via a root `.env` file (see `.env.example`);
+# the values here are the fallbacks. Only the host side changes — container-internal
+# ports stay fixed.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    environment:
+      POSTGRES_USER: __FORGE_NAME__
+      POSTGRES_PASSWORD: __FORGE_NAME__
+      POSTGRES_DB: __FORGE_DB_NAME__
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U __FORGE_NAME__ -d __FORGE_DB_NAME__']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+      target: dev
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '${BACKEND_PORT:-3000}:3000'
+      - '${BACKEND_DEBUG_PORT:-9229}:9229'
+    # NOTE: `environment:` takes precedence over `env_file:`, so these pinned values win
+    # over anything in apps/backend/.env.
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://__FORGE_NAME__:__FORGE_NAME__@postgres:5432/__FORGE_DB_NAME__
+      PORT: '3000'
+      CORS_ORIGIN: http://localhost:${WEBAPP_PORT:-3001}
+    env_file:
+      - path: apps/backend/.env
+        required: false
+    # `nest start --watch` keeps the tsc watcher alive even when Nest fails to bootstrap,
+    # so without this the container reports "Up" while the API is dead. Long start_period:
+    # the first in-container compile takes a while.
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/apps/backend/node_modules
+      - /app/apps/webapp/node_modules
+      - /app/.nx
+
+  webapp:
+    build:
+      context: .
+      dockerfile: apps/webapp/Dockerfile
+      target: dev
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - '${WEBAPP_PORT:-3001}:3001'
+    environment:
+      NODE_ENV: development
+      NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-http://localhost:3000}
+      # SSR runs inside this container, where `localhost` is not the backend.
+      # Reach it over the compose network instead (container-internal port is fixed at 3000).
+      NUXT_API_BASE_SERVER: http://backend:3000
+      NUXT_PUBLIC_APP_NAME: __FORGE_TITLE__
+    env_file:
+      - path: apps/webapp/.env
+        required: false
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/apps/backend/node_modules
+      - /app/apps/webapp/node_modules
+      - /app/.nx
+
+volumes:
+  pgdata:

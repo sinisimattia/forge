@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege by default; `verify` widens it below.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    # nx-set-shas queries the workflow-runs API to find the last successful run,
+    # which needs `actions: read`. The repo default is contents-only, so without
+    # this the action fails with "Resource not accessible by integration".
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: package.json
+          cache: npm
+      - run: npm ci
+      - uses: nrwl/nx-set-shas@v5
+      - name: Lint, typecheck, test, build (affected)
+        run: npx nx affected -t lint typecheck test build --base=$NX_BASE --head=$NX_HEAD
+
+  docker:
+    runs-on: ubuntu-latest
+    env:
+      # CI-only placeholders for the disposable smoke-test stack. Never used by a real deploy.
+      POSTGRES_USER: ci
+      POSTGRES_PASSWORD: ci-only-placeholder
+      POSTGRES_DB: ci
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build production images
+        run: docker compose -f compose.prod.yaml build
+      # Building is not enough: a prod-only misconfiguration (missing runtime assets,
+      # unset secrets, unmigrated schema) only shows up when the images actually run.
+      - name: Start the production stack
+        run: docker compose -f compose.prod.yaml up -d --wait
+      - name: Smoke-test the running stack
+        run: |
+          curl -fsS http://localhost:3000/health
+          curl -fsS -o /dev/null http://localhost:3001/
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose -f compose.prod.yaml logs --no-color
+      - name: Tear down
+        if: always()
+        run: docker compose -f compose.prod.yaml down -v

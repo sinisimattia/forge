@@ -1,0 +1,17 @@
+node_modules/
+.nx/
+dist/
+coverage/
+.output/
+.nuxt/
+storybook-static/
+*.log
+.DS_Store
+
+# Local env files (real values); templates (.env.example) are committed
+.env
+.env.*
+!.env.example
+
+# Claude Code local state
+**/scheduled_tasks.lock

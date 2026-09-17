@@ -1,0 +1,20 @@
+root = true
+
+# Whitespace conventions shared with every editor across the monorepo.
+# Code style (semicolons, quotes, commas, line width) is owned by ESLint —
+# see eslint.config.base.mjs.
+[*]
+indent_style = space
+indent_size = 2
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.md]
+trim_trailing_whitespace = false
+
+# The backend historically used tabs in its package.json; keep JSON on spaces
+# now that the whole repo is unified.
+[*.json]
+indent_size = 2

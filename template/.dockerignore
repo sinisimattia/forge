@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+dist
+**/dist
+.nx
+.nuxt
+**/.nuxt
+.output
+**/.output
+coverage
+**/coverage
+storybook-static
+**/storybook-static
+.git
+*.log
+.DS_Store
