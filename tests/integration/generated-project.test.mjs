@@ -39,7 +39,7 @@ test('a generated project passes every gate it ships with', async (t) => {
     await run('npm', ['run', 'build'], { cwd: project, maxBuffer: 64 * 1024 * 1024 });
   });
   await t.test('core purity', async () => {
-    await run('npm', ['run', 'purity', '-w', 'libs/core'], { cwd: project });
+    await run('npm', ['run', 'purity', '-w', 'libs/core'], { cwd: project, maxBuffer: 64 * 1024 * 1024 });
   });
 });
 
@@ -60,6 +60,14 @@ test('a generated project contains the whole process layer', async () => {
   }
   const agents = await fs.readdir(path.join(project, '.claude/agents'));
   assert.equal(agents.length, 12, 'expected 11 agents plus a README');
+
+  // `nx run-many` is checked elsewhere only by exit code, which stays 0 even if a
+  // future template edit silently breaks project discovery for one package (a
+  // shrinking gate that still reports green). Assert all three are actually found.
+  const { stdout: projects } = await run('npx', ['nx', 'show', 'projects'], { cwd: project });
+  for (const name of ['core', 'backend', 'webapp']) {
+    assert.ok(projects.includes(name), `nx did not discover the ${name} project`);
+  }
 });
 
 // D5 — no trace of the project the template was extracted from

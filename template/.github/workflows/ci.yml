@@ -37,7 +37,7 @@ jobs:
     env:
       # CI-only placeholders for the disposable smoke-test stack. Never used by a real deploy.
       POSTGRES_USER: ci
-      POSTGRES_PASSWORD: ci-only-placeholder
+      POSTGRES_PASSWORD: ci-only-placeholder  # sanitize:allow — throwaway CI container, never a real credential
       POSTGRES_DB: ci
     steps:
       - uses: actions/checkout@v7
