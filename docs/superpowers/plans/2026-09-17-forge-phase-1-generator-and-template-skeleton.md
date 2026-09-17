@@ -1303,14 +1303,17 @@ done
 
 - [ ] **Step 2: Apply the mechanical renames**
 
+**Use `perl`, not `sed`.** BSD `sed` on macOS does not support `\b`: it exits 0 and changes
+nothing, so the rename would silently no-op. `perl -pi -e` handles word boundaries correctly and
+passes UTF-8 through untouched when the pattern and replacement are ASCII (the agent prompts
+contain em dashes and `‖`).
+
 ```bash
 cd ~/Progetti/forge/template/.claude/agents
-sed -i '' \
-  -e 's|@voku/core|__FORGE_SCOPE__/core|g' \
-  -e 's|Voku monorepo|__FORGE_TITLE__ monorepo|g' \
-  -e 's|\bVoku\b|__FORGE_TITLE__|g' \
-  -e 's|\bvoku\b|__FORGE_NAME__|g' \
-  *.md
+perl -pi -e 's{\@voku/core}{__FORGE_SCOPE__/core}g' *.md
+perl -pi -e 's{Voku monorepo}{__FORGE_TITLE__ monorepo}g' *.md
+perl -pi -e 's{\bVoku\b}{__FORGE_TITLE__}g' *.md
+perl -pi -e 's{\bvoku\b}{__FORGE_NAME__}g' *.md
 grep -ric voku *.md | grep -v ':0' && echo "STILL DIRTY" || echo "CLEAN"
 ```
 
@@ -1468,7 +1471,8 @@ cp "$V/.github/workflows/ci.yml" "$T/.github/workflows/ci.yml"
 ```
 
 Then edit each for the template:
-- `compose.yaml` / `compose.prod.yaml` — services must be exactly `postgres`, `backend`, `webapp`. Replace any hardcoded database name, user or container name with `__FORGE_DB_NAME__` / `__FORGE_NAME__`. Remove any service that exists only for a Voku concern. The `postgres` service reads `POSTGRES_DB`, `POSTGRES_USER` and `POSTGRES_PASSWORD` from `.env`.
+- `compose.yaml` — services must be exactly `postgres`, `backend`, `webapp`. Replace every hardcoded database name, user, password and container name with `__FORGE_DB_NAME__` / `__FORGE_NAME__`. Remove any service that exists only for a Voku concern. The `postgres` service sets `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` **inline** as local dev credentials (this is what Voku does, and what makes the stack boot without a populated secret in `.env.example`).
+- `compose.prod.yaml` — same service names, but every credential comes from the environment with **no default**: `POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}`. A production run must fail loudly rather than fall back to a dev credential.
 - `ci.yml` — keep the nx-affected job on Node 22. Rename the workflow to `CI`. Remove any Voku-specific step, secret reference or deployment job. It must run `npm ci`, then `npx nx affected -t lint typecheck test build --base=origin/main`.
 - `.gitignore` — must include `node_modules/`, `dist/`, `.nuxt/`, `.output/`, `coverage/`, `.nx/`, `storybook-static/`, `.env`.
 
@@ -1477,11 +1481,10 @@ Then edit each for the template:
 `template/.env.example` — **values are empty or non-secret placeholders only**:
 
 ```
-# Database
+# Database (local development only — compose.yaml carries the matching dev credentials)
 POSTGRES_DB=__FORGE_DB_NAME__
 POSTGRES_USER=__FORGE_NAME__
-POSTGRES_PASSWORD=
-DATABASE_URL=postgres://__FORGE_NAME__@postgres:5432/__FORGE_DB_NAME__
+DATABASE_URL=postgres://__FORGE_NAME__:__FORGE_NAME__@postgres:5432/__FORGE_DB_NAME__
 
 # Backend
 NODE_ENV=development
@@ -1490,6 +1493,14 @@ PORT=3000
 # Webapp
 NUXT_PUBLIC_API_BASE=http://localhost:3000
 ```
+
+**Why there is no `POSTGRES_PASSWORD` here.** The postgres image refuses to initialize with an
+empty password, so an empty value would break `npm run dev:up` and Task 14. Instead
+`compose.yaml` carries fixed, obviously-local dev credentials inline (`POSTGRES_USER`,
+`POSTGRES_PASSWORD` and `POSTGRES_DB` all set to `__FORGE_NAME__` / `__FORGE_DB_NAME__`), and the
+`DATABASE_URL` above embeds the same credential so the backend can connect. `compose.prod.yaml`
+reads every credential from the environment with **no default**, so nothing local leaks into a
+production run.
 
 - [ ] **Step 5: Write the root orientation file**
 
