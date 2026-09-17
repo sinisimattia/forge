@@ -1387,7 +1387,7 @@ git commit -m "feat(template): add the generalized agent roster"
 ## Task 9: Workspace shell
 
 **Files:**
-- Create: `template/package.json`, `template/nx.json`, `template/tsconfig.base.json`, `template/eslint.config.base.mjs`, `template/.editorconfig`, `template/.gitignore`, `template/.env.example`, `template/compose.yaml`, `template/compose.prod.yaml`, `template/.github/workflows/ci.yml`, `template/CLAUDE.md`, `template/README.md`
+- Create: `template/package.json`, `template/nx.json`, `template/tsconfig.base.json`, `template/eslint.config.base.mjs`, `template/.npmrc`, `template/.editorconfig`, `template/.gitignore`, `template/.env.example`, `template/compose.yaml`, `template/compose.prod.yaml`, `template/.github/workflows/ci.yml`, `template/CLAUDE.md`, `template/README.md`
 
 **Interfaces:**
 - Consumes: nothing.
@@ -1461,6 +1461,7 @@ git commit -m "feat(template): add the generalized agent roster"
 V=~/Progetti/Voku
 T=~/Progetti/forge/template
 cp "$V/eslint.config.base.mjs" "$T/eslint.config.base.mjs"
+cp "$V/.npmrc"                 "$T/.npmrc"
 cp "$V/.editorconfig"          "$T/.editorconfig"
 cp "$V/.gitignore"             "$T/.gitignore"
 cp "$V/.dockerignore"          "$T/.dockerignore"
@@ -1475,6 +1476,7 @@ Then edit each for the template:
 - `compose.prod.yaml` — same service names, but every credential comes from the environment with **no default**: `POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}`. A production run must fail loudly rather than fall back to a dev credential.
 - `ci.yml` — keep the nx-affected job on Node 22. Rename the workflow to `CI`. Remove any Voku-specific step, secret reference or deployment job. It must run `npm ci`, then `npx nx affected -t lint typecheck test build --base=origin/main`.
 - `.gitignore` — must include `node_modules/`, `dist/`, `.nuxt/`, `.output/`, `coverage/`, `.nx/`, `storybook-static/`, `.env`.
+- `.npmrc` — keep `legacy-peer-deps=true`. The Nuxt/Storybook dependency graph does not resolve without it; omitting this file makes `npm install` fail with `ERESOLVE` at the Task 13 gate.
 
 - [ ] **Step 4: Write the environment example**
 
