@@ -1,0 +1,8 @@
+{
+  "articles": {
+    "published": "Article published successfully"
+  },
+  "comments": {
+    "rate_limited": "You are commenting too quickly, try again at {retryAt}"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "name": "__FORGE_SCOPE__/backend",
+  "version": "0.0.0",
+  "description": "__FORGE_TITLE__ — backend API",
+  "private": true,
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:debug": "nest start --debug --watch",
+    "start:prod": "node dist/main",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "cross-env NODE_ENV=test jest",
+    "test:watch": "cross-env NODE_ENV=test jest --watch",
+    "test:cov": "cross-env NODE_ENV=test jest --coverage",
+    "typecheck": "tsc --noEmit",
+    "typeorm": "TS_NODE_PROJECT=tsconfig.json ts-node -r tsconfig-paths/register $(node -e \"process.stdout.write(require.resolve('typeorm/cli'))\")",
+    "migration:generate": "npm run typeorm -- migration:generate -d src/db/data-source.ts",
+    "migration:run": "npm run typeorm -- migration:run -d src/db/data-source.ts",
+    "migration:run:prod": "node $(node -e \"process.stdout.write(require.resolve('typeorm/cli'))\") migration:run -d dist/db/data-source.js",
+    "migration:revert": "npm run typeorm -- migration:revert -d src/db/data-source.ts"
+  },
+  "dependencies": {
+    "__FORGE_SCOPE__/core": "*",
+    "@nestjs/common": "^11.1.14",
+    "@nestjs/config": "^4.0.3",
+    "@nestjs/core": "^11.1.14",
+    "@nestjs/platform-express": "^11.1.14",
+    "@nestjs/typeorm": "^11.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.3",
+    "dotenv": "^16.6.1",
+    "nestjs-i18n": "^10.8.4",
+    "pg": "^8.18.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "typeorm": "^0.3.28"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.3",
+    "@nestjs/cli": "^11.0.16",
+    "@nestjs/schematics": "^11.0.9",
+    "@nestjs/testing": "^11.1.14",
+    "@types/express": "^5.0.6",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^25.3.0",
+    "cross-env": "^10.1.0",
+    "eslint": "^9.39.3",
+    "globals": "^16.5.0",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.62.1"
+  },
+  "engines": {
+    "node": ">=22 <23"
+  }
+}

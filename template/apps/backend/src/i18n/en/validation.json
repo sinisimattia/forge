@@ -1,0 +1,22 @@
+{
+  "IS_STRING": "{property} must be a string",
+  "IS_NOT_EMPTY": "{property} should not be empty",
+  "IS_EMAIL": "{property} must be a valid email address",
+  "MIN_LENGTH": "{property} must be at least {constraints.0} characters",
+  "MAX_LENGTH": "{property} must be at most {constraints.0} characters",
+  "LENGTH": "{property} must be between {constraints.0} and {constraints.1} characters",
+  "MATCHES": "{property} format is invalid",
+  "IS_ENUM": "{property} must be a valid value",
+  "IS_IN": "{property} must be one of the allowed values",
+  "IS_UUID": "{property} must be a valid UUID",
+  "IS_INT": "{property} must be an integer",
+  "IS_BOOLEAN": "{property} must be a boolean value",
+  "IS_ARRAY": "{property} must be an array",
+  "ARRAY_NOT_EMPTY": "{property} should not be empty",
+  "ARRAY_MIN_SIZE": "{property} must contain at least {constraints.0} items",
+  "IS_DATE": "{property} must be a valid date",
+  "IS_DATE_STRING": "{property} must be a valid ISO 8601 date string",
+  "IS_URL": "{property} must be a valid URL",
+  "MIN": "{property} must not be less than {constraints.0}",
+  "HEX_COLOR": "{property} must be a hex color (e.g. #FF0000)"
+}

@@ -1,0 +1,23 @@
+{
+  "common": {
+    "internal": "An unexpected error occurred",
+    "validation_failed": "Validation failed",
+    "invalid_uuid": "The provided identifier is not a valid UUID"
+  },
+  "http": {
+    "bad_request": "The request could not be processed",
+    "unauthorized": "Authentication is required",
+    "forbidden": "You do not have permission to perform this action",
+    "not_found": "The requested resource was not found",
+    "conflict": "The request conflicts with the current state of the resource",
+    "unprocessable": "The request could not be processed",
+    "internal": "An unexpected error occurred"
+  },
+  "articles": {
+    "not_found": "Article not found",
+    "title_required": "Title is required"
+  },
+  "tags": {
+    "not_found": "Tag {tagId} not found"
+  }
+}
