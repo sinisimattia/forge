@@ -73,7 +73,8 @@ services:
       target: dev
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - '${WEBAPP_PORT:-3001}:3001'
     environment:
