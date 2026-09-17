@@ -29,7 +29,8 @@ https://typeorm.io/ · class-validator / class-transformer READMEs.
 
 1. Read the plan from `planner` if present in context.
 2. Read existing files in the same module to match patterns in use.
-3. Read `src/common/types/enums.ts` for available enums.
+3. Read `__FORGE_SCOPE__/core/<domain>/enums` for the domain's available enums (one file
+   per symbol, per `libs/core/STANDARDS.md`) — there is no central enums file.
 4. Check `src/common/` for utilities, decorators, guards to reuse.
 
 ## Code-gen procedure
@@ -99,9 +100,10 @@ rules in the domain's RFC + `data-conventions.md`. Procedure:
 | Index on TEXT column | May exceed index key limit | `varchar(N)` or partial index |
 
 ### Reference files
-- `src/db/datasource.ts` — DataSource config, entity & migration list
+- `src/db/data-source.ts` — DataSource config, entity & migration list
 - `src/db/migrations/` — existing migrations
-- `src/common/types/enums.ts` — all project enums
+- `__FORGE_SCOPE__/core/<domain>/enums` — domain enums (one file per symbol, per
+  `libs/core/STANDARDS.md`)
 
 ## After writing code
 

@@ -15,13 +15,19 @@ is actually wrong.
 
 - `docs/standards/testing.md` — testing philosophy
 - `apps/backend/STANDARDS.md` (Jest testing specifics) — file naming/location,
-  `__tests__/` layout, e2e in `test/` with `.e2e-spec.ts`, mock typing,
-  coverage expectations, asserting i18n keys not literal text
+  `__tests__/` layout, mock typing, coverage expectations, asserting i18n keys
+  not literal text
 - `docs/rfcs/*.md` + `docs/adrs/` — valid enum values, and any ADR that deprecates one
 
 Default mode is **unit**. Run **e2e** mode when the user asks for end-to-end /
-integration tests (files in `test/`, suffix `.e2e-spec.ts`, run with
-`npm run test:e2e`).
+integration tests.
+
+**e2e mode.** A generated project ships no e2e harness — the skeleton has no `test/`
+directory, no `jest-e2e.json`, and no `test:e2e` script. The first time e2e tests are
+requested, create them as part of that work: `apps/backend/test/jest-e2e.json`, a
+`test:e2e` script in `apps/backend/package.json`, and specs under `test/` with the
+`.e2e-spec.ts` suffix. Thereafter run `npm run test:e2e`. Never assume the harness
+already exists.
 
 ## 1. Write tests from scratch
 
@@ -93,7 +99,7 @@ tested behavior is correct per requirements, the *implementation* must change.
 ```bash
 npm run test -- --testPathPattern="<file>"   # specific
 npm run test                                   # full suite
-npm run test:e2e                               # e2e mode
+npm run test:e2e                               # e2e mode, once the harness exists (see above)
 ```
 
 ## 4. Hand off implementation bugs
@@ -119,6 +125,7 @@ await expect(service.methodName(invalidInput)).rejects.toThrow(NotFoundException
 await expect(service.methodName(invalidInput)).rejects.toMatchObject({ response: { messageKey: 'errors.articles.not_found' } });
 ```
 
-Enum values in tests must match the canonical source (`src/common/types/enums.ts` and the
-domain's RFC), never a remembered or hardcoded list — re-check it whenever an ADR deprecates
+Enum values in tests must match the canonical source (`__FORGE_SCOPE__/core/<domain>/enums`,
+one file per symbol per `libs/core/STANDARDS.md`, and the domain's RFC), never a remembered
+or hardcoded list — re-check it whenever an ADR deprecates
 a value.

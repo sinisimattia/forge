@@ -137,7 +137,7 @@ The "no hardcoded user-facing text" philosophy is in
 - **Tests** assert the thrown key, not literal text:
   `await expect(...).rejects.toMatchObject({ response: { messageKey: 'errors.articles.not_found' } })`.
   Do not add `I18nService` mocks to service specs — mock `I18nContext.current`
-  instead (see `common/filters/__tests__/http-exception.filter.spec.ts`).
+  instead (see `src/common/filters/__tests__/http-exception.filter.spec.ts`).
 
 ## Pagination
 

@@ -87,7 +87,7 @@ git diff --name-only   # any in-progress work
   is this domain already partly modeled?
 - **backend**: a similar service (e.g. `apps/backend/src/comments/comments.service.ts`),
   a similar controller (e.g. `apps/backend/src/articles/articles.controller.ts`), entities and
-  `apps/backend/src/common/types/enums.ts`
+  the domain's enums (`__FORGE_SCOPE__/core/<domain>/enums` — there is no central enums file)
 - **webapp**: `app/utils/`, components (atoms/molecules/organisms), `app/composables/`,
   `app/types/`, `app/pages/`
 
@@ -153,7 +153,7 @@ rehydrates responses via `fromJSON`.
 - **Types** (`app/types/`) — `NewType` in `types/entities.ts`, fields: … (or import from
   `__FORGE_SCOPE__/core` once available).
 - **Utils** (`app/utils/`) — only genuinely reusable pure functions.
-- **Fetchers** (`app/fetchers/`) — `[domain].fetcher.ts` — `fetchX(api, params) → GET /api/path`.
+- **Fetchers** (`app/fetchers/`) — `[domain].fetcher.ts` — `fetchX(api, params) → GET /path`.
 - **Composables** (`app/composables/`) — `useNewFeature.ts` — imports fetchers, state + methods.
 - **Atoms / Molecules / Organisms** (`app/components/**`) — only if genuinely new; check the
   existing component set first.
