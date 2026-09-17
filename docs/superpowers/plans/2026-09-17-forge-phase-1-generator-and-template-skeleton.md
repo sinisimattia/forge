@@ -258,6 +258,20 @@ test('rejects combining --into with --name or --out', () => {
   assert.throws(() => parseArgs(['--into', '/tmp/x', '--out', '/tmp/y']), UsageError);
 });
 
+test('enforces --into exclusivity even when the other value is empty', () => {
+  // A truthiness check would let both of these through.
+  assert.throws(() => parseArgs(['--into', '/tmp/x', '--name', '']), UsageError);
+  assert.throws(() => parseArgs(['--into', '', '--name', 'y']), UsageError);
+});
+
+test('rejects an empty --into path', () => {
+  assert.throws(() => parseArgs(['--into', '']), UsageError);
+});
+
+test('rejects an empty --name', () => {
+  assert.throws(() => parseArgs(['--name', '']), UsageError);
+});
+
 test('rejects an invalid project name', () => {
   for (const bad of ['My-App', '1app', 'my_app', 'my app', '-leading']) {
     assert.throws(() => parseArgs(['--name', bad]), UsageError, `expected ${bad} to be rejected`);
@@ -331,9 +345,13 @@ export function parseArgs(argv) {
     i += 1;
   }
 
-  if (parsed.into) {
-    if (parsed.name) throw new UsageError('--into cannot be combined with --name');
-    if (parsed.out) throw new UsageError('--into cannot be combined with --out');
+  // Presence checks must be `!== undefined`, never truthiness: an empty-string
+  // value would otherwise skip adopt mode entirely and let the forbidden
+  // `--into` + `--name` combination through.
+  if (parsed.into !== undefined) {
+    if (parsed.into === '') throw new UsageError('--into requires a directory path');
+    if (parsed.name !== undefined) throw new UsageError('--into cannot be combined with --name');
+    if (parsed.out !== undefined) throw new UsageError('--into cannot be combined with --out');
     return { ...parsed, mode: 'adopt', out: process.cwd() };
   }
 
