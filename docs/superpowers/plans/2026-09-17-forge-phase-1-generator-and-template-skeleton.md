@@ -1120,10 +1120,17 @@ async function createProject({ args, templateRoot, forgeRoot, interactive }) {
   }
 }
 
+/** Existence only — an existing but EMPTY directory is a valid adopt target. */
+async function dirExists(dir) {
+  return fs.access(dir).then(() => true, () => false);
+}
+
 async function adoptInto({ args, templateRoot, forgeRoot }) {
   const target = path.resolve(args.into);
-  if (await isEmptyDir(target)) {
-    throw new TargetConflictError(`${target} does not exist or is empty — use create mode instead.`);
+  // Deliberately existence, not emptiness: `git init my-repo && forge --into my-repo`
+  // is a legitimate flow, so only a MISSING target redirects to create mode.
+  if (!(await dirExists(target))) {
+    throw new TargetConflictError(`${target} does not exist — use create mode instead.`);
   }
 
   const name = args.name ?? path.basename(target);
