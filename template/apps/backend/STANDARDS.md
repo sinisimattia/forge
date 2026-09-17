@@ -185,10 +185,10 @@ backend specifics:
 
 | ID | Check | Signal | Severity | Source |
 |----|-------|--------|----------|--------|
-| B1 | Controllers hold no business logic | `grep -rn "Repository\|getRepository" src/**/*.controller.ts` | blocking | STANDARDS.md — Service/controller split |
+| B1 | Controllers hold no business logic | `grep -rn "Repository\|getRepository" src/ --include=*.controller.ts` | blocking | STANDARDS.md — Service/controller split |
 | B2 | Every module follows the module/controller/service/dto layout | directory listing of the changed module | blocking | STANDARDS.md — Module layout |
 | B3 | Entity change is accompanied by a migration | a changed `*.entity.ts` with no new file in `src/db/migrations/` | blocking | STANDARDS.md — Migrations |
 | B4 | No `synchronize: true` anywhere | `grep -rn "synchronize: true" src/` | blocking | STANDARDS.md — Migrations |
 | B5 | Request payloads are validated DTOs | `grep -rn "@Body()" src/` — each must reference a DTO class | blocking | STANDARDS.md — DTOs |
 | B6 | Errors use the shared exception filter shape | `grep -rn "throw new HttpException" src/` | warning | STANDARDS.md — Error shape |
-| B7 | User-facing strings are translated | `grep -rnE "'[A-Z][a-z]+ [a-z]+" src/**/*.service.ts` | warning | `docs/standards/i18n.md` |
+| B7 | User-facing strings are translated | `grep -rnE "'[A-Z][a-z]+ [a-z]+" src/ --include=*.service.ts` | warning | `docs/standards/i18n.md` |

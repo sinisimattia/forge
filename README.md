@@ -33,8 +33,11 @@ npm run create -- --name my-app
 ```
 
 This prompts for anything you didn't pass on the command line, stages the new project in a
-temp directory, substitutes tokens, and only then atomically moves it into place — a failed
-run leaves nothing behind. Useful flags:
+sibling directory next to the target (`<out>/.forge-staging-<random>`, not `os.tmpdir()` —
+the OS temp directory is often a different filesystem, where `fs.rename` fails with `EXDEV`;
+staging as a sibling keeps the final move on the same filesystem so it can be a real atomic
+rename), substitutes tokens, and only then atomically moves it into place — a failed run
+leaves nothing behind. Useful flags:
 
 ```bash
 npm run create -- --name my-app \
@@ -72,6 +75,21 @@ Adopt mode copies only the declared **process subset** (`CLAUDE.md`, `.claude/ag
 `.claude/agent-memory/**`, `docs/standards/**`, `docs/adrs/0000-template.md` and
 `docs/adrs/0001`–`0004`) and **never overwrites an existing file** — anything already
 present at a destination path is skipped and listed in the closing report.
+
+**Precondition: a comparable package layout.** The adopted agent prompts point at
+`libs/core/STANDARDS.md`, `apps/backend/STANDARDS.md` and `apps/webapp/STANDARDS.md` for
+their package-specific rules and review dimensions — none of those three files is itself
+part of the process subset (they're template-specific content, not "how we work"). Adopt
+mode does not create them, check for them, or require a `libs/core`/`apps/backend`/
+`apps/webapp` layout to exist. If the target repo has no comparable file at one of those
+paths, the corresponding agent's pointer dangles: `reviewer`, for instance, discovers its
+review dimensions from each package's `STANDARDS.md`, so in a repo missing all three it
+finds zero dimensions to check and reports every package clean — not because the code is
+clean, but because it found nothing to check it against. Adopting the process layer into a
+repository with a substantially different layout means either writing equivalent
+`STANDARDS.md` files at those three paths yourself, or expecting the adopted agents'
+package-specific guidance to be inert until you do. The closing report names these three
+paths after every adopt run as a reminder.
 
 ## What a generated project contains
 

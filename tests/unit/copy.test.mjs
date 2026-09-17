@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { isBinary, walk, copyTree, UnresolvedTokenError } from '../../tools/create/copy.mjs';
+import {
+  isBinary, walk, copyTree, UnresolvedTokenError, UnsupportedEntryError,
+} from '../../tools/create/copy.mjs';
 
 async function tempDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'forge-copy-'));
@@ -66,6 +68,24 @@ test('copyTree fails when a forge token cannot be resolved', async () => {
       assert.ok(error instanceof UnresolvedTokenError);
       assert.deepEqual(error.tokens, ['__FORGE_MISSING__']);
       assert.equal(error.exitCode, 1);
+      return true;
+    },
+  );
+});
+
+test('walk fails loudly on a symlink instead of silently dropping it', async () => {
+  // A Dirent for a symlink reports neither isFile() nor isDirectory() — a symlink added to
+  // template/ would otherwise vanish from every generated project with no message. Assert it
+  // is instead treated as a build error, the same way an unresolved token is.
+  const dir = await tempDir();
+  await fs.writeFile(path.join(dir, 'real.txt'), 'x');
+  await fs.symlink(path.join(dir, 'real.txt'), path.join(dir, 'link.txt'));
+  await assert.rejects(
+    async () => { for await (const _rel of walk(dir)) { /* drain */ } },
+    (error) => {
+      assert.ok(error instanceof UnsupportedEntryError);
+      assert.equal(error.exitCode, 1);
+      assert.match(error.message, /link\.txt/);
       return true;
     },
   );

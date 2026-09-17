@@ -26,6 +26,10 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege by default — none of these jobs need to write anything.
+permissions:
+  contents: read
+
 jobs:
   unit:
     name: unit (sanitize + generator tests)
@@ -64,8 +68,9 @@ jobs:
   # generated project resolves the Storybook/Vite chain fresh and drifts from the
   # combination that is known to work (builder-vite 9.1.2 / vue3-vite 9.1.2). The job still
   # runs and surfaces the error; flip `continue-on-error` off once the template pins its
-  # dependencies. See docs/adrs/0002-dependency-free-generator.md and the README's Known
-  # limitations.
+  # dependencies. The cause is the *template*'s missing lockfile, not the generator's own
+  # dependency-freedom (ADR-0002 is about the latter) — see the README's "Generated projects
+  # are not reproducible" bullet under Known limitations.
   storybook:
     name: template Storybook build (PR-tier; slow, not part of the fast unit push job)
     needs: unit

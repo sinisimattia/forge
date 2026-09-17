@@ -47,6 +47,15 @@ export function parseArgs(argv) {
     if (parsed.into === '') throw new UsageError('--into requires a directory path');
     if (parsed.name !== undefined) throw new UsageError('--into cannot be combined with --name');
     if (parsed.out !== undefined) throw new UsageError('--into cannot be combined with --out');
+    // Adopt mode derives its own name/scope/description from the target directory (see
+    // index.mjs's adoptInto) — it never reads these three from the CLI. Rejecting them here,
+    // the same way --name/--out are rejected above, keeps a typo (or a mistaken assumption
+    // that adopt mode behaves like create mode) from silently doing nothing.
+    if (parsed.scope !== undefined) throw new UsageError('--into cannot be combined with --scope');
+    if (parsed.description !== undefined) {
+      throw new UsageError('--into cannot be combined with --description');
+    }
+    if (parsed.dbName !== undefined) throw new UsageError('--into cannot be combined with --db-name');
     return { ...parsed, mode: 'adopt', out: process.cwd() };
   }
 

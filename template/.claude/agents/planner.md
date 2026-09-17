@@ -117,12 +117,12 @@ detailed enough that implementation proceeds without re-reading the docs.
 _(If nothing to reuse, write "None — all new.")_
 
 ### `libs/core` changes  *(when the feature has shared domain — do this first)*
-- **Entities** (`libs/core/entities/`): new/changed pure entities and the invariants they
-  own. Persistence-only concerns (e.g. `deletedAt`) do NOT belong here.
-- **Contracts** (`libs/core/contracts/`): the `I*Service` interface(s), speaking in
+- **Entities** (`libs/core/src/<domain>/entities/`): new/changed pure entities and the
+  invariants they own. Persistence-only concerns (e.g. `deletedAt`) do NOT belong here.
+- **Contracts** (`libs/core/src/<domain>/contracts/`): the `I*Service` interface(s), speaking in
   entities. Narrow inputs with TS utility types derived from the entity (e.g.
   `Omit<Article, 'id'>`) rather than DTO classes. `I` prefix.
-- **Conformance suites** (`libs/core/testing/`): the behavioral cases both apps must pass.
+- **Conformance suites** (`libs/core/src/<domain>/testing/`): the behavioral cases both apps must pass.
 - **Rehydration**: the per-entity JSON wire shape + `fromJSON` reviver (the one sanctioned
   DTO exception), covered by the conformance suite.
 - **TSDoc** on every entity and contract method is part of the domain's definition of done.

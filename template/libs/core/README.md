@@ -140,21 +140,21 @@ An implementation that crosses a serialization boundary receives its data as pla
    with `Omit`/`Pick`, plus any create-input/result types under `types/`.
 4. Add a `run<IName>Contract` suite + fixtures under `testing/`.
 5. Wire the new subpaths (`./<domain>/entities`, `/contracts`, `/enums`, `/errors`, `/types`,
-   `/testing`) into **all three** resolution points, mirroring an existing domain's entries
-   exactly: `package.json` `exports`, `tsconfig.json` `paths`, and `jest.config.js`
-   `moduleNameMapper`. Then `rm -rf dist && npx nx build core --skip-nx-cache` (NX can otherwise
-   serve a stale `dist`).
+   `/testing`) into **all four** resolution points: `libs/core/package.json` `exports`,
+   `libs/core/tsconfig.json` `paths`, `libs/core/jest.config.js` `moduleNameMapper`, and each
+   consuming app's own `tsconfig.json` `paths` (the app resolves `__FORGE_SCOPE__/core/*` at
+   compile time via its own path mapping, not core's). Then `rm -rf dist && npx nx build core
+   --skip-nx-cache` (NX can otherwise serve a stale `dist`).
 6. Add unit tests under `libs/core/tests/<domain>/...` (mirroring the `src/` layout), importing the
    code under test via its `__FORGE_SCOPE__/core/<domain>/*` subpath.
-7. In each consuming app, implement the contract and drive the conformance suite — copy how an
-   existing domain does it in that app:
+7. In each consuming app, implement the contract and drive the conformance suite:
    - Implement `I<Name>Service` for that app's runtime. A persistence-backed implementation maps
      between its storage entities and the domain entities (a hybrid pattern: contract methods
      return domain entities; keep storage-typed helpers for internal callers). A transport-backed
      implementation calls the remote API and rehydrates responses via `fromJSON`.
    - Wire the new `__FORGE_SCOPE__/core/<domain>/*` subpaths into that app's module-resolution
-     config, and re-export the domain's enums from wherever that app centralizes its enum
-     definitions.
+     config (see step 5's fourth resolution point), and re-export the domain's enums from
+     wherever that app centralizes its enum definitions.
    - Drive `run<IName>Contract` from the app's own test runner — see _Conformance tests, by
      example_ above for the shape. A transport-backed implementation's stub must faithfully
      reproduce the **real** API behavior (status codes, response shapes) — verify against the

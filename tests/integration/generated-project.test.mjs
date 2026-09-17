@@ -41,6 +41,46 @@ test('a generated project passes every gate it ships with', async (t) => {
   await t.test('core purity', async () => {
     await run('npm', ['run', 'purity', '-w', 'libs/core'], { cwd: project, maxBuffer: 64 * 1024 * 1024 });
   });
+
+  // D2 / D14 — the plan's Definition of Done requires these two discriminating tests
+  // "implemented and each observed to fail when its fault is injected". Until this subtest,
+  // they existed only as a manual shell snippet in the plan doc that nobody ran in CI — the
+  // subtests above only prove `lint`/`purity` exit 0 on a clean project, which they would do
+  // whether or not the underlying rules actually fire. Reuses the project already generated
+  // and installed above rather than generating a third one.
+  await t.test('D2/D14: the core-purity gates actually discriminate', async () => {
+    const probePath = path.join(project, 'libs/core/src/shared/types/D2D14Probe.ts');
+    // One probe file covers both faults: D2 (a framework import must fail lint) and D14
+    // (transport vocabulary in prose must fail the purity check).
+    await fs.writeFile(
+      probePath,
+      "import type { Repository } from 'typeorm';\n" +
+        '/** Returns the JWT for the session. */\n' +
+        'export type D2D14Probe = Repository<unknown>;\n',
+    );
+
+    try {
+      // D2 — a framework import (`typeorm`) must fail `nx lint core`.
+      await assert.rejects(
+        () => run('npx', ['nx', 'lint', 'core'], { cwd: project, maxBuffer: 64 * 1024 * 1024 }),
+        'expected `nx lint core` to fail while the typeorm import is present — D2 is decorative',
+      );
+
+      // D14 — transport vocabulary in prose (a TSDoc line mentioning a JWT) must fail the
+      // purity check.
+      await assert.rejects(
+        () => run('npm', ['run', 'purity', '-w', 'libs/core'], { cwd: project, maxBuffer: 64 * 1024 * 1024 }),
+        'expected `purity -w libs/core` to fail while the JWT-mentioning TSDoc is present — D14 is decorative',
+      );
+    } finally {
+      await fs.rm(probePath, { force: true });
+    }
+
+    // With the fault removed, both gates must return to green — this is what proves the
+    // failures above were caused by the probe and not some unrelated break.
+    await run('npx', ['nx', 'lint', 'core'], { cwd: project, maxBuffer: 64 * 1024 * 1024 });
+    await run('npm', ['run', 'purity', '-w', 'libs/core'], { cwd: project, maxBuffer: 64 * 1024 * 1024 });
+  });
 });
 
 test('a generated project contains the whole process layer', async () => {

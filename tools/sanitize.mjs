@@ -8,7 +8,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOTS = ['template', 'tools'];
+// Resolved against this file's own location, not process.cwd() — `sanitize.mjs`'s one job is to
+// fail loudly, and a cwd-relative root would silently scan nothing (and report clean) if this
+// script were ever invoked from outside the repo root. `npm run sanitize` always runs from here,
+// but that is exactly the kind of assumption this fix exists to stop relying on.
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ROOTS = ['template', 'tools'].map((root) => path.join(REPO_ROOT, root));
 
 // This file's own rule definitions necessarily spell out every forbidden term
 // (in comments and regex literals) — e.g. this comment mentions voku, rsvp,
@@ -106,10 +111,12 @@ async function* walk(dir) {
 
 const findings = [];
 const exemptions = [];
+let scannedCount = 0;
 
 for (const root of ROOTS) {
   for await (const file of walk(root)) {
     if (path.resolve(file) === SELF) continue;
+    scannedCount += 1;
 
     // A leftover file or directory *named* for the domain leaks via its path alone,
     // even with generic content inside — content-only scanning is blind to that. A
@@ -146,9 +153,19 @@ if (findings.length > 0) {
   process.exit(1);
 }
 
+// This gate's one job is to fail. A zero count means every root came up empty (a bad
+// cwd, a renamed/missing directory, a walk that silently swallowed a readdir error) —
+// that is not "clean", it is "nothing was scanned", and printing "clean" for it would
+// be a vacuous pass indistinguishable from a real one. Fail loudly instead.
+if (scannedCount === 0) {
+  console.error('Sanitization failed: 0 files were scanned — the gate examined nothing.');
+  console.error(`Roots checked: ${ROOTS.join(', ')}`);
+  process.exit(1);
+}
+
 if (exemptions.length > 0) {
-  console.log(`Sanitization: clean (${exemptions.length} deliberate exemption(s))`);
+  console.log(`Sanitization: clean (${scannedCount} file(s) scanned, ${exemptions.length} deliberate exemption(s))`);
   for (const exemption of exemptions) console.log(`  ${exemption}`);
 } else {
-  console.log('Sanitization: clean');
+  console.log(`Sanitization: clean (${scannedCount} file(s) scanned)`);
 }

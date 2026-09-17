@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { parseArgs, UsageError } from './args.mjs';
+import { parseArgs, UsageError, NAME_RE } from './args.mjs';
 import { deriveTokens, toTitle } from './tokens.mjs';
 import { copyTree } from './copy.mjs';
 import { copySubset } from './subset.mjs';
@@ -70,7 +70,20 @@ async function createProject({ args, templateRoot, forgeRoot, interactive }) {
     // that staging-as-a-sibling exists to close.
     await fs.rename(staging, target);
 
-    if (args.git) await initRepo(target, tokens.__FORGE_TITLE__);
+    if (args.git) {
+      try {
+        await initRepo(target, tokens.__FORGE_TITLE__);
+      } catch (error) {
+        // The rename above already succeeded — a complete, correct project sits at `target`.
+        // Only git init/commit failed, and the generic catch below can no longer tell the two
+        // apart (the staging directory is gone either way), so say so here, before it's lost.
+        error.message =
+          `${error.message}\n\nThe project itself was created successfully at ${target} — ` +
+          'only git initialization failed. cd in and run `git init` yourself if you want ' +
+          'version control.';
+        throw error;
+      }
+    }
 
     return { mode: 'create', target, written: [...written, 'forge.json'], skipped: [] };
   } catch (error) {
@@ -85,7 +98,17 @@ async function adoptInto({ args, templateRoot, forgeRoot }) {
     throw new TargetConflictError(`${target} does not exist — use create mode instead.`);
   }
 
-  const name = args.name ?? path.basename(target);
+  // args.mjs already rejects `--into` combined with `--name`, so the derived name always comes
+  // from the directory basename — never from `args.name`.
+  const name = path.basename(target);
+  if (!NAME_RE.test(name)) {
+    throw new UsageError(
+      `Adopt mode derives the project name from the target directory's name, but "${name}" is ` +
+      `not a valid one (expected lowercase letters, digits and hyphens, starting with a ` +
+      `letter). Rename the directory, or use create mode ("npm run create -- --name <kebab>") ` +
+      `instead.`,
+    );
+  }
   const tokens = deriveTokens({ name, title: args.title ?? toTitle(name) });
   const { written, skipped } = await copySubset(templateRoot, target, tokens);
 
@@ -118,6 +141,19 @@ async function main() {
         process.stdout.write(`  ${result.skipped.length} left untouched (already present):\n`);
         for (const rel of result.skipped) process.stdout.write(`    ${rel}\n`);
       }
+      // The adopted agent prompts (planner, reviewer, *-implementer, *-tester, ...) point at
+      // libs/core/STANDARDS.md, apps/backend/STANDARDS.md and apps/webapp/STANDARDS.md for their
+      // review dimensions and package-specific rules — none of those three files is itself part
+      // of the process subset this command copies. In a repo that doesn't already have a
+      // comparable package layout, those pointers dangle and an agent like `reviewer` finds
+      // nothing to check against. Say so here, not just in README.md, since this is the moment
+      // the person is looking at the result.
+      process.stdout.write('\nThe adopted agents expect these files to exist in this repo (not copied by adopt mode):\n');
+      process.stdout.write('    libs/core/STANDARDS.md\n');
+      process.stdout.write('    apps/backend/STANDARDS.md\n');
+      process.stdout.write('    apps/webapp/STANDARDS.md\n');
+      process.stdout.write('  Until a comparable file exists at each path, the corresponding agent has no\n');
+      process.stdout.write('  package-specific rules to check against. See README.md\'s "Adopt mode" section.\n');
       process.stdout.write('\n');
     }
   } catch (error) {
@@ -128,6 +164,13 @@ async function main() {
       process.stderr.write(`\n${error.written.length} file(s) were written before this failed:\n`);
       for (const rel of error.written) process.stderr.write(`    ${rel}\n`);
       process.stderr.write('Nothing was deleted. Review them before re-running.\n');
+    }
+    // copySubset also attaches `skipped` (destinations that already existed and were left
+    // untouched) — report it too, or a partial-failure message silently hides which files were
+    // pre-existing versus newly written.
+    if (Array.isArray(error.skipped) && error.skipped.length > 0) {
+      process.stderr.write(`\n${error.skipped.length} file(s) already existed and were left untouched:\n`);
+      for (const rel of error.skipped) process.stderr.write(`    ${rel}\n`);
     }
     process.stderr.write('\n');
     if (error instanceof UsageError) {

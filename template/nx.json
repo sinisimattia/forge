@@ -6,7 +6,7 @@
     "sharedGlobals": []
   },
   "targetDefaults": {
-    "build": { "cache": true, "inputs": ["production", "^production"] },
+    "build": { "cache": true, "dependsOn": ["^build"], "inputs": ["production", "^production"] },
     "test": { "cache": true, "inputs": ["default", "^production"] },
     "lint": { "cache": true },
     "typecheck": { "cache": true },

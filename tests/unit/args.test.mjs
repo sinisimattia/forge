@@ -34,6 +34,15 @@ test('rejects combining --into with --name or --out', () => {
   assert.throws(() => parseArgs(['--into', '/tmp/x', '--out', '/tmp/y']), UsageError);
 });
 
+// F3 — adopt mode used to accept --scope/--description/--db-name and silently ignore them
+// (and never validate them), so `--into <dir> --scope @acme` exited 0 having done nothing
+// with --scope. They must be rejected the same way --name/--out already are.
+test('rejects combining --into with --scope, --description or --db-name', () => {
+  assert.throws(() => parseArgs(['--into', '/tmp/x', '--scope', '@acme']), UsageError);
+  assert.throws(() => parseArgs(['--into', '/tmp/x', '--description', 'Hello.']), UsageError);
+  assert.throws(() => parseArgs(['--into', '/tmp/x', '--db-name', 'my_db']), UsageError);
+});
+
 test('enforces --into exclusivity even when the other value is empty', () => {
   // A truthiness check would let both of these through.
   assert.throws(() => parseArgs(['--into', '/tmp/x', '--name', '']), UsageError);

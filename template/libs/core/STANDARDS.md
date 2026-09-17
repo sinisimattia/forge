@@ -71,4 +71,7 @@ its public `__FORGE_SCOPE__/core/*` subpath — never via relative paths into `s
 K2 is a text check over prose: it catches accidental transport vocabulary, including camelCase,
 PascalCase and snake_case/kebab-case compounds, with real `http(s)://` links exempted. It does not
 defend against deliberate evasion — a word split across two lines, or unicode look-alikes, will
-pass. It is a guard against mistakes, not an adversary.
+pass. Nor does it catch a forbidden word that happens to sit inside a genuine `https://` URL's
+path or query string (e.g. `.../docs/nestjs-migration-guide`) — the whole link span is stripped
+before matching, as collateral, so a real occurrence of the word is stripped along with it. It is
+a guard against mistakes, not an adversary.

@@ -67,6 +67,13 @@ test(
     // volume that the *next* run silently attaches to and reuses instead of getting
     // a fresh database. Derive a project name from the already-unique temp dir and
     // pass it to every compose invocation below so they always agree.
+    //
+    // Trade-off this introduces: because the project name is unique per run, a run
+    // that dies before its `finally` (same kill -9 / CI cancel / OOM scenarios above)
+    // now leaves a `forge-e2e-*_pgdata` volume that is permanently orphaned — nothing
+    // ever names that exact project again to `down -v` it — rather than a stale volume
+    // that gets silently reused. Correct for test isolation, but it trades "wrong data"
+    // for "leaked disk space"; there is no cleanup for these orphans today.
     const projectName = `forge-e2e-${path.basename(out).replace(/[^a-z0-9]/gi, '').toLowerCase()}`;
     const compose = (...args) => run('docker', ['compose', '-p', projectName, ...args], {
       cwd: target,

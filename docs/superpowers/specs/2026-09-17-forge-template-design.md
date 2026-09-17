@@ -94,10 +94,13 @@ npm run create -- --into <existing-dir>
 
 Zero runtime dependencies — `node:fs`, `node:path`, `node:readline/promises` on Node 22.
 
-**Create mode:** prompt → stage into a temp directory (never the target) → substitute tokens,
-failing on any survivor → refuse a non-empty target, then atomically rename temp into place →
-write `forge.json`, `git init`, one initial commit → report next steps. A failed run leaves
-nothing behind, so there is never a half-generated repo to clean up.
+**Create mode:** prompt → stage into `<out>/.forge-staging-<random>`, a sibling of the target
+rather than `os.tmpdir()` (the OS temp directory is often a different filesystem, where
+`fs.rename` fails with `EXDEV`; a sibling directory keeps the final move on the same
+filesystem) → substitute tokens, failing on any survivor → refuse a non-empty target, then
+atomically rename the staging directory into place → write `forge.json`, `git init`, one
+initial commit → report next steps. A failed run leaves nothing behind, so there is never a
+half-generated repo to clean up.
 
 `--out` defaults to the current working directory; the target is `<out>/<name>`.
 

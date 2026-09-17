@@ -14,6 +14,16 @@ async function tempDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'forge-create-'));
 }
 
+// Adopt mode derives the project name from the target directory's basename (F3) and now
+// validates it against NAME_RE, so an adopt-mode test target can't be a raw mkdtemp() directory
+// (its random suffix is mixed-case). Give it a valid kebab-case subdirectory instead.
+async function namedDir(name) {
+  const parent = await tempDir();
+  const dir = path.join(parent, name);
+  await fs.mkdir(dir);
+  return dir;
+}
+
 test('create mode generates a project with tokens substituted', async () => {
   const out = await tempDir();
   const result = await generate({
@@ -82,7 +92,7 @@ test('D1: an unresolved token fails generation and leaves nothing behind', async
 });
 
 test('adopt mode copies only the process subset and skips existing files', async () => {
-  const existing = await tempDir();
+  const existing = await namedDir('existing-repo');
   await fs.writeFile(path.join(existing, 'CLAUDE.md'), 'MINE');
 
   const result = await generate({
@@ -95,6 +105,28 @@ test('adopt mode copies only the process subset and skips existing files', async
   assert.deepEqual(result.skipped, ['CLAUDE.md']);
   assert.ok(result.written.includes('docs/standards/naming.md'));
   await assert.rejects(() => fs.access(path.join(existing, 'package.json')));
+});
+
+// F3 — adopt mode derives the project name from `path.basename(target)` with no validation,
+// so adopting into e.g. `My_Repo` silently wrote the invalid npm scope `@My_Repo/core` into
+// the agent prompts. It must now reject a directory name that can't be a project name.
+test('adopt mode rejects a target directory whose basename is not a valid project name', async () => {
+  const existing = await namedDir('My_Repo');
+
+  await assert.rejects(
+    () => generate({
+      argv: ['--into', existing, '--yes'],
+      templateRoot, forgeRoot, interactive: false,
+    }),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.exitCode, 1);
+      assert.match(error.message, /My_Repo/);
+      return true;
+    },
+  );
+  // Rejected before anything was written.
+  assert.deepEqual(await fs.readdir(existing), []);
 });
 
 test('adopt mode derives the project name from the target directory', async () => {
@@ -128,7 +160,7 @@ test('an adopt failure carries what it already wrote', async () => {
   await fs.mkdir(path.join(brokenTemplate, 'docs/standards'), { recursive: true });
   await fs.writeFile(path.join(brokenTemplate, 'docs/standards/a.md'), 'ok __FORGE_TITLE__');
   await fs.writeFile(path.join(brokenTemplate, 'docs/standards/b.md'), 'bad __FORGE_MISSING__');
-  const existing = await tempDir();
+  const existing = await namedDir('existing-repo');
   await fs.writeFile(path.join(existing, 'keep.txt'), 'mine');
 
   await assert.rejects(

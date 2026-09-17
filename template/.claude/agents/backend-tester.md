@@ -23,11 +23,13 @@ Default mode is **unit**. Run **e2e** mode when the user asks for end-to-end /
 integration tests.
 
 **e2e mode.** A generated project ships no e2e harness — the skeleton has no `test/`
-directory, no `jest-e2e.json`, and no `test:e2e` script. The first time e2e tests are
-requested, create them as part of that work: `apps/backend/test/jest-e2e.json`, a
-`test:e2e` script in `apps/backend/package.json`, and specs under `test/` with the
-`.e2e-spec.ts` suffix. Thereafter run `npm run test:e2e`. Never assume the harness
-already exists.
+directory, no `jest-e2e.json`, and no `test:e2e` script; it also has no `supertest` or
+`@types/supertest` installed, which every conventional Nest e2e spec imports to drive
+requests against the app instance. The first time e2e tests are requested, create the
+harness as part of that work: `apps/backend/test/jest-e2e.json`, a `test:e2e` script in
+`apps/backend/package.json`, `supertest` and `@types/supertest` added as devDependencies,
+and specs under `test/` with the `.e2e-spec.ts` suffix. Thereafter run `npm run test:e2e`.
+Never assume the harness already exists.
 
 ## 1. Write tests from scratch
 

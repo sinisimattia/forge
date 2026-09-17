@@ -23,7 +23,22 @@ export function isBinary(buffer) {
   return false;
 }
 
-/** Yields every file under `root` as a posix-style path relative to it. */
+/** An entry under `template/` is neither a plain file nor a directory (e.g. a symlink). */
+export class UnsupportedEntryError extends Error {
+  constructor(rel) {
+    super(`Unsupported filesystem entry (not a plain file or directory): ${rel}`);
+    this.name = 'UnsupportedEntryError';
+    this.exitCode = 1;
+  }
+}
+
+/**
+ * Yields every file under `root` as a posix-style path relative to it. Throws on anything
+ * that is neither a plain file nor a directory — a symlink's Dirent reports neither
+ * `isFile()` nor `isDirectory()`, so silently skipping it would make it vanish from every
+ * generated project with no message. That is exactly the kind of silent data loss this
+ * generator otherwise refuses to allow (see UnresolvedTokenError) — fail loudly instead.
+ */
 export async function* walk(root, prefix = '') {
   const entries = await fs.readdir(path.join(root, prefix), { withFileTypes: true });
   for (const entry of entries) {
@@ -32,6 +47,8 @@ export async function* walk(root, prefix = '') {
       yield* walk(root, rel);
     } else if (entry.isFile()) {
       yield rel;
+    } else {
+      throw new UnsupportedEntryError(rel);
     }
   }
 }
