@@ -1,0 +1,89 @@
+name: CI
+
+# Three tiers:
+#   - unit:              fast, runs on every push and PR. Sanitize gates everything else,
+#                         because it is the cheapest check and the one that catches an
+#                         extraction mistake (a source-project trace or a populated secret).
+#   - generated-project: PR-only. Actually generates a project and runs its lint/typecheck/
+#                         test/build/purity gates — slow (an npm install plus a Nuxt build).
+#   - storybook:          PR-only. `build-storybook` is a separate nx target that
+#                         `nx run-many -t build` never invokes, so a broken story would pass
+#                         every other check. This job is the only thing that exercises it.
+#   - docker:             PR-only and slowest. Boots the generated stack for real and checks
+#                         `/health`.
+#
+# Forge ships zero runtime and zero test dependencies (ADR-0002), so there is no lockfile and
+# no `npm install`/`npm ci` step for forge's own package.json — there is nothing to install.
+# `npm ci` was checked directly against this repo and fails outright with no package-lock.json
+# (EUSAGE), so it is deliberately never invoked here. The generated projects created inside the
+# integration/storybook/docker steps below are a different package.json tree entirely and do
+# get an explicit `npm install` — that already happens inside the test files themselves for
+# the integration/docker tiers, and as an explicit step for the storybook tier.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    name: unit (sanitize + generator tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Sanitize (extraction gate — must pass before anything else)
+        run: npm run sanitize
+      - name: Unit tests
+        run: npm test
+
+  generated-project:
+    name: generated-project gate (lint/typecheck/test/build/purity)
+    needs: unit
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run test:integration
+
+  storybook:
+    name: template Storybook build (PR-tier; slow, not part of the fast unit push job)
+    needs: unit
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate a throwaway project
+        run: npm run create -- --name storybookapp --out "$RUNNER_TEMP" --yes --no-git
+      - name: Install the generated project's dependencies
+        working-directory: ${{ runner.temp }}/storybookapp
+        run: npm install
+      - name: Build Storybook (a separate nx target that `nx run-many -t build` never invokes)
+        working-directory: ${{ runner.temp }}/storybookapp
+        run: npx nx run webapp:build-storybook
+
+  docker:
+    name: docker e2e (boots the generated stack, asserts /health)
+    needs: unit
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run test:integration
+        env:
+          FORGE_E2E: '1'
