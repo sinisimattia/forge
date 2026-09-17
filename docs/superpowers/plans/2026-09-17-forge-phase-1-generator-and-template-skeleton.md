@@ -2401,8 +2401,14 @@ Proves the headline claim: a generated repository passes its own gates. Implemen
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const ROOTS = ['template', 'tools'];
+
+// This file necessarily contains every term it forbids — they are in its own
+// rule literals and comments. Without this exclusion the gate fails on a clean
+// checkout, which is the same reason a linter excludes its own config.
+const SELF = path.resolve(fileURLToPath(import.meta.url));
 
 const RULES = [
   ['source-project trace', /voku/i],
@@ -2437,6 +2443,7 @@ const findings = [];
 
 for (const root of ROOTS) {
   for await (const file of walk(root)) {
+    if (path.resolve(file) === SELF) continue;
     const buffer = await fs.readFile(file);
     if (buffer.includes(0)) continue;
     const lines = buffer.toString('utf8').split('\n');
