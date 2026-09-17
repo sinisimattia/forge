@@ -695,28 +695,42 @@ export async function copySubset(srcRoot, destRoot, tokens) {
   const written = [];
   const skipped = [];
 
-  for await (const rel of walk(srcRoot)) {
-    if (!inSubset(rel)) continue;
+  try {
+    for await (const rel of walk(srcRoot)) {
+      if (!inSubset(rel)) continue;
 
-    const destRel = substitute(rel, tokens);
-    const destAbs = path.join(destRoot, destRel);
+      const destRel = substitute(rel, tokens);
 
-    const exists = await fs.access(destAbs).then(() => true, () => false);
-    if (exists) { skipped.push(destRel); continue; }
+      // Guard the path as well as the contents, exactly as copyTree does.
+      const leftoverInPath = findUnresolved(destRel);
+      if (leftoverInPath.length > 0) throw new UnresolvedTokenError(leftoverInPath, `path "${rel}"`);
 
-    const buffer = await fs.readFile(path.join(srcRoot, rel));
-    await fs.mkdir(path.dirname(destAbs), { recursive: true });
+      const destAbs = path.join(destRoot, destRel);
 
-    if (isBinary(buffer)) {
-      await fs.writeFile(destAbs, buffer);
-    } else {
-      const output = substitute(buffer.toString('utf8'), tokens);
-      const leftover = findUnresolved(output);
-      if (leftover.length > 0) throw new UnresolvedTokenError(leftover, rel);
-      await fs.writeFile(destAbs, output);
+      const exists = await fs.access(destAbs).then(() => true, () => false);
+      if (exists) { skipped.push(destRel); continue; }
+
+      const buffer = await fs.readFile(path.join(srcRoot, rel));
+      await fs.mkdir(path.dirname(destAbs), { recursive: true });
+
+      if (isBinary(buffer)) {
+        await fs.writeFile(destAbs, buffer);
+      } else {
+        const output = substitute(buffer.toString('utf8'), tokens);
+        const leftover = findUnresolved(output);
+        if (leftover.length > 0) throw new UnresolvedTokenError(leftover, rel);
+        await fs.writeFile(destAbs, output);
+      }
+
+      written.push(destRel);
     }
-
-    written.push(destRel);
+  } catch (error) {
+    // Adopt mode has no staging directory — it writes into the user's real
+    // repository. Never roll back: deleting their files is worse than leaving
+    // ours. Instead, tell them exactly what landed before the abort.
+    error.written = written;
+    error.skipped = skipped;
+    throw error;
   }
 
   return { written, skipped };
