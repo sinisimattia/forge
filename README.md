@@ -180,19 +180,22 @@ explicit `npm install`.
   reference in that file would ship silently today. Validating it would need a YAML parser,
   which conflicts with the zero-dependency constraint (`docs/adrs/0002-dependency-free-generator.md`)
   — this is accepted as a known gap rather than an oversight.
-- **Generated projects are not reproducible — the template ships no `package-lock.json`.**
-  Every `npm install` inside a generated project resolves each dependency's version range
-  fresh, against whatever is newest on the registry that day, rather than against a set of
-  versions known to work together. The first observed casualty of this is the template's
-  own Storybook: it fails on a plain, freshly generated project with
-  `[vite:build-html] Missing field 'moduleType'` while building `iframe.html` — a
-  Storybook/Vite version-resolution mismatch, unrelated to any story's content. The CI
-  `storybook` job runs this build and surfaces the failure, but is currently
-  `continue-on-error: true` (non-blocking) precisely because the cause is this drift, not a
-  regression to fix per-PR. Whether the template should ship a lockfile to pin its
-  dependency graph is a real trade-off (reproducible builds vs. one more file for the
-  generator to keep in sync and one more thing extraction has to regenerate) and is an open
-  decision, not yet made.
+- **The template's Storybook build fails on a freshly generated project, for a reason that
+  is still unknown.** `template/package-lock.json` now pins the whole workspace (root,
+  `libs/core`, `apps/backend`, `apps/webapp`), and a generated project installs with `npm ci`
+  against it — this fixed the general reproducibility problem the template used to have (two
+  builds a week apart no longer resolve different dependency trees), and it fixed `npm ci`
+  inside the Dockerfiles, which previously needed a host `npm install` first just to produce
+  a lockfile for `COPY package-lock.json` to find.
+  It did **not** fix Storybook. The lockfile pins the exact combination once believed to be
+  the cause (`@storybook/builder-vite@9.1.2`, `@storybook/vue3-vite@9.1.2`,
+  `@rolldown/pluginutils@1.0.1`), and `npx nx run webapp:build-storybook` still fails
+  identically: `[vite:build-html] Missing field 'moduleType'` while building `iframe.html`.
+  That disproves the dependency-drift hypothesis this project previously recorded (see
+  `docs/superpowers/phase-1-decision-log.md`) — the exact same resolved versions still fail,
+  lockfile or not. The `storybook` CI job stays `continue-on-error: true` (non-blocking)
+  pending real root-causing of this failure. Do not re-attribute it to "no lockfile" without
+  re-testing — that specific fix has been tried and did not work.
 - **No drift/update tooling.** A generated project's `forge.json` records the Forge commit
   it was generated from, so re-syncing against a newer template stays *possible*, but no
   tooling to do it exists yet (`docs/adrs/0003-extraction-is-copy-out-only.md`).
