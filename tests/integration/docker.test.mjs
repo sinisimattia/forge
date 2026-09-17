@@ -80,11 +80,14 @@ test(
       maxBuffer: 64 * 1024 * 1024,
     });
 
-    // A real user runs `npm install` before `npm run dev:up` (see the generator's own
-    // "Next steps" output) — the template ships no package-lock.json, and the backend/
-    // webapp Dockerfiles COPY it unconditionally, so `docker compose build` on a bare
-    // generate (skipping this step) fails immediately with "package-lock.json: not found".
-    await run('npm', ['install'], { cwd: target, maxBuffer: 64 * 1024 * 1024 });
+    // `template/package-lock.json` is now committed and copied verbatim into every
+    // generated project, so no host `npm install` is needed before `docker compose build`
+    // any more — both Dockerfiles' `COPY package.json package-lock.json ...` find a real
+    // file straight off a bare `generate()`, and `RUN npm ci` installs from it inside the
+    // image. (Previously the template shipped no lockfile at all, so that COPY failed
+    // outright with "package-lock.json: not found" unless a host install had just created
+    // one — this deliberately no longer runs one, so a regression here is exactly what
+    // would bring that requirement back.)
 
     await fs.copyFile(path.join(target, '.env.example'), path.join(target, '.env'));
 

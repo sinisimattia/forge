@@ -5,16 +5,20 @@ __FORGE_DESCRIPTION__
 ## Prerequisites
 
 - [Docker](https://www.docker.com/) with Compose v2 (`docker compose`)
-- Node.js 22 (only needed on the host for editor tooling — everything actually runs in
-  containers)
+- Node.js 22 (optional — only needed on the host for editor tooling; `npm run dev:up` installs
+  every dependency inside the containers from the committed `package-lock.json`, so a host
+  install is never required just to bring the stack up)
 
 ## Quick start
 
 ```bash
 cp .env.example .env
-npm install
 npm run dev:up
 ```
+
+Running `npm install` on the host first is optional (useful for editor tooling like
+in-IDE typechecking), not required — the containers install from `package-lock.json` on
+their own via `npm ci`.
 
 - Backend API: [http://localhost:3000](http://localhost:3000) (health check at `/health`)
 - Webapp: [http://localhost:3001](http://localhost:3001)

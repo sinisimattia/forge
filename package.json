@@ -7,6 +7,7 @@
   "scripts": {
     "create": "node tools/create/index.mjs",
     "sanitize": "node tools/sanitize.mjs",
+    "refresh-lockfile": "node tools/refresh-lockfile.mjs",
     "test": "node --test 'tests/unit/**/*.test.mjs'",
     "test:integration": "node --test --test-timeout=1800000 'tests/integration/**/*.test.mjs'",
     "test:all": "npm run sanitize && npm test && npm run test:integration"

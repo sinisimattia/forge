@@ -133,7 +133,9 @@ async function main() {
     if (result.mode === 'create') {
       process.stdout.write(`\nCreated ${result.target} (${result.written.length} files)\n\n`);
       process.stdout.write('Next steps:\n');
-      process.stdout.write(`  cd ${result.target}\n  npm install\n  npm run dev:up\n\n`);
+      // `npm run dev:up` installs from the committed package-lock.json inside the containers
+      // (`npm ci`) — a host `npm install` is optional, only useful for local editor tooling.
+      process.stdout.write(`  cd ${result.target}\n  npm run dev:up\n\n`);
     } else {
       process.stdout.write(`\nAdopted the process layer into ${result.target}\n`);
       process.stdout.write(`  ${result.written.length} file(s) written\n`);
