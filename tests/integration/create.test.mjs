@@ -112,3 +112,35 @@ test('adopt mode derives the project name from the target directory', async () =
     'Naming rules for Billover.\n',
   );
 });
+
+test('create mode succeeds when the target exists but is empty', async () => {
+  const out = await tempDir();
+  await fs.mkdir(path.join(out, 'my-app'));
+  const { target } = await generate({
+    argv: ['--name', 'my-app', '--out', out, '--yes', '--no-git'],
+    templateRoot, forgeRoot, interactive: false,
+  });
+  assert.equal(await fs.readFile(path.join(target, 'CLAUDE.md'), 'utf8'), '# My App\n\n\n');
+});
+
+test('an adopt failure carries what it already wrote', async () => {
+  const brokenTemplate = await tempDir();
+  await fs.mkdir(path.join(brokenTemplate, 'docs/standards'), { recursive: true });
+  await fs.writeFile(path.join(brokenTemplate, 'docs/standards/a.md'), 'ok __FORGE_TITLE__');
+  await fs.writeFile(path.join(brokenTemplate, 'docs/standards/b.md'), 'bad __FORGE_MISSING__');
+  const existing = await tempDir();
+  await fs.writeFile(path.join(existing, 'keep.txt'), 'mine');
+
+  await assert.rejects(
+    () => generate({
+      argv: ['--into', existing, '--yes'],
+      templateRoot: brokenTemplate, forgeRoot, interactive: false,
+    }),
+    (error) => {
+      assert.ok(Array.isArray(error.written), 'an adopt failure must carry what landed');
+      return true;
+    },
+  );
+  // Never deleted, and the user's own file is untouched.
+  assert.equal(await fs.readFile(path.join(existing, 'keep.txt'), 'utf8'), 'mine');
+});

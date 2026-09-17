@@ -64,7 +64,10 @@ async function createProject({ args, templateRoot, forgeRoot, interactive }) {
     });
     await fs.writeFile(path.join(staging, 'forge.json'), `${JSON.stringify(receipt, null, 2)}\n`);
 
-    await fs.rm(target, { recursive: true, force: true });
+    // No `fs.rm(target)` here on purpose. `isEmptyDir` above guarantees the
+    // target is absent or empty, and rename() replaces an empty directory
+    // atomically. Deleting first would open the exact delete-then-fail window
+    // that staging-as-a-sibling exists to close.
     await fs.rename(staging, target);
 
     if (args.git) await initRepo(target, tokens.__FORGE_TITLE__);
@@ -118,7 +121,15 @@ async function main() {
       process.stdout.write('\n');
     }
   } catch (error) {
-    process.stderr.write(`\n${error.message}\n\n`);
+    process.stderr.write(`\n${error.message}\n`);
+    // copySubset attaches what it managed to write before aborting. Adopt mode
+    // writes into a real repository and never deletes, so say what landed.
+    if (Array.isArray(error.written) && error.written.length > 0) {
+      process.stderr.write(`\n${error.written.length} file(s) were written before this failed:\n`);
+      for (const rel of error.written) process.stderr.write(`    ${rel}\n`);
+      process.stderr.write('Nothing was deleted. Review them before re-running.\n');
+    }
+    process.stderr.write('\n');
     if (error instanceof UsageError) {
       process.stderr.write('Usage:\n');
       process.stderr.write('  npm run create -- --name <kebab> [--title <s>] [--scope <@s>]\n');
