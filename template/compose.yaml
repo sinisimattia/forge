@@ -60,6 +60,12 @@ services:
       APP_DB_PASSWORD: __FORGE_NAME__-app
       PORT: '3000'
       CORS_ORIGIN: http://localhost:${WEBAPP_PORT:-3001}
+      # Same origin as CORS_ORIGIN, same reason: what a browser on the host actually
+      # reaches. FileMailer's links are read from disk in dev, but they still have to
+      # resolve to the running webapp if anyone opens one. See .env.example and
+      # apps/backend/src/mail/templates/reset-password.ts for why this is never taken
+      # from an incoming request instead.
+      PUBLIC_WEBAPP_URL: http://localhost:${WEBAPP_PORT:-3001}
     env_file:
       - path: apps/backend/.env
         required: false

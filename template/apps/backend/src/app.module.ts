@@ -8,6 +8,7 @@ import { SessionRecord } from './auth/entities/session-record.entity';
 import { PasswordResetTokenRecord } from './auth/entities/password-reset-token-record.entity';
 import { HealthModule } from './health/health.module';
 import { AuthIdentityRecord } from './identities/auth-identity-record.entity';
+import { MailModule } from './mail';
 import { UserRecord } from './users/user-record.entity';
 
 /**
@@ -50,6 +51,7 @@ import { UserRecord } from './users/user-record.entity';
       }),
     }),
     HealthModule,
+    MailModule,
   ],
 })
 export class AppModule {}

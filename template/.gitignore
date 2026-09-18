@@ -8,6 +8,10 @@ storybook-static/
 *.log
 .DS_Store
 
+# FileMailer's dev outbox (ADR-0008) — one JSON file per message, including live
+# verification and reset-password links. Never committed.
+.mail-outbox/
+
 # Local env files (real values); templates (.env.example) are committed
 .env
 .env.*
