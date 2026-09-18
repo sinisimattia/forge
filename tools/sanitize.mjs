@@ -103,13 +103,32 @@ export function stripInterpolations(line) {
 // handles a line carrying a false positive AND a real secret, where a lookahead anchored at
 // one key's match site would skip the whole line. Case-insensitive throughout, including
 // the backreference.
+//
+// Applied to TypeScript source ONLY — see isTypeScriptFile. The justification for each of
+// these exemptions is a fact about source code (an enum member published in the source, a
+// type annotation), and neither shape exists in YAML or env files, where the rule was
+// correct as written. Applying them everywhere silently un-flagged
+// `POSTGRES_PASSWORD: "password"` in a compose file, which is the commonest shape a
+// weak-but-real credential takes.
 const SECRET_KEYS = 'SECRET|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY|ACCESS_KEY|DB_PASS';
 
 // A quoted value identical to its own key: a string enum member naming itself
 // (`PASSWORD = 'PASSWORD'`). The value is the key's own name, published in the source by
 // definition, so there is nothing secret about it. The backreference is what keeps this
 // narrow — `PASSWORD = 'hunter2'` does not match it and is still flagged.
-const SELF_NAMED_VALUE = new RegExp(`(${SECRET_KEYS})\\s*[:=]\\s*(['"\`])\\1\\2`, 'gi');
+//
+// The leading boundary matters as much as the backreference. The key alternation is a
+// substring match, so without it `POSTGRES_PASSWORD = 'password'` exempts itself: the
+// regex starts at the `PASSWORD` inside the longer name and finds a value equal to *that*.
+// A key is only self-named when the whole key is the name, so a preceding identifier
+// character disqualifies the match. (`\b` would not do it — `_` is a word character, so
+// `_PASSWORD` has no boundary before `P`.) The type-annotation rule below deliberately
+// keeps no such anchor: `dbPassword: string` is a type annotation like any other, and the
+// populated-secret rule it is exempting matches by substring too.
+const SELF_NAMED_VALUE = new RegExp(
+  `(?<![A-Za-z0-9_])(${SECRET_KEYS})\\s*[:=]\\s*(['"\`])\\1\\2`,
+  'gi',
+);
 
 // A TypeScript type annotation: `secret: string`, `readonly token: string,`. A type is not
 // a value, so nothing is populated. Only the primitive type names are accepted — an
@@ -129,17 +148,32 @@ export function stripNonSecrets(line) {
   return line.replace(SELF_NAMED_VALUE, ' ').replace(TYPE_ANNOTATION, ' ');
 }
 
+/** Whether a path is TypeScript source — the only file type the two exemptions above apply to. */
+export function isTypeScriptFile(file) {
+  return /\.tsx?$/.test(file);
+}
+
 /**
  * Every rule label a line's *content* trips, in rule order. This is the whole per-line
  * judgement the scan below makes, extracted so it can be exercised directly: a gate whose
  * exemptions can only be tested by writing a fixture file into `template/` is a gate whose
  * exemptions do not get tested.
  *
+ * The file is part of the judgement, not decoration: `PASSWORD = 'PASSWORD'` is an enum
+ * member in a `.ts` file and a real credential in a compose file. `${...}` stripping is
+ * unconditional — it exists *for* YAML — while the two source-code exemptions apply only to
+ * TypeScript. Anything whose type is unknown is judged as a non-source file, which is the
+ * strict direction.
+ *
  * @param line - one raw line, exactly as read from the file
+ * @param file - the path it came from; anything but `.ts`/`.tsx` gets the unexempted rule
  * @returns the labels of the rules it matched, possibly empty
  */
-export function lineFindings(line) {
-  const secretProbe = stripNonSecrets(stripInterpolations(line));
+export function lineFindings(line, file = '') {
+  const interpolationsStripped = stripInterpolations(line);
+  const secretProbe = isTypeScriptFile(file)
+    ? stripNonSecrets(interpolationsStripped)
+    : interpolationsStripped;
   const labels = [];
   for (const [label, pattern] of RULES) {
     const subject = label === 'populated secret' ? secretProbe : line;
@@ -205,7 +239,7 @@ async function main() {
           exemptions.push(`${file}:${index + 1}  ${line.trim()}`);
           return;
         }
-        for (const label of lineFindings(line)) {
+        for (const label of lineFindings(line, file)) {
           findings.push(`${file}:${index + 1}  ${label}  ${line.trim()}`);
         }
       });
