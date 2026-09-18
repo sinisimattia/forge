@@ -2305,7 +2305,9 @@ runIUserServiceContract({
 });
 ```
 
-**`ConformanceExpect` is a three-method surface — `equal`, `ok`, `rejects` — not a matcher chain**, so jest's `expect` cannot be passed through with a cast. The source project's suites call the matcher chain directly and are therefore *not* a copyable model here. Write one small adapter, once, in `src/common/testing/`, and reuse it for all four suites. The same applies to Task 16's vitest drivers.
+**`ConformanceExpect` is a three-method surface — `equal`, `ok`, `rejects` — not a matcher chain**, so jest's `expect` cannot be passed through with a cast.
+
+**The adapter must honour the third argument.** Every method takes an optional `message`, and every adapter written before this rule dropped it — so every explanatory message in every conformance suite was discarded, and a failing precondition reported `expect(received).toBeTruthy() / Received: false` instead of saying what was wrong. Jest has no built-in second argument (`expect(false, 'msg')` → `Expect takes at most one argument.`), so the adapter raises the message itself for `ok` and prefixes it to jest's diff for `equal` and `rejects`. A suite's messages are the only thing that tells an implementer *why* a contract rejected their implementation; an adapter that swallows them turns every conformance failure into a puzzle. The source project's suites call the matcher chain directly and are therefore *not* a copyable model here. Write one small adapter, once, in `src/common/testing/`, and reuse it for all four suites. The same applies to Task 16's vitest drivers.
 
 Run them. Expect failures — this is the first time the real services meet the contracts, and a mismatch here is a real finding about one side or the other. For each failure, decide **which** is wrong, the contract or the implementation, and say why. A contract bent to match an implementation is not a contract.
 
