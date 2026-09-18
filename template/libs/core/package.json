@@ -4,6 +4,30 @@
   "private": true,
   "type": "commonjs",
   "exports": {
+    "./auth/contracts": {
+      "types": "./dist/auth/contracts/index.d.ts",
+      "default": "./dist/auth/contracts/index.js"
+    },
+    "./auth/entities": {
+      "types": "./dist/auth/entities/index.d.ts",
+      "default": "./dist/auth/entities/index.js"
+    },
+    "./auth/enums": {
+      "types": "./dist/auth/enums/index.d.ts",
+      "default": "./dist/auth/enums/index.js"
+    },
+    "./auth/errors": {
+      "types": "./dist/auth/errors/index.d.ts",
+      "default": "./dist/auth/errors/index.js"
+    },
+    "./auth/testing": {
+      "types": "./dist/auth/testing/index.d.ts",
+      "default": "./dist/auth/testing/index.js"
+    },
+    "./auth/types": {
+      "types": "./dist/auth/types/index.d.ts",
+      "default": "./dist/auth/types/index.js"
+    },
     "./identities/contracts": {
       "types": "./dist/identities/contracts/index.d.ts",
       "default": "./dist/identities/contracts/index.js"

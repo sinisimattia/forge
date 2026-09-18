@@ -20,9 +20,13 @@ the shared tests — not convention or code review — keep them identical. See
 ## What's inside
 
 This skeleton ships the cross-domain `shared/` folder, the `users/` domain — the first real
-domain, and the shape every later one copies — and the `identities/` domain, which models the
+domain, and the shape every later one copies — the `identities/` domain, which models the
 ways a user can prove who they are as rows rather than columns on a user
-([ADR-0005](../../docs/adrs/0005-identity-is-separate-from-user.md)). Each domain gets its own
+([ADR-0005](../../docs/adrs/0005-identity-is-separate-from-user.md)), and the `auth/` domain,
+which models being signed in as a `Session` and the result of an attempt to sign in as a
+discriminated `AuthenticationOutcome` — never a boolean and never a credential, so that adding
+a way for an attempt to end is a compile error at every consumer rather than a silent
+fall-through. Each domain gets its own
 folder under `src/` with up to seven subfolders — `entities/`, `contracts/`, `enums/`, `errors/`,
 `types/`, `testing/`, `policies/` — one file per exported symbol, named exactly after the symbol.
 A domain that has no rule needing a standalone function simply has no `policies/` folder.
