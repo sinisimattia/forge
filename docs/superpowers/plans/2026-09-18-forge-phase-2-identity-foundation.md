@@ -87,6 +87,12 @@ Every task's requirements implicitly include this section.
   same cell means different things depending on whether the reader sees raw or rendered markdown.
   Use repeated `-e` patterns, which are correct under both. Six shipped signals carried this
   defect and four were silently dead.
+- **Verify a check the way CI runs it, not the way that is convenient.** A Task 5 assertion
+  matched jest's `Expected: 2` literally. Jest colours that output under `nx` and not under a bare
+  `jest`, so the assertion passed the way it was verified and failed the way CI runs it
+  (`nx affected -t … test …`) — and the branch sat RED for two tasks with everyone reporting green.
+  Third instance this phase of a check verified along one path and executed along another. When a
+  gate has a CI invocation, run that invocation.
 - **Domain and vocabulary greps are substring, not word-boundary.** `\bevent\b` matches none of `events`, `eventId`, `userPaymentSummaryByEvent`. Triage hits by hand.
 - **BSD `sed` silently ignores `\b`** — it exits 0 and changes nothing. Use `perl -pi -e` with ASCII-only patterns for in-place edits.
 - **`node --test <directory>` does not work** — it treats the directory as a test file and runs nothing. Use a glob.
@@ -1594,7 +1600,14 @@ an unknown address returns REJECTED(UNKNOWN_ACCOUNT)
     `reason` is removed, which is the property the transport layer relies on
 resetPassword consumes its token: presenting it again rejects ConsumedTokenError
 resetPassword ends every session the user held
-changePassword ends every *other* session the user held
+changePassword leaves at most one session usable — the failable half of "ends every
+  other session". The literal form is NOT assertable here: `IAuthService.changePassword`
+  takes no `SessionId`, and ADR-0007 forbids resolving the current session from ambient
+  state, so core cannot name the session being kept. Adding a parameter is not the answer
+  either — the webapp never sees a session id (its access token is opaque to it), so it
+  would have to invent one, which is the same dishonesty that kept renewal off the
+  contract. "Every *other*" is a backend behaviour: Task 13's driver and Task 19's e2e
+  assert it, where the current session is actually known
 a revoked session is not active even before it expires
 ```
 
