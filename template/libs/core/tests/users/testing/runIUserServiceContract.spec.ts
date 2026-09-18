@@ -103,7 +103,10 @@ const conformanceExpect: ConformanceExpect = {
 
 /** A fresh world holding exactly the three users the suite is promised. */
 async function makeContext(): Promise<UserServiceContractContext> {
-  const actorRow = makeUserJSON();
+  // Deliberately not in normal form: the suite requires the world to be built
+  // from an address the domain has to normalize, so that normalization is
+  // something an implementation can be caught failing to do.
+  const actorRow = makeUserJSON({ email: '  Ada@Example.COM ' });
   const otherRow = makeUserJSON({
     id: 'user-2' as UserId,
     email: 'grace@example.com',
@@ -124,4 +127,11 @@ async function makeContext(): Promise<UserServiceContractContext> {
   };
 }
 
-runIUserServiceContract({ describe, it, expect: conformanceExpect, makeContext });
+runIUserServiceContract({
+  describe,
+  it,
+  expect: conformanceExpect,
+  makeContext,
+  // Well-formed for this store — its keys are plain strings — and in no world.
+  absentId: 'no-such-user' as UserId,
+});

@@ -145,8 +145,8 @@ An implementation that crosses a serialization boundary receives its data as pla
    with `Omit`/`Pick`, plus any create-input/result types under `types/`.
 4. Add a `run<IName>Contract` suite + fixtures under `testing/`.
 5. Declare the new subpaths (`./<domain>/entities`, `/contracts`, `/enums`, `/errors`, `/types`,
-   `/testing`, and `/policies` if present) in `libs/core/package.json` `exports` — and **nowhere
-   else**. Every other
+   `/testing`, and `/policies` if present) in `libs/core/package.json` `exports` — and **nowhere else**.
+   Every other
    resolution point (`libs/core/tsconfig.json` `paths`, `libs/core/jest.config.js`
    `moduleNameMapper`, `apps/backend/tsconfig.json` `paths`, `apps/backend/jest.config.ts`
    `moduleNameMapper`, `apps/webapp/vitest.config.ts` `resolve.alias`) is a `__FORGE_SCOPE__/core/*`

@@ -1,14 +1,9 @@
-import { normalizeEmail } from '../../shared/policies/normalizeEmail';
 import { User } from '../entities/User';
 import { PlatformRole } from '../enums/PlatformRole';
 import { UserStatus } from '../enums/UserStatus';
 import { DisplayNameRequiredError } from '../errors/DisplayNameRequiredError';
 import { UserNotFoundError } from '../errors/UserNotFoundError';
-import type { UserId } from '../types/UserId';
 import type { IUserServiceContractDeps } from './IUserServiceContractDeps';
-
-/** An id no world contains, used to prove an unknown target is refused. */
-const ABSENT_ID = 'no-such-user' as UserId;
 
 /**
  * The behavior every {@link IUserService} implementation must exhibit.
@@ -19,14 +14,21 @@ const ABSENT_ID = 'no-such-user' as UserId;
  * behavior only: who is *allowed* to do these things is enforced where the
  * implementation lives, and is held to its own suite there.
  *
- * @param deps - the host runner's primitives plus a fresh-world factory
+ * Every assertion here has to be one an implementation can actually fail. An
+ * entity invariant re-checked on a value the entity itself built is a tautology,
+ * however much it looks like a guard — so each method compares what the service
+ * returned against the world the host promised, and proves that what came back
+ * is a real entity rather than the raw shape some store or peer handed over.
+ *
+ * @param deps - the host runner's primitives, a fresh-world factory, and an id
+ * well-formed for the host's store that no world contains
  */
 export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
-  const { describe, it, expect, makeContext } = deps;
+  const { describe, it, expect, makeContext, absentId } = deps;
 
   describe('IUserService conformance', () => {
     describe('getProfile', () => {
-      it('returns the actor\'s own profile', async () => {
+      it('returns the actor\'s own profile, as a real entity', async () => {
         const { service, actor } = await makeContext();
         const profile = await service.getProfile(actor.id, actor.id);
         expect.ok(profile instanceof User, 'getProfile must return a real entity');
@@ -34,16 +36,19 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
         expect.equal(profile.displayName, actor.displayName);
       });
 
-      it('returns a profile whose email is in normal form', async () => {
+      // The world was built from an address that is not in normal form, and
+      // `actor` carries the normal form; comparing the two is what an
+      // implementation returning the address it was given fails.
+      it('returns the address in normal form, not the form the world was given', async () => {
         const { service, actor } = await makeContext();
         const profile = await service.getProfile(actor.id, actor.id);
-        expect.equal(profile.email, normalizeEmail(profile.email));
+        expect.equal(profile.email, actor.email);
       });
 
       it('rejects an id that does not exist', async () => {
         const { service, actor } = await makeContext();
         await expect.rejects(
-          () => service.getProfile(actor.id, ABSENT_ID),
+          () => service.getProfile(actor.id, absentId),
           UserNotFoundError,
         );
       });
@@ -53,17 +58,19 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
       it('changes the display name and returns the updated user', async () => {
         const { service, actor } = await makeContext();
         const updated = await service.updateProfile(actor.id, { displayName: 'Ada Lovelace' });
+        expect.ok(updated instanceof User, 'updateProfile must return a real entity');
         expect.equal(updated.displayName, 'Ada Lovelace');
 
         const reread = await service.getProfile(actor.id, actor.id);
         expect.equal(reread.displayName, 'Ada Lovelace');
       });
 
-      // Trimming is an invariant of the entity, so any implementation returning a
-      // real `User` gets it for free. What this still discriminates is an
-      // implementation that hands back whatever its store or its peer gave it
-      // without rebuilding the entity from it — which is why the instance check
-      // above and this assertion belong together.
+      // Trimming is an invariant of the entity, so an implementation that
+      // returns a real `User` gets it for free and cannot fail this. What it
+      // still catches is an implementation that hands back whatever its store
+      // or its peer gave it without rebuilding the entity from it — the same
+      // failure the `instanceof` check in the test above catches, from the
+      // other side. Kept for that reason and for no other.
       it('trims the new display name', async () => {
         const { service, actor } = await makeContext();
         const updated = await service.updateProfile(actor.id, { displayName: '  Ada Lovelace  ' });
@@ -80,9 +87,8 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
 
       it('leaves the email untouched — a profile update is not an address change', async () => {
         const { service, actor } = await makeContext();
-        const before = actor.email;
         const updated = await service.updateProfile(actor.id, { displayName: 'Renamed' });
-        expect.equal(updated.email, before);
+        expect.equal(updated.email, actor.email);
       });
     });
 
@@ -111,6 +117,7 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
         expect.equal(page.meta.limit, 2);
         expect.equal(page.meta.totalPages, Math.ceil(page.meta.total / page.meta.limit));
         expect.equal(page.data.length, 2);
+        expect.ok(page.data[0] instanceof User, 'listUsers must return real entities');
       });
 
       it('returns page 2 disjoint from page 1', async () => {
@@ -146,7 +153,7 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
       it('rejects an id that does not exist', async () => {
         const { service, admin } = await makeContext();
         await expect.rejects(
-          () => service.setStatus(admin.id, ABSENT_ID, UserStatus.SUSPENDED),
+          () => service.setStatus(admin.id, absentId, UserStatus.SUSPENDED),
           UserNotFoundError,
         );
       });
@@ -160,44 +167,57 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
           other.id,
           PlatformRole.PLATFORM_ADMIN,
         );
+        expect.ok(promoted instanceof User, 'setPlatformRole must return a real entity');
         expect.equal(promoted.platformRole, PlatformRole.PLATFORM_ADMIN);
 
         const reread = await service.getProfile(admin.id, other.id);
         expect.equal(reread.platformRole, PlatformRole.PLATFORM_ADMIN);
       });
 
+      // Withdrawal is tested on somebody else on purpose. Asking the world's
+      // only administrator to demote itself would oblige every implementation
+      // to permit exactly that, and an implementation is entitled — arguably
+      // obliged — to refuse it, because the last administrator giving up
+      // administration leaves the deployment with nobody able to operate it.
       it('withdraws it again', async () => {
-        const { service, admin } = await makeContext();
+        const { service, other, admin } = await makeContext();
+        await service.setPlatformRole(admin.id, other.id, PlatformRole.PLATFORM_ADMIN);
         const demoted = await service.setPlatformRole(
           admin.id,
-          admin.id,
+          other.id,
           PlatformRole.PLATFORM_USER,
         );
         expect.equal(demoted.platformRole, PlatformRole.PLATFORM_USER);
+
+        const reread = await service.getProfile(admin.id, other.id);
+        expect.equal(reread.platformRole, PlatformRole.PLATFORM_USER);
       });
     });
 
     describe('wire shape', () => {
-      // The one assertion that makes two independent implementations provably
-      // agree on the shape that crosses between them: whatever one writes, the
-      // other can rebuild without losing a field.
-      it('survives the round trip through the wire shape in every field', async () => {
+      // The one assertion that makes two independent implementations agree on
+      // the shape crossing between them. Both sides have to be load-bearing:
+      // the left is what the service produced and serialized, the right is the
+      // world the host promised. Comparing a round trip against itself would
+      // prove only that the entity can serialize, which the entity's own tests
+      // already establish and no implementation can get wrong.
+      it('carries every field of the promised user out through the wire shape', async () => {
         const { service, actor } = await makeContext();
-        const user = await service.getProfile(actor.id, actor.id);
-        const json = user.toJSON();
-        const revived = User.fromJSON(json);
+        const fetched = await service.getProfile(actor.id, actor.id);
+        const revived = User.fromJSON(fetched.toJSON());
         expect.ok(revived instanceof User, 'fromJSON must produce a real entity');
 
-        const again = revived.toJSON();
-        expect.equal(again.id, json.id);
-        expect.equal(again.email, json.email);
-        expect.equal(again.displayName, json.displayName);
-        expect.equal(again.status, json.status);
-        expect.equal(again.platformRole, json.platformRole);
-        expect.equal(again.emailVerifiedAt, json.emailVerifiedAt);
-        expect.equal(again.createdAt, json.createdAt);
-        expect.equal(again.updatedAt, json.updatedAt);
-        expect.equal(again.deletedAt, json.deletedAt);
+        const actual = revived.toJSON();
+        const promised = actor.toJSON();
+        expect.equal(actual.id, promised.id);
+        expect.equal(actual.email, promised.email);
+        expect.equal(actual.displayName, promised.displayName);
+        expect.equal(actual.status, promised.status);
+        expect.equal(actual.platformRole, promised.platformRole);
+        expect.equal(actual.emailVerifiedAt, promised.emailVerifiedAt);
+        expect.equal(actual.createdAt, promised.createdAt);
+        expect.equal(actual.updatedAt, promised.updatedAt);
+        expect.equal(actual.deletedAt, promised.deletedAt);
       });
     });
   });
