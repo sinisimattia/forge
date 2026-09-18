@@ -114,18 +114,23 @@ export function stripInterpolations(line) {
 const SECRET_KEYS = 'SECRET|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY|ACCESS_KEY|DB_PASS';
 
 // A quoted value identical to its own key: a string enum member naming itself
-// (`PASSWORD = 'PASSWORD'`). The value is the key's own name, published in the source by
-// definition, so there is nothing secret about it. The backreference is what keeps this
-// narrow — `PASSWORD = 'hunter2'` does not match it and is still flagged.
+// (`PASSWORD = 'PASSWORD'`, `INVALID_SECRET = 'INVALID_SECRET'`). The value is the key's
+// own name, published in the source by definition, so there is nothing secret about it.
+// The backreference is what keeps this narrow — `PASSWORD = 'hunter2'` does not match it
+// and is still flagged.
 //
-// The leading boundary matters as much as the backreference. The key alternation is a
-// substring match, so without it `POSTGRES_PASSWORD = 'password'` exempts itself: the
-// regex starts at the `PASSWORD` inside the longer name and finds a value equal to *that*.
-// A key is only self-named when the whole key is the name, so a preceding identifier
-// character disqualifies the match. (`\b` would not do it — `_` is a word character, so
-// `_PASSWORD` has no boundary before `P`.) The type-annotation rule below deliberately
-// keeps no such anchor: `dbPassword: string` is a type annotation like any other, and the
-// populated-secret rule it is exempting matches by substring too.
+// The key that is captured is the WHOLE UPPER_SNAKE name, not the secret word inside it,
+// and that is what the backreference then compares against. An earlier form captured only
+// the alternation and blocked the match with a preceding-character lookbehind, which got
+// `POSTGRES_PASSWORD = 'password'` right — the regex could no longer start inside the
+// longer name and find a value equal to that fragment — but got
+// `INVALID_SECRET = 'INVALID_SECRET'` wrong, flagging a member that is the exact shape
+// this exemption exists for. Capturing the whole key does both jobs at once and is the
+// more direct statement of the rule: a key is self-named when the value is the key.
+// `POSTGRES_PASSWORD = 'password'` still flags, because `password` is not
+// `POSTGRES_PASSWORD`. The type-annotation rule below deliberately keeps no such anchor:
+// `dbPassword: string` is a type annotation like any other, and the populated-secret rule
+// it is exempting matches by substring too.
 //
 // Case-SENSITIVE — the only rule here that is, and the `i` this once carried was a hole.
 // JS applies `i` to a backreference too, so `const PASSWORD = 'password'` and
@@ -133,11 +138,11 @@ const SECRET_KEYS = 'SECRET|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY|ACCESS_KEY|DB_PAS
 // credential in a config object, wearing the enum member's exemption. The justification
 // ("the value is the key's own name, published in the source by definition") holds only
 // for the shipped shape, which is an UPPER_SNAKE enum member whose value is spelled
-// identically — so that is exactly what this matches and nothing else. A self-named member
+// identically — so the key pattern is UPPER_SNAKE and nothing else. A self-named member
 // in some other casing (`Password = 'Password'`) is flagged, and can carry a
 // `sanitize:allow` marker like any other deliberate literal; the gate errs strict.
 const SELF_NAMED_VALUE = new RegExp(
-  `(?<![A-Za-z0-9_])(${SECRET_KEYS})\\s*[:=]\\s*(['"\`])\\1\\2`,
+  `(?<![A-Za-z0-9_])([A-Z0-9_]*(?:${SECRET_KEYS})[A-Z0-9_]*)\\s*[:=]\\s*(['"\`])\\1\\2`,
   'g',
 );
 

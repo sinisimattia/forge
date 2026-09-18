@@ -111,6 +111,23 @@ test('a self-named value is exempt only in the exact case of its key', () => {
   assert.equal(flagged("  PASSWORD = 'PASSWORD',", TS), false);
 });
 
+// The whole UPPER_SNAKE key is what the value is compared against, not the secret word
+// buried inside it. An earlier form captured only the alternation and blocked a match that
+// started mid-name with a lookbehind. That kept `POSTGRES_PASSWORD = 'password'` flagged,
+// which was the point, and it also flagged `INVALID_SECRET = 'INVALID_SECRET'` — a member
+// of exactly the shape the exemption exists for, since the character before `SECRET` is an
+// underscore. Comparing the value against the whole key does both jobs and says the rule
+// more directly: a key is self-named when the value IS the key.
+test('a self-named member whose key carries a prefix is still self-named', () => {
+  assert.equal(flagged("  INVALID_SECRET = 'INVALID_SECRET',", TS), false);
+  assert.equal(flagged("  EMAIL_TOKEN: 'EMAIL_TOKEN',", TS), false);
+  // The cases the earlier anchor was added for, unchanged.
+  assert.equal(labels('  POSTGRES_PASSWORD: "password"', TS), 'populated secret');
+  assert.equal(labels("  const DB_PASSWORD = 'password';", TS), 'populated secret');
+  // And still source-only: the same member in YAML is a credential.
+  assert.equal(labels("  INVALID_SECRET = 'INVALID_SECRET',", YAML), 'populated secret');
+});
+
 test('a bare word after a colon that is not a primitive type is still flagged', () => {
   assert.equal(labels('PASSWORD: hunter2', TS), 'populated secret');
   assert.equal(labels('  token: hunter2,', TS), 'populated secret');
