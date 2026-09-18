@@ -222,7 +222,12 @@ So: pay the enumeration tax in exactly one file, where it buys a loud failure. T
 
 The source project already carries the drifted command form (`node dist/apps/backend/src/main`); the template does not, because it never had a core import to trigger it. Nothing fails at typecheck or test time — it fails when the production image starts, which is the worst place to find it.
 
-A consequence worth stating plainly, because it will confuse someone later: **the backend never consumes core's `dist` at all.** Not for types (its `moduleResolution: "node"` ignores `exports` entirely) and not at runtime (paths inline the source into its own output). `libs/core/package.json` `exports` exists for the webapp's bundler resolution and for external consumers.
+A consequence worth stating plainly, because it will confuse someone later — and which this plan got **wrong** at first, so read it carefully:
+
+- **At compile and test time** the backend does not consume core's `dist`. Its `moduleResolution: "node"` ignores `exports` entirely, and `paths` points at source.
+- **At runtime it does.** TypeScript does not rewrite a path-mapped specifier, so the emitted JavaScript still says `require("__FORGE_SCOPE__/core/...")`, and Node resolves that through the workspace symlink into `libs/core/dist`. The compiled copy of core that the `rootDir` pin emits under `apps/backend/dist/libs/` is never loaded — it is dead weight, and mistaking it for the thing that loads is exactly the error that produced the original claim here.
+
+The consequence that matters: **any image running the backend must ship `libs/core/package.json` and `libs/core/dist`**, or the first core import dies at container start with `MODULE_NOT_FOUND`. The prod stage of `template/apps/backend/Dockerfile` copies both, and a container was watched failing without them before the fix was applied.
 
 **Files:**
 - Modify: `template/nx.json` (L1)
