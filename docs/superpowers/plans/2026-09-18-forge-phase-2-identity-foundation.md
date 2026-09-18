@@ -369,6 +369,7 @@ The three cross-domain pieces every later core task imports. Small on purpose: t
 - Create: `template/libs/core/src/shared/policies/normalizeEmail.ts`
 - Create: `template/libs/core/src/shared/policies/index.ts`
 - Modify: `template/libs/core/src/shared/types/index.ts`
+- Modify: `template/libs/core/STANDARDS.md` (sanction the `policies/` folder — see Step 4)
 - Modify: `template/libs/core/package.json` (add the `./shared/policies` export)
 - Modify: `template/libs/core/tsconfig.json`, `template/libs/core/jest.config.js` (add `./shared/policies` — see Task 1 for the mapping form)
 - Test: `template/libs/core/tests/shared/policies/assertNever.spec.ts`
@@ -521,9 +522,29 @@ export type { Brand } from './Brand';
 export type { PaginatedResult } from './PaginatedResult';
 ```
 
-- [ ] **Step 4: Wire the new subpath**
+- [ ] **Step 4: Sanction `policies/` in the package's own standards, then wire the subpath**
 
-Add `./shared/policies` to `template/libs/core/package.json` `exports`, to `template/libs/core/tsconfig.json` `paths` and to `template/libs/core/jest.config.js` `moduleNameMapper`, in whichever form Task 1 established. `shared/types` already exists in all three and needs no change.
+`libs/core/STANDARDS.md`'s layout table currently says each domain folder has **exactly six**
+subfolders, and lists `shared/` as `errors/`, `testing/` and `types/`. This task creates a
+seventh, so it must license it in the same commit — otherwise every file it adds violates the
+standard the package ships, and a reviewer would be right to reject it.
+
+Make three edits, and no more (Task 3 owns the rest of this file):
+
+1. Change "exactly six subfolders" to "exactly seven" and add the table row:
+
+```markdown
+| `policies/` | **Pure functions** over entities, enums and types — the only place in core a standalone function may live (e.g. `normalizeEmail.ts`, `assertNever.ts`, later `can.ts`) | classes, interfaces, state, anything with a dependency |
+```
+
+2. Add `shared/policies/` to the `shared/` bullet list.
+3. Add `/<domain>/policies` to the "Subpath exports only" list.
+
+One sentence of rationale in the file: a domain rule that is not a method on an entity — because
+it spans entities, or because it must be callable without constructing one — has nowhere else to
+live, and hiding it as a static method on a class with no instances is worse.
+
+Then add `./shared/policies` to `template/libs/core/package.json` `exports`, to `template/libs/core/tsconfig.json` `paths` and to `template/libs/core/jest.config.js` `moduleNameMapper`, in whichever form Task 1 established. `shared/types` already exists in all three and needs no change.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -598,17 +619,9 @@ grep -rnoE '\]\([^)]+\.md[^)]*\)' docs/adrs/000[5-8]*.md docs/adrs/README.md | s
 
 Resolve each hit by hand against the real tree. Phase 1 shipped four dangling pointers to `docs/architecture/{system-overview,backend,frontend}.md` and the class was invisible to vocabulary greps — it is about file existence, not wording. Any link to a file that does not exist is a defect in this task, not a future one.
 
-- [ ] **Step 4: Add the `policies/` folder to the core standards**
+- [ ] **Step 4: Verify the `policies/` folder is already sanctioned**
 
-In `template/libs/core/STANDARDS.md`, the "File layout — per-domain folders" table currently says each domain folder has **exactly six** subfolders. Change that to seven and add the row:
-
-```markdown
-| `policies/` | **Pure functions** over entities, enums and types — the only place in core a standalone function may live (e.g. `normalizeEmail.ts`, `assertNever.ts`, later `can.ts`) | classes, interfaces, state, anything with a dependency |
-```
-
-Then extend the sentence under the table so `shared/` lists `shared/policies/` alongside `shared/errors/`, `shared/testing/` and `shared/types/`, and add `/<domain>/policies` to the "Subpath exports only" list.
-
-State why the folder exists, in one sentence: a domain rule that is not a method on an entity — because it spans entities, or because it must be callable without constructing one — has nowhere else to live, and hiding it as a static method on a class that has no instances is worse.
+Task 2 added the `policies/` row to `libs/core/STANDARDS.md`'s layout table, changed "exactly six subfolders" to seven, and extended the `shared/` bullet and the subpath list — it had to, because it created the folder. Confirm all three edits are present and correct; do **not** re-add them. If any is missing, add it here and note the gap in your report.
 
 - [ ] **Step 5: Add the new review dimensions**
 
@@ -2257,29 +2270,24 @@ If you find a candidate that genuinely needs a DOM event type and cannot use `de
 
 `AppAlert`, `AppAvatar`, `AppBadge`, `AppCard`, `AppCheckbox`, `AppContainer`, `AppDivider`, `AppGrid`, `AppHeading`, `AppIcon`, `AppImage`, `AppInput`, `AppLink`, `AppLogo`, `AppOverlay`, `AppProgressBar`, `AppRadioGroup`, `AppSection`, `AppSelect`, `AppSpinner`, `AppStack`, `AppSurface`, `AppTab`, `AppTable`, `AppTableBody`, `AppTableCell`, `AppTableHead`, `AppTableRow`, `AppText`, `AppTextarea`, `AppToggle`
 
-**Import — molecules (4):** `AppTabGroup`, `ConfirmDialog`, `FormField`, `UserMenu`
-**Import — organisms (1):** `AppHeader`
+**Import — molecules (3):** `AppTabGroup`, `ConfirmDialog`, `FormField`
 **Import — templates (1):** `AuthTemplate`
+
+**Deferred to Task 17, not skipped:** `UserMenu` and `AppHeader` both call `useAuth()`, which Task 16 ships. Under Nuxt auto-imports that is a hard dependency, not a soft one — the composable would not exist, `nx typecheck webapp` would fail, and any spec mounting them would throw a `ReferenceError`. They are imported in Task 17, after the store exists. Nothing in this task's set touches auth state.
 
 **Leave behind — niche rather than domain-coupled:** `AppColorPicker`, `AppColorSwatch` (only meaningful for a theming feature that does not exist here) and `AppMapEmbed` (a mapping integration a generated project has no reason to inherit). None is a domain leak; they are simply not a starting point. Say so in the commit message so the decision is legible.
 
 **Leave behind — domain-coupled, all of them:** every `Event*`, `Ticket*`, `Payment*`, `Refund*`, `Rsvp*`, `Invitation*`, `Guest*`, `Series*`, `CostItem*`, `Organizer*`, `Provider*`, `*ModeDialog`, `OnlineCheckoutSection`, `MarkItemsPaidDialog`, `RecurrenceSelector` and `EventPageTemplate`. These are the source project's product, not its scaffolding.
 
-Two candidates need real edits rather than a rename:
-
-- **`UserMenu`** reads `user.firstName` and `user.lastName`. This phase's `User` has a single `displayName` (Task 4). Adapt it, and derive initials from `displayName` rather than inventing name fields the entity does not have.
-- **`AppHeader`** links to `/login` and `/register` and renders `UserMenu` behind `isAuthenticated`. Those routes exist by Task 17, and `isAuthenticated` comes from Task 16's store — so `AppHeader` is imported here but only becomes live then. Check that it references no route this phase does not ship.
-
 **Files:**
 - Create: `template/apps/webapp/app/components/atoms/*.vue` (31)
-- Create: `template/apps/webapp/app/components/molecules/{AppTabGroup,ConfirmDialog,FormField,UserMenu}.vue`
-- Create: `template/apps/webapp/app/components/organisms/AppHeader.vue`
+- Create: `template/apps/webapp/app/components/molecules/{AppTabGroup,ConfirmDialog,FormField}.vue`
 - Create: `template/apps/webapp/app/components/templates/AuthTemplate.vue`
-- Create: `template/apps/webapp/stories/{atoms,molecules,organisms}/*.stories.ts`
+- Create: `template/apps/webapp/stories/{atoms,molecules}/*.stories.ts`
 - Create: `template/apps/webapp/app/assets/scss/{_variables.scss,_mixins.scss,app.scss}`
 - Modify: `template/apps/webapp/tailwind.config.ts`, `nuxt.config.ts`, `package.json`, `app/locales/en.json`
 - Modify: `template/apps/webapp/app/components/atoms/AppButton.vue` (re-base onto the palette)
-- Delete: the three `.gitkeep` files, now that the folders hold components
+- Delete: the `molecules/` and `templates/` `.gitkeep` files (`organisms/` stays empty until Task 17)
 - Modify: `template/package-lock.json`
 
 **Interfaces:**
@@ -2319,19 +2327,19 @@ and bind `v-model="model"` on the native element. The `modelValue` prop and `upd
 
 Then run `npm run sanitize` and confirm zero hits. This is the step F2 exists for; if it still trips, the conversion is incomplete.
 
-- [ ] **Step 5: Import the molecules, the organism and the template**
+- [ ] **Step 5: Import the molecules and the template**
 
-Copy the six, apply the `UserMenu` and `AppHeader` adaptations described above, and confirm each one's imports resolve to components that were actually imported — a molecule reaching for an atom left behind fails typecheck, which is the good outcome, but a molecule reaching for one that exists under a *different* name fails silently at runtime.
+Copy the four, and confirm each one's imports resolve to components that were actually imported — a molecule reaching for an atom left behind fails typecheck, which is the good outcome, but a molecule reaching for one that exists under a *different* name fails silently at runtime.
 
 - [ ] **Step 6: Import the stories**
 
-The source project ships a story for nearly every generic atom plus `ConfirmDialog`, `FormField` and `AppHeader`. Import the ones matching imported components; W5 is satisfied for free. Four imported atoms have no story upstream (`AppTab`, `AppTableBody`, `AppTableCell`, `AppTableHead`) — write them, following the existing `AppButton.stories.ts` shape.
+The source project ships a story for nearly every generic atom, plus `ConfirmDialog` and `FormField`. Import the ones matching imported components (leave `AppHeader.stories.ts` for Task 17); W5 is satisfied for free. Four imported atoms have no story upstream (`AppTab`, `AppTableBody`, `AppTableCell`, `AppTableHead`) — write them, following the existing `AppButton.stories.ts` shape.
 
 **The Storybook build is known broken** and this task does not fix it. Stories must be correct; they will not be built. If `build-storybook` starts working, that is new evidence about a root cause currently unknown — report it, do not chase it.
 
 - [ ] **Step 7: Import the locale keys the components reference**
 
-`AppHeader` uses `common.nav.*`; `UserMenu` uses a menu key. Copy only the keys the imported components actually reference into `app/locales/en.json`, and grep the components for every `t('...')` call to be sure none is left pointing at a key that does not exist — a missing key renders as the key itself, in the UI, in production.
+Copy only the keys the imported components actually reference into `app/locales/en.json` (`AppHeader`'s `common.nav.*` and the `UserMenu` key belong to Task 17), and grep the components for every `t('...')` call to be sure none is left pointing at a key that does not exist — a missing key renders as the key itself, in the UI, in production.
 
 - [ ] **Step 8: Verify the whole webapp, including the review dimensions**
 
@@ -2339,7 +2347,7 @@ The source project ships a story for nearly every generic atom plus `ConfirmDial
 npx nx lint webapp && npx nx typecheck webapp && npx nx test webapp && npx nx build webapp
 ```
 
-Then run W1–W8's signals over the imported tree and triage by hand. W1 matters most here: with `molecules/`, `organisms/` and `templates/` now populated, its greps run against real directories for the first time — until now they exited 2 with "No such file or directory", which reads like a clean result unless someone checks the exit code. Confirm each of the three greps now returns a real result, and construct one synthetic violation (an atom importing an atom) to watch the signal fire.
+Then run W1–W8's signals over the imported tree and triage by hand. W1 matters most here: with `molecules/` and `templates/` now populated, its greps run against real directories for the first time — until now they exited 2 with "No such file or directory", which reads like a clean result unless someone checks the exit code. Confirm each of the three greps now returns a real result, and construct one synthetic violation (an atom importing an atom) to watch the signal fire.
 
 - [ ] **Step 9: Sanitize, verify the source project, commit**
 
@@ -2523,9 +2531,15 @@ The surface a person actually touches. Every component carries a story (W5) and 
 
 **Build on Task 14's library rather than around it.** `AppInput`, `AppAlert`, `AppCard`, `AppStack`, `AppText`, `AppHeading`, `FormField`, `ConfirmDialog`, `AppTable*` and `AuthTemplate` already exist. This task adds only what is genuinely new: one molecule and four auth organisms. If you find yourself writing an atom, stop — either it was left behind for a stated reason (`AppColorPicker`, `AppColorSwatch`, `AppMapEmbed`) or the library already has it under another name.
 
+**Also lands here, deferred from Task 14:** `UserMenu` and `AppHeader`, with their stories and the `common.nav.*` locale keys. Both call `useAuth()`, which exists only from Task 16, so importing them earlier would have failed typecheck outright. Two adaptations are needed rather than a rename:
+
+- **`UserMenu`** reads `user.firstName` and `user.lastName`. This phase's `User` carries a single `displayName` (Task 4). Adapt it, and derive initials from `displayName` rather than inventing name fields the entity does not have.
+- **`AppHeader`** links to `/login` and `/register` and renders `UserMenu` behind `isAuthenticated`. Both routes exist by the end of this task; confirm it references no route this phase does not ship.
+
 **Files:**
-- Create: `template/apps/webapp/app/components/molecules/PasswordField.vue`
-- Create: `template/apps/webapp/app/components/organisms/{LoginForm.vue,RegisterForm.vue,SessionList.vue,IdentityList.vue}`
+- Create: `template/apps/webapp/app/components/molecules/{PasswordField.vue,UserMenu.vue}`
+- Create: `template/apps/webapp/app/components/organisms/{AppHeader.vue,LoginForm.vue,RegisterForm.vue,SessionList.vue,IdentityList.vue}`
+- Delete: `template/apps/webapp/app/components/organisms/.gitkeep`
 - Create: `template/apps/webapp/app/pages/{login.vue,register.vue,verify-email.vue,forgot-password.vue,reset-password.vue}`
 - Create: `template/apps/webapp/app/pages/account/{profile.vue,security.vue,sessions.vue,identities.vue}`
 - Create: `template/apps/webapp/app/layouts/auth.vue` (wraps `AuthTemplate`)
