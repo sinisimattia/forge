@@ -1,4 +1,9 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
+  // `__tests__` as well as `*spec.ts`: a suite may need a helper that is not
+  // itself a spec (see `src/auth/__tests__/fake-data-source.ts`), and without
+  // this such a file is compiled into the production image — where it is dead
+  // weight at best and, since it exists to stand in for a real database, a thing
+  // somebody could import by mistake at worst.
+  "exclude": ["node_modules", "test", "dist", "**/*spec.ts", "**/__tests__/**"]
 }

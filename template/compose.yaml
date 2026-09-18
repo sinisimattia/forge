@@ -66,6 +66,13 @@ services:
       # apps/backend/src/mail/templates/reset-password.ts for why this is never taken
       # from an incoming request instead.
       PUBLIC_WEBAPP_URL: http://localhost:${WEBAPP_PORT:-3001}
+      # The key access credentials are signed with. Obviously-local and inline, exactly
+      # as the postgres credentials above are and for the same reason: a dev stack that
+      # needs a populated .env before it will start is a dev stack nobody runs. The
+      # production stack has no default for this at all (compose.prod.yaml) — a shared
+      # fallback signing key is one anybody holding this template can mint a credential
+      # for any account with.
+      JWT_SECRET: __FORGE_NAME__-local-dev-signing-key-not-for-production
     env_file:
       - path: apps/backend/.env
         required: false

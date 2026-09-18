@@ -1,8 +1,10 @@
 # __FORGE_TITLE__ Backend
 
 The **NestJS** REST API for __FORGE_TITLE__ — TypeORM over PostgreSQL, i18n error/response
-handling. Part of the [__FORGE_TITLE__ monorepo](../../README.md). Ships as a skeleton: no
-business domain, no auth — a single `GET /health` liveness endpoint.
+handling. Part of the [__FORGE_TITLE__ monorepo](../../README.md). Ships with no business
+domain of its own, and with the identity foundation already built: `GET /health`, the
+`/auth` endpoints (registration, verification, sign-in, renewal, sign-out, sessions), and a
+global guard that closes every route that does not carry `@Public()`.
 
 ## Running
 

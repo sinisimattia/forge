@@ -3,9 +3,11 @@
 ## Project Overview
 
 This package is the **backend**: a NestJS REST API with TypeORM and PostgreSQL. It ships as
-a skeleton — no business domain, no auth — with a single `health/` module. Feature domains
-(e.g. `articles`, `comments`, `tags`) land here once `libs/core` defines their entities and
-`I*Service` contracts (see `libs/core/CLAUDE.md`).
+a skeleton with no business domain of its own. What it does ship is the identity
+foundation: registration, sign-in, the session lifecycle, and a global guard that closes
+every route not marked `@Public()`. Feature domains (e.g. `articles`, `comments`, `tags`)
+land here once `libs/core` defines their entities and `I*Service` contracts (see
+`libs/core/CLAUDE.md`).
 
 - **Framework:** NestJS (Node.js + TypeScript)
 - **ORM:** TypeORM
@@ -65,35 +67,52 @@ src/<module>/
 └── <module>.repository.ts          # Only if complex queries exist
 ```
 
-**Present today:** `health/` (liveness probe, no business logic), and the persistence
-record classes for the identity foundation — `users/`, `identities/`, `auth/entities/`,
-`audit/`. Those are `<Thing>Record` row classes only: no modules, controllers or services
-yet. They are named `Record` because `__FORGE_SCOPE__/core` already exports `User`,
+**Present today:** `health/` (liveness probe, no business logic); `auth/` (the
+`/auth` endpoints, the global `JwtAuthGuard`, `@Public()`/`@CurrentUser()`, the session
+and rotation services, and the one `REFRESH_COOKIE` constant); `identities/` (the password
+identity, the argon2id hasher, the breached-password port); `audit/`; and the persistence
+record classes under `users/`, `identities/`, `auth/entities/` and `audit/`. Those are
+named `<Thing>Record` because `__FORGE_SCOPE__/core` already exports `User`,
 `AuthIdentity`, `Session` and `AuditEntry`, and a repository imports both in one file.
 
 **Shared utilities:** `src/common/` — filters, interceptors, pipes, types, i18n plumbing.
 
-> Guards do not exist yet (no auth in this skeleton). Once auth is added, guards belong
-> in an **auth module** (`src/auth/guards/`), the idiomatic NestJS placement —
-> `src/common/` does **not** hold guards.
+> Guards live in the **auth module** (`src/auth/guards/`), the idiomatic NestJS placement —
+> `src/common/` does **not** hold guards. `JwtAuthGuard` is registered as `APP_GUARD` in
+> `app.module.ts`, so **every route is closed unless it carries `@Public()`**. That one
+> provider is the application's security posture; deleting it breaks no type, fails no lint
+> rule, and opens every endpoint. `auth/__tests__/global-guard.spec.ts` (D6) is what turns
+> red.
 
 ## What's wired up
 
 - `AppModule` — `ConfigModule` (global, `.env`), `TypeOrmModule.forRootAsync` reading
-  `DATABASE_URL`, the seven persistence record classes, and `HealthModule`.
-- `main.ts` — global `I18nValidationPipe`, `I18nResponseInterceptor`, and
-  `HttpExceptionFilter`; CORS from `CORS_ORIGIN`; listens on `PORT` (default `3000`).
+  `DATABASE_URL`, the seven persistence record classes, `HealthModule`, `MailModule`,
+  `AuditModule`, `AuthModule`, and the `APP_GUARD` provider described above.
+- `main.ts` — global `I18nValidationPipe`, `I18nResponseInterceptor`,
+  `HttpExceptionFilter` and `cookie-parser`; CORS from `CORS_ORIGIN`; listens on `PORT`
+  (default `3000`).
   There is **no** global route prefix — `GET /health` is polled unprefixed by the
-  container healthcheck and by Task 14's e2e smoke test; keep it that way unless every
-  consumer of `/health` is updated at the same time.
+  container healthcheck and by the e2e smoke test; keep it that way unless every
+  consumer of `/health` is updated at the same time. `GET /health` also carries
+  `@Public()`, without which the global guard answers it `401` and nothing that waits on
+  `service_healthy` ever starts.
+- **Configuration this package refuses to boot without:** `DATABASE_URL`, `JWT_SECRET`
+  (the key access credentials are signed with) and `PUBLIC_WEBAPP_URL` (the origin every
+  mail link is built from). All three are `getOrThrow` with no default, deliberately —
+  see `.env.example`.
 - `src/db/data-source.ts` — the TypeORM CLI data source for `migration:generate` /
   `migration:run`, reading `MIGRATION_DATABASE_URL` and falling back to `DATABASE_URL`.
   **Two roles, on purpose:** migrations run as the schema owner, the application connects
   as a restricted role that owns nothing, and `UPDATE`/`DELETE` on `audit_entries` are
   revoked from that role — which a non-owner cannot grant back to itself. That is the
   whole of the append-only audit guarantee; see `src/db/migrations/` and `.env.example`.
-- `src/i18n/en/*.json` + `src/common/i18n/` — translation plumbing, scaffolded but not
-  yet registered as an `I18nModule` (no translated routes exist yet). See
+- `src/i18n/en/*.json` + `src/common/i18n/` — translation plumbing, **still not registered
+  as an `I18nModule`**, and now with routes that depend on it. The consequence is concrete:
+  `HttpExceptionFilter` falls back to emitting the raw key, so a refused sign-in answers
+  `{"error":"Unauthorized","message":"errors.auth.invalid_credentials"}` rather than the
+  English in `src/i18n/en/errors.json`. Statuses and shapes are correct; the prose is a key.
+  Registering the module is a cross-cutting change to every response and is not yet done. See
   `STANDARDS.md` — nestjs-i18n mechanics.
 
 ## Common utilities

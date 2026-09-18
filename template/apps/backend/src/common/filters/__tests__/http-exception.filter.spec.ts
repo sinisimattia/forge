@@ -1,5 +1,8 @@
 import { ArgumentsHost, BadRequestException, HttpStatus, NotFoundException } from '@nestjs/common';
 import { I18nContext, I18nValidationException } from 'nestjs-i18n';
+import { ConsumedTokenError, ExpiredTokenError, SessionNotFoundError } from '__FORGE_SCOPE__/core/auth/errors';
+import { WeakPasswordError } from '__FORGE_SCOPE__/core/identities/errors';
+import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
 import { HttpExceptionFilter } from '../http-exception.filter';
 
 describe('HttpExceptionFilter', () => {
@@ -89,6 +92,56 @@ describe('HttpExceptionFilter', () => {
 
     expect(statusMock).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
     expect(body()).toEqual({ error: 'Internal Server Error', message: 't:errors.common.internal' });
+  });
+
+  describe('a refusal the domain expressed', () => {
+    // Without the DOMAIN_ERRORS table in the filter, every one of these is a 500
+    // and reads to whoever is watching as the server being broken. Each is an
+    // ordinary thing for a person to do.
+    it('maps a spent single-use credential to 410, distinguishably from an expired one', () => {
+      filter.catch(new ConsumedTokenError(), host);
+
+      expect(statusMock).toHaveBeenCalledWith(HttpStatus.GONE);
+      expect(body()).toEqual({ error: 'Gone', message: 't:errors.auth.token_consumed' });
+    });
+
+    it('maps an expired or unknown single-use credential to 410', () => {
+      filter.catch(new ExpiredTokenError(), host);
+
+      expect(statusMock).toHaveBeenCalledWith(HttpStatus.GONE);
+      expect(body()).toEqual({ error: 'Gone', message: 't:errors.auth.token_expired' });
+    });
+
+    it('maps a secret that breaks the policy to 422', () => {
+      filter.catch(new WeakPasswordError(['TOO_SHORT']), host);
+
+      expect(statusMock).toHaveBeenCalledWith(HttpStatus.UNPROCESSABLE_ENTITY);
+      expect(body().message).toBe('t:errors.auth.weak_password');
+    });
+
+    it('never puts the domain error’s own message in the response', () => {
+      // A domain message is written for a developer reading a log and can name
+      // identifiers — `No session with id "..."`. None of it may reach a caller.
+      filter.catch(new SessionNotFoundError('a-real-session-id'), host);
+
+      expect(JSON.stringify(body())).not.toContain('a-real-session-id');
+      expect(statusMock).toHaveBeenCalledWith(HttpStatus.NOT_FOUND);
+    });
+
+    it('maps a domain error the table does not name to 422, never to 500', () => {
+      // The point of the fallback: a core error added in a later phase must not
+      // silently become an internal-server-error until somebody notices.
+      class FutureRuleError extends DomainError {
+        public constructor() {
+          super('some rule this phase has never heard of');
+        }
+      }
+
+      filter.catch(new FutureRuleError(), host);
+
+      expect(statusMock).toHaveBeenCalledWith(HttpStatus.UNPROCESSABLE_ENTITY);
+      expect(body().message).toBe('t:errors.http.unprocessable');
+    });
   });
 
   it('falls back to the raw key when no i18n context is available', () => {

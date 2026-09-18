@@ -76,6 +76,22 @@ services:
       DATABASE_URL: postgresql://${APP_DB_ROLE:?required}:${APP_DB_PASSWORD:?required}@postgres:5432/${POSTGRES_DB:?required}
       PORT: '3000'
       CORS_ORIGIN: http://localhost:3001
+      # Required, with no default, and the absence of a default is the point: this is
+      # the origin every verification and recovery link is built from, and a wrong value
+      # here is a working link pointing at somebody else's domain. See
+      # apps/backend/src/mail/templates/reset-password.ts for why it can never be taken
+      # from the incoming request instead, which is the "fix" a missing value invites.
+      PUBLIC_WEBAPP_URL: ${PUBLIC_WEBAPP_URL:?required}
+      # Where the dev mailer writes one JSON file per message. It has a default because a
+      # wrong value costs a message nobody could have read anyway; the origin above does
+      # not, because a wrong value there is a credential delivered to the wrong place.
+      # ADR-0008: this template binds no mail provider, so a production stack brought up
+      # from this file delivers nothing until somebody writes a real adapter.
+      MAIL_OUTBOX_DIR: ${MAIL_OUTBOX_DIR:-/app/.mail-outbox}
+      # Required, with no default. A fallback signing key would be shared by every
+      # project generated from this template, and whoever holds it can mint an access
+      # credential for any account on any of them.
+      JWT_SECRET: ${JWT_SECRET:?required}
     env_file:
       - path: apps/backend/.env
         required: false

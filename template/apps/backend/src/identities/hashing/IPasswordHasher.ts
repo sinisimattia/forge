@@ -96,3 +96,12 @@ export interface IPasswordHasher {
    */
   needsRehash(stored: StoredSecret): boolean;
 }
+
+/**
+ * The DI token {@link IPasswordHasher} is bound under.
+ *
+ * A `Symbol`, for the reason `MAILER` gives: the port is an interface and so has
+ * no runtime value Nest could use as a token on its own, and a symbol cannot
+ * collide with a token another module picks by coincidence of spelling.
+ */
+export const PASSWORD_HASHER = Symbol('PASSWORD_HASHER');

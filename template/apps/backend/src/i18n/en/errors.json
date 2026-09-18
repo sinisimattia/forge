@@ -19,5 +19,13 @@
   },
   "tags": {
     "not_found": "Tag {tagId} not found"
+  },
+  "auth": {
+    "invalid_credentials": "That email address and password do not match an account",
+    "secret_is_public": "That password appears in a public list of known passwords. Choose a different one",
+    "session_not_found": "That session is no longer valid. Sign in again",
+    "token_consumed": "That link has already been used",
+    "token_expired": "That link is no longer valid. Ask for a new one",
+    "weak_password": "That password does not meet this deployment’s requirements"
   }
 }

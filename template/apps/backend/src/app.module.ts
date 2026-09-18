@@ -1,7 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditEntryRecord } from './audit/audit-entry-record.entity';
+import { AuditModule } from './audit/audit.module';
+import { AuthModule } from './auth/auth.module';
+import { JwtAuthGuard } from './auth/guards';
 import { EmailVerificationTokenRecord } from './auth/entities/email-verification-token-record.entity';
 import { RefreshTokenRecord } from './auth/entities/refresh-token-record.entity';
 import { SessionRecord } from './auth/entities/session-record.entity';
@@ -52,6 +56,9 @@ import { UserRecord } from './users/user-record.entity';
     }),
     HealthModule,
     MailModule,
+    AuditModule,
+    AuthModule,
   ],
+  providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],
 })
 export class AppModule {}
