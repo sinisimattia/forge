@@ -1304,11 +1304,25 @@ export interface IBreachedPasswordRegistry {
 throws IdentityNotFoundError when the id is not in the list
 throws LastIdentityRemovalError when the list holds exactly that one identity
 returns normally when two identities exist and one is being removed
-throws IdentityNotFoundError for an empty list — NOT LastIdentityRemovalError. The
-not-found check runs first, and that order is load-bearing rather than incidental: deciding
-the count first would answer differently for an id that exists than for one that does not,
-which is an enumeration oracle. Assert it both positively and negatively, and say why in a
-comment.
+throws IdentityNotFoundError for an empty list — NOT LastIdentityRemovalError. Assert it
+both positively and negatively, and say why in a comment.
+
+The reason the not-found check runs first is **correctness, not secrecy.**
+`LastIdentityRemovalError` means "removing *that* identity would leave the account with no
+way in", which is a false statement about an identity the account does not hold. An error
+that lies about what it refused is worse than no error.
+
+Do **not** justify the order as closing an enumeration oracle. This plan said that, and it
+is backwards — enumerated over a one-identity list:
+
+| order | probed id exists | probed id absent | |
+|---|---|---|---|
+| not-found first | `LastIdentityRemovalError` | `IdentityNotFoundError` | **distinguishable** |
+| count first | `LastIdentityRemovalError` | `LastIdentityRemovalError` | indistinguishable |
+
+Count-first reveals strictly less, so the leak argument favours the order we do not use. It
+is not a real oracle either way — the list is the actor's own, and they already know what is
+in it — which is why correctness is the argument that actually carries the decision.
 ```
 
 `evaluatePassword.spec.ts` must cover every branch of every policy flag in both directions — that is what 100% branch coverage demands here, and it is also the honest test of a function whose whole job is branching.
