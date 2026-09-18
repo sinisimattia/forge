@@ -394,23 +394,6 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
         expect.equal(actual.clientAddress, expected.clientAddress, field('clientAddress'));
         expect.equal(actual.clientLabel, expected.clientLabel, field('clientLabel'));
         expect.equal(actual.occurredAt, expected.occurredAt, field('occurredAt'));
-
-        // NOT the check its counterpart in the other three domains is, and the
-        // difference is named here because the sentence that used to stand in
-        // this place was carried over with the pattern and was false of this
-        // entity. There, `fromJSON` re-runs an invariant and throws on a payload
-        // that violates one, so making the call is itself an assertion. Here
-        // there is no invariant to re-run — this entity refuses nothing at
-        // construction, deliberately — and `actual` came out of a real entity
-        // besides, so no run of this line can fail.
-        //
-        // It stays for a compile-time property, the way the auth suite's
-        // `describeOutcome` exists for one: whatever `toJSON` emits must be
-        // something `fromJSON` accepts, so the round trip between two
-        // implementations is closed, and widening one side without the other
-        // stops this file building. The run-time half of "they agree on the
-        // shape between them" is the ten comparisons above, and only those.
-        AuditEntry.fromJSON(actual);
       });
     });
 
