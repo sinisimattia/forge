@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lineFindings, pathFindings } from '../../tools/sanitize.mjs';
@@ -151,10 +153,24 @@ test('paths are held to the path-only rules as well as the content rules', () =>
 // a real invocation: a guard that silently stopped matching would turn `npm run
 // sanitize` into a gate that scans nothing and reports nothing, which is exactly the
 // vacuous pass the script's own zero-file check exists to prevent.
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const gate = path.join(repoRoot, 'tools', 'sanitize.mjs');
+
 test('the CLI entry point still runs the scan and reports clean', () => {
-  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-  const output = execFileSync(process.execPath, [path.join(repoRoot, 'tools', 'sanitize.mjs')], {
-    encoding: 'utf8',
-  });
+  const output = execFileSync(process.execPath, [gate], { encoding: 'utf8' });
   assert.match(output, /^Sanitization: clean \(\d+ file\(s\) scanned/);
+});
+
+// Invoked through a symlink, the guard used to match nothing: no scan, no output, exit 0.
+// A gate that passes silently because of how it was invoked is worse than one that fails.
+test('the entry point is recognised through a symlink', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-sanitize-'));
+  try {
+    const link = path.join(dir, 'san-link.mjs');
+    fs.symlinkSync(gate, link);
+    const output = execFileSync(process.execPath, [link], { encoding: 'utf8' });
+    assert.match(output, /^Sanitization: clean \(\d+ file\(s\) scanned/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

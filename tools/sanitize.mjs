@@ -5,6 +5,7 @@
  * template/, and in CI.
  */
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -281,9 +282,29 @@ async function main() {
   }
 }
 
+/**
+ * Whether this file is the process's entry point.
+ *
+ * `SELF` comes from `import.meta.url`, which Node has already resolved through any
+ * symlink, so the argv side has to be resolved the same way — otherwise invoking the gate
+ * through a symlink (`node ./san-link.mjs`) matches nothing, `main()` never runs, and the
+ * script prints nothing and exits 0. A gate that passes silently when it is invoked
+ * slightly differently is the vacuous pass the zero-file check exists to prevent, arriving
+ * by another door. `realpathSync` throws on a path that no longer exists, which is not a
+ * reason to crash: fall back to the plain resolve, which is what this did before.
+ */
+function isEntryPoint(argv1) {
+  if (argv1 === undefined) return false;
+  try {
+    return fsSync.realpathSync(argv1) === SELF;
+  } catch {
+    return path.resolve(argv1) === SELF;
+  }
+}
+
 // Run the scan only when this file is the process's entry point. Importing it — which is
 // what lets the rules above be tested at all — must not walk the tree or exit the importer's
 // process. `npm run sanitize` still runs exactly what it always did.
-if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === SELF) {
+if (isEntryPoint(process.argv[1])) {
   await main();
 }
