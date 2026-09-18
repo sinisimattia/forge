@@ -4,6 +4,34 @@
   "private": true,
   "type": "commonjs",
   "exports": {
+    "./identities/contracts": {
+      "types": "./dist/identities/contracts/index.d.ts",
+      "default": "./dist/identities/contracts/index.js"
+    },
+    "./identities/entities": {
+      "types": "./dist/identities/entities/index.d.ts",
+      "default": "./dist/identities/entities/index.js"
+    },
+    "./identities/enums": {
+      "types": "./dist/identities/enums/index.d.ts",
+      "default": "./dist/identities/enums/index.js"
+    },
+    "./identities/errors": {
+      "types": "./dist/identities/errors/index.d.ts",
+      "default": "./dist/identities/errors/index.js"
+    },
+    "./identities/policies": {
+      "types": "./dist/identities/policies/index.d.ts",
+      "default": "./dist/identities/policies/index.js"
+    },
+    "./identities/testing": {
+      "types": "./dist/identities/testing/index.d.ts",
+      "default": "./dist/identities/testing/index.js"
+    },
+    "./identities/types": {
+      "types": "./dist/identities/types/index.d.ts",
+      "default": "./dist/identities/types/index.js"
+    },
     "./shared/errors": {
       "types": "./dist/shared/errors/index.d.ts",
       "default": "./dist/shared/errors/index.js"
