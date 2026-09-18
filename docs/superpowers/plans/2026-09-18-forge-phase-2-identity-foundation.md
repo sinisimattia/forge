@@ -1069,12 +1069,27 @@ listUsers
 setStatus / setPlatformRole
   SUSPENDED makes canAuthenticate() false for a verified user
   reinstating to ACTIVE makes it true again
-  granting PLATFORM_ADMIN is reflected in a later getProfile
+  granting PLATFORM_ADMIN to `other` is reflected in a later getProfile
+  withdrawing it from `other` again works
+    — the withdrawal case MUST target `other`, never the admin itself. The world holds
+      exactly one administrator, so asserting that it may demote itself would oblige every
+      implementation to permit the last administrator to orphan the deployment — which
+      Task 12 explicitly forbids. A suite and a brief that contradict each other leave the
+      implementer no way to pass both.
 wire shape
-  User.fromJSON(user.toJSON()) equals the original in every field
+  a user read back through the service, round-tripped through toJSON/fromJSON,
+    still matches THE WORLD THE DEPS PROMISED — not merely itself
 ```
 
-The last one is the assertion that actually earns DEC-1: it is the one place the two implementations are proven to agree on the shape crossing between them.
+The last one is the assertion that actually earns DEC-1 — **but only if its right-hand side comes from the known world rather than from the value under test.** `X.fromJSON(x.toJSON())` compared against `x` proves nothing about any implementation: once `x` is an entity, every step is the entity's own composition and the implementation has left the picture. Compare what the service returned against what the deps promised the world contains, so an implementation that drops or nulls a field on the way out fails.
+
+### Three rules every conformance suite in this phase follows
+
+Learned from Task 4's review, which found three unfailable assertions in the first suite written. They apply to Tasks 5, 6 and 7, and to the backend and webapp drivers:
+
+1. **Before writing an assertion, ask whether the entity's own invariants make it unfailable.** `expect.equal(profile.email, normalizeEmail(profile.email))` is a tautology when the constructor normalizes; so is asserting a trimmed name when the constructor trims. Such an assertion documents the entity and discriminates nothing. Either compare against the world instead, or keep it and annotate it as documentation.
+2. **Every contract method's return value must be proven to be a real entity**, with `expect.ok(x instanceof Entity)` in that method's first test. Without it, an implementation returning bare JSON from the wire passes — which is exactly what the webapp's implementation would do if its mapping broke.
+3. **Never hard-code an absent identifier into a shared suite.** Take `absentId` from the deps interface: a persistence-backed implementation with UUID keys rejects a made-up string at the driver rather than raising the domain error, and the suite then fails for the wrong reason.
 
 - [ ] **Step 7: Self-test the suite against an in-memory reference implementation**
 
@@ -1324,7 +1339,8 @@ unlinkIdentity
   rejects IdentityNotFoundError for an id that does not exist
     (and the two rejections are the same error — assert that explicitly)
 wire shape
-  AuthIdentity.fromJSON(identity.toJSON()) equals the original
+  an identity read back through the service, round-tripped, still matches the
+    world the deps promised — not merely itself
 ```
 
 The key-set assertion is the one to write with care: it is the structural half of "identities carry no secret material", and it is the test that fails the day someone adds `passwordHash` to the entity for convenience.
@@ -1531,7 +1547,8 @@ listSessions / revokeSession / revokeAllSessions
   revokeSession rejects SessionNotFoundError for another user's session
   revokeAllSessions leaves listSessions empty
 wire shape
-  Session.fromJSON(session.toJSON()) equals the original
+  a session read back through the service, round-tripped, still matches the
+    world the deps promised — not merely itself
 exhaustiveness
   a switch over the outcome handles both members and ends in assertNever
 ```
@@ -1688,7 +1705,8 @@ query
   filters by actor
   paginates: meta.total counts all matches, not the page
 wire shape
-  AuditEntry.fromJSON(entry.toJSON()) equals the original
+  an entry read back through the service, round-tripped, still matches the
+    world the deps promised — not merely itself
 shape guarantee
   the interface exposes exactly two methods — assert
     Object.getOwnPropertyNames on the reference implementation's prototype
