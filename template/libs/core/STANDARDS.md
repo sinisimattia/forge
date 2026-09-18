@@ -14,6 +14,7 @@ If this file and a shared/ADR/RFC document disagree, the document wins.
 - **`verbatimModuleSyntax`.** Type-only imports/exports use `import type`/`export type` explicitly (enforced by `tsconfig.json`).
 - **`I`-prefix contracts.** Service interfaces are `IArticleService`, `I*Service`.
 - **Entities, not DTOs.** Contract methods speak in domain entities; narrow inputs with `Omit`/`Pick`. The only sanctioned non-entity shapes are per-create input types and the per-entity JSON wire shape + `fromJSON` reviver.
+- **Exhaustive switches.** Every `switch` over an enum or a discriminated union ends in `default: return assertNever(value)` (`shared/policies`), so widening the union turns every site that does not handle the new member into a compile error rather than a silent fall-through. This is a compile-time guarantee only — see *`nx test core` does not type-check* below.
 - **TSDoc is definition-of-done.** Every exported `class`/`interface`/`type`/`enum` and every contract method carries TSDoc.
 - **Money as integer cents; Dates are UTC `Date` in entities, ISO-8601 strings on the wire.**
 
@@ -64,6 +65,14 @@ structure (e.g. `tests/articles/entities/Article.spec.ts`), and import the code 
 its public `__FORGE_SCOPE__/core/*` subpath — never via relative paths into `src/`. Only the exported
 `testing/` harnesses and fixtures (the published conformance suites themselves) live in `src/`.
 
+**`nx test core` does not type-check.** `tsconfig.base.json` sets `isolatedModules: true`, which
+puts ts-jest into transpile-only mode: a spec containing a blatant type error — a `@ts-expect-error`
+that no longer expects anything, a `const count: number = 'not a number'` — compiles away and the
+suite passes green. Type-level assertions are enforced **only** by the `typecheck` target
+(`tsc --noEmit`), which CI runs as a mandatory sibling of `test`. A green local `npm test` is
+evidence about runtime behaviour and about nothing else; run `nx typecheck core` before trusting
+any type-level guarantee, including the exhaustiveness rule above.
+
 ## Review dimensions
 
 | ID | Check | Signal | Severity | Source |
@@ -74,6 +83,8 @@ its public `__FORGE_SCOPE__/core/*` subpath — never via relative paths into `s
 | K4 | Contracts speak in entities, not DTOs | review `src/*/contracts/*.ts` for shapes that are neither an entity, a create-input type, nor a JSON wire shape | blocking | STANDARDS.md — Entities, not DTOs |
 | K5 | TSDoc on every export | `grep -rnB1 "^export " src/ \| grep -v "\*/"` | blocking | STANDARDS.md — TSDoc is definition-of-done |
 | K6 | One symbol per file, PascalCase filename | file basename matches the exported symbol | warning | STANDARDS.md — File layout |
+| K7 | A rejection reason is modelled for the audit record, never for an untrusted caller | **read and judge** — open `src/*/contracts/*.ts` and `src/*/types/*Outcome.ts`: a rejection reason may be modelled, recorded and audited, but must not appear as a field of a JSON wire shape returned on an authentication path. No grep decides this; the reviewer reads the file. | blocking | ADR-0005 — a rejection reason is recorded, never returned |
+| K8 | Every `switch` over an enum or a discriminated union ends in `assertNever` | `grep -rn "switch (" src/` locates every switch, then **read each hit**: one whose `default` is not `return assertNever(...)` is a violation. The grep is a locator, not a verdict. | blocking | STANDARDS.md — Exhaustive switches |
 
 K2 is a text check over prose: it catches accidental transport vocabulary, including camelCase,
 PascalCase and snake_case/kebab-case compounds, with real `http(s)://` links exempted. It does not
