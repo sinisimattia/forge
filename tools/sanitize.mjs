@@ -22,7 +22,7 @@ const ROOTS = ['template', 'tools'].map((root) => path.join(REPO_ROOT, root));
 // way a linter excludes its own config from its own rules.
 const SELF = path.resolve(fileURLToPath(import.meta.url));
 
-const RULES = [
+export const RULES = [
   ['source-project trace', /voku/i],
   // Terms with no innocent generic use — always a leak.
   ['source-domain term', /\b(rsvp|stripe|organizers?|refunds?|invitations?)\b/i],
@@ -80,7 +80,7 @@ const RULES = [
 // match — they require camelCase, PascalCase, ALL_CAPS, or a dotted module suffix.
 // Verified zero false positives against every real path in `template/` and `tools/`
 // today (only an injected `events-overview.md` fixture matched).
-const PATH_ONLY_RULES = [
+export const PATH_ONLY_RULES = [
   ['source-domain path term', /\b(events?|payments?|tickets?)\b/i],
 ];
 
@@ -93,7 +93,7 @@ const PATH_ONLY_RULES = [
 // it still finds a "populated" value (`?required}`) and false-positives. Stripping every
 // `${...}` span first removes the nested occurrence entirely, so only genuine
 // `KEY: literal` pairs remain to match.
-function stripInterpolations(line) {
+export function stripInterpolations(line) {
   return line.replace(/\$\{[^}]*\}/g, '');
 }
 
@@ -125,8 +125,42 @@ const TYPE_ANNOTATION = new RegExp(
  * space rather than deleted, so stripping never splices two halves of a line into a match
  * that was not there before.
  */
-function stripNonSecrets(line) {
+export function stripNonSecrets(line) {
   return line.replace(SELF_NAMED_VALUE, ' ').replace(TYPE_ANNOTATION, ' ');
+}
+
+/**
+ * Every rule label a line's *content* trips, in rule order. This is the whole per-line
+ * judgement the scan below makes, extracted so it can be exercised directly: a gate whose
+ * exemptions can only be tested by writing a fixture file into `template/` is a gate whose
+ * exemptions do not get tested.
+ *
+ * @param line - one raw line, exactly as read from the file
+ * @returns the labels of the rules it matched, possibly empty
+ */
+export function lineFindings(line) {
+  const secretProbe = stripNonSecrets(stripInterpolations(line));
+  const labels = [];
+  for (const [label, pattern] of RULES) {
+    const subject = label === 'populated secret' ? secretProbe : line;
+    if (pattern.test(subject)) labels.push(label);
+  }
+  return labels;
+}
+
+/**
+ * Every rule label a file's *path* trips. Paths are held to the content rules plus the
+ * path-only ones, because a path is never prose (see PATH_ONLY_RULES).
+ *
+ * @param file - a path, absolute or relative
+ * @returns the labels it matched, possibly empty
+ */
+export function pathFindings(file) {
+  const labels = [];
+  for (const [label, pattern] of [...RULES, ...PATH_ONLY_RULES]) {
+    if (pattern.test(file)) labels.push(label);
+  }
+  return labels;
 }
 
 async function* walk(dir) {
@@ -141,63 +175,71 @@ async function* walk(dir) {
   }
 }
 
-const findings = [];
-const exemptions = [];
-let scannedCount = 0;
+/** The scan itself, exactly as it has always run — see the entry-point guard below. */
+async function main() {
+  const findings = [];
+  const exemptions = [];
+  let scannedCount = 0;
 
-for (const root of ROOTS) {
-  for await (const file of walk(root)) {
-    if (path.resolve(file) === SELF) continue;
-    scannedCount += 1;
+  for (const root of ROOTS) {
+    for await (const file of walk(root)) {
+      if (path.resolve(file) === SELF) continue;
+      scannedCount += 1;
 
-    // A leftover file or directory *named* for the domain leaks via its path alone,
-    // even with generic content inside — content-only scanning is blind to that. A
-    // path cannot carry an inline `sanitize:allow` marker, so a path finding is never
-    // exemptible that way; it is reported with a `(path)` marker in place of a line
-    // number to make clear it is not a content hit.
-    for (const [label, pattern] of [...RULES, ...PATH_ONLY_RULES]) {
-      if (pattern.test(file)) findings.push(`${file}:(path)  ${label}  ${file}`);
+      // A leftover file or directory *named* for the domain leaks via its path alone,
+      // even with generic content inside — content-only scanning is blind to that. A
+      // path cannot carry an inline `sanitize:allow` marker, so a path finding is never
+      // exemptible that way; it is reported with a `(path)` marker in place of a line
+      // number to make clear it is not a content hit.
+      for (const label of pathFindings(file)) {
+        findings.push(`${file}:(path)  ${label}  ${file}`);
+      }
+
+      const buffer = await fs.readFile(file);
+      if (buffer.includes(0)) continue;
+      const lines = buffer.toString('utf8').split('\n');
+      lines.forEach((line, index) => {
+        // A marked line is a deliberate, reviewed exemption — skip every rule for it,
+        // but record it so it shows up in the run's output rather than vanishing silently.
+        if (line.includes('sanitize:allow')) {
+          exemptions.push(`${file}:${index + 1}  ${line.trim()}`);
+          return;
+        }
+        for (const label of lineFindings(line)) {
+          findings.push(`${file}:${index + 1}  ${label}  ${line.trim()}`);
+        }
+      });
     }
+  }
 
-    const buffer = await fs.readFile(file);
-    if (buffer.includes(0)) continue;
-    const lines = buffer.toString('utf8').split('\n');
-    lines.forEach((line, index) => {
-      // A marked line is a deliberate, reviewed exemption — skip every rule for it,
-      // but record it so it shows up in the run's output rather than vanishing silently.
-      if (line.includes('sanitize:allow')) {
-        exemptions.push(`${file}:${index + 1}  ${line.trim()}`);
-        return;
-      }
-      const secretProbe = stripNonSecrets(stripInterpolations(line));
-      for (const [label, pattern] of RULES) {
-        const subject = label === 'populated secret' ? secretProbe : line;
-        if (pattern.test(subject)) findings.push(`${file}:${index + 1}  ${label}  ${line.trim()}`);
-      }
-    });
+  if (findings.length > 0) {
+    console.error('Sanitization failed:\n');
+    for (const finding of findings) console.error(`  ${finding}`);
+    console.error(`\n${findings.length} finding(s).`);
+    process.exit(1);
+  }
+
+  // This gate's one job is to fail. A zero count means every root came up empty (a bad
+  // cwd, a renamed/missing directory, a walk that silently swallowed a readdir error) —
+  // that is not "clean", it is "nothing was scanned", and printing "clean" for it would
+  // be a vacuous pass indistinguishable from a real one. Fail loudly instead.
+  if (scannedCount === 0) {
+    console.error('Sanitization failed: 0 files were scanned — the gate examined nothing.');
+    console.error(`Roots checked: ${ROOTS.join(', ')}`);
+    process.exit(1);
+  }
+
+  if (exemptions.length > 0) {
+    console.log(`Sanitization: clean (${scannedCount} file(s) scanned, ${exemptions.length} deliberate exemption(s))`);
+    for (const exemption of exemptions) console.log(`  ${exemption}`);
+  } else {
+    console.log(`Sanitization: clean (${scannedCount} file(s) scanned)`);
   }
 }
 
-if (findings.length > 0) {
-  console.error('Sanitization failed:\n');
-  for (const finding of findings) console.error(`  ${finding}`);
-  console.error(`\n${findings.length} finding(s).`);
-  process.exit(1);
-}
-
-// This gate's one job is to fail. A zero count means every root came up empty (a bad
-// cwd, a renamed/missing directory, a walk that silently swallowed a readdir error) —
-// that is not "clean", it is "nothing was scanned", and printing "clean" for it would
-// be a vacuous pass indistinguishable from a real one. Fail loudly instead.
-if (scannedCount === 0) {
-  console.error('Sanitization failed: 0 files were scanned — the gate examined nothing.');
-  console.error(`Roots checked: ${ROOTS.join(', ')}`);
-  process.exit(1);
-}
-
-if (exemptions.length > 0) {
-  console.log(`Sanitization: clean (${scannedCount} file(s) scanned, ${exemptions.length} deliberate exemption(s))`);
-  for (const exemption of exemptions) console.log(`  ${exemption}`);
-} else {
-  console.log(`Sanitization: clean (${scannedCount} file(s) scanned)`);
+// Run the scan only when this file is the process's entry point. Importing it — which is
+// what lets the rules above be tested at all — must not walk the tree or exit the importer's
+// process. `npm run sanitize` still runs exactly what it always did.
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === SELF) {
+  await main();
 }
