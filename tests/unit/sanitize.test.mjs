@@ -232,6 +232,40 @@ test('a quoted initializer behind a type annotation is still a populated secret'
   assert.equal(flagged("  { secret: string; name = 'bob' }", TS), false);
 });
 
+// FALSE POSITIVE, fixed. `stripInterpolations` removes every `${...}` span, so a template
+// literal like `` `${webappUrl}/reset-password?token=${value}` `` reduces to
+// `` `/reset-password?token=` `` — the enclosing literal's own CLOSING backtick lands
+// immediately after `token=`. The old POPULATED_SECRET_TS pattern asked only "is the next
+// character a quote, and the one after that not a quote", so it read that closing backtick as
+// the OPENING quote of a fresh one-character literal and flagged it, even though nothing here
+// is hard-coded — no key is ever assigned a literal value. Requiring an actual matching close
+// (the same quote character, after real content) is what tells the two apart.
+test('an interpolated value inside a template literal is not a populated secret', () => {
+  assert.equal(
+    flagged('const link = `${webappUrl}/reset-password?token=${value}`;', TS),
+    false,
+  );
+  assert.equal(flagged('const link = `${base}/verify?token=${t}`;', TS), false);
+  assert.equal(flagged('password=${pw}`;', TS), false);
+  // The isolated shape the fix turns on: a quote character with nothing after it to close it
+  // is not a literal, no matter how it got there.
+  assert.equal(flagged('token=`;', TS), false);
+  // A real secret in the very same delimiter is still caught — the fix requires a genuine
+  // closing quote of the same type, and one is right there.
+  assert.equal(labels('const password = `hunter2`;', TS), 'populated secret');
+});
+
+// The miss this false positive sits next to, and NOT widened into a catch. `token=abc`, with
+// no quote character at all after the separator, does not match — by the same "unquoted is a
+// reference" design as the rest of this file's TypeScript rule, not because of anything this
+// fix changed. Widening it was investigated and rejected: this exact shape already exists as a
+// harmless real fixture — `template/apps/backend/src/mail/__tests__/FileMailer.spec.ts` reads
+// `body: 'Open this link: https://example.com/verify?token=abc'` — so any pattern that catches
+// `token=abc` here catches that fixture too, trading a documented gap for a new false positive.
+test('a hard-coded literal inside a template literal, unquoted at the key site, is a documented miss', () => {
+  assert.equal(flagged('const link = `${base}/verify?token=abc`;', TS), false);
+});
+
 test('a line carrying both an exempt shape and a real secret is still flagged', () => {
   // Why the exemption strips spans rather than skipping the line: one exempt match must
   // never buy amnesty for the rest of the line.

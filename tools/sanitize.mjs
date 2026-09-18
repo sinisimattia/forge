@@ -97,8 +97,23 @@ const POPULATED_SECRET = new RegExp(
 // (`function f(secret: string, name = 'bob')` must not flag). The `__FORGE_` and empty-value
 // exemptions are carried over; `${...}` needs none, since stripInterpolations has already
 // reduced an interpolated template literal to an empty pair of backticks by the time this runs.
+//
+// The quote after the separator is captured (not just matched) and must reappear, via the
+// backreference, after at least one content character — a real closing delimiter, not merely
+// "the next character happens to be a quote mark". That distinction is load-bearing for
+// backtick literals specifically: `'` and `"` are opened fresh at the value site and close a
+// few characters later, but a template literal's backtick can span the *whole line*, so a
+// backtick appearing near a key is as likely to be that outer literal's own CLOSING delimiter
+// as it is to be an opening one for a new value. `` `${webappUrl}/reset-password?token=${value}` ``
+// is exactly that: once stripInterpolations removes both `${...}` spans, the enclosing
+// literal's closing backtick lands immediately after `token=`, and the old pattern — which
+// asked only "is the next char a quote, and the one after that not a quote" — read it as an
+// opening quote for a one-character literal. Requiring the SAME quote character to close again
+// after real content fixes it: there is no third backtick left on the line to satisfy `\1`, so
+// it no longer matches. A genuine quoted secret (`password: 'hunter2'`, `secret: \`hunter2\`,`)
+// is unaffected — its closing quote of the same type is right there.
 const POPULATED_SECRET_TS = new RegExp(
-  `(?:${SECRET_KEYS})\\??\\s*(?:[:=]|:\\s*[A-Za-z0-9_$<>\\[\\]| ]+=)\\s*['"\`](?!__FORGE_)[^'"\`]`,
+  `(?:${SECRET_KEYS})\\??\\s*(?:[:=]|:\\s*[A-Za-z0-9_$<>\\[\\]| ]+=)\\s*(['"\`])(?!__FORGE_)[^'"\`]+?\\1`,
   'i',
 );
 
