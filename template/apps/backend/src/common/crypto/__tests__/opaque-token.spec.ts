@@ -3,17 +3,45 @@ import { generateOpaqueToken } from '../generateOpaqueToken';
 import { hashOpaqueToken } from '../hashOpaqueToken';
 
 describe('generateOpaqueToken', () => {
-  it('draws at least 32 bytes, so there is nothing to guess', () => {
+  it('carries at least 32 bytes drawn from the CSPRNG', () => {
     const { token } = generateOpaqueToken();
 
     // Decoded length, not string length: base64url expands 32 bytes to 43
-    // characters, so asserting the string is "at least 32 long" would still
-    // pass on a 24-byte credential. Bytes are the unit entropy is measured in.
+    // characters, so asserting the string is "at least 32 long" would still pass
+    // on a 24-byte credential.
+    //
+    // What this checks is a byte COUNT, and a byte count is not entropy — the
+    // name says "drawn from the CSPRNG" rather than "32 bytes of entropy"
+    // because it is the source, not this assertion, that makes those bytes
+    // unguessable. Three facts together carry the real claim, and each is
+    // asserted somewhere: the bytes come from `randomBytes` (the
+    // "does not repeat itself" case below fails for any fixed source), there are
+    // at least 32 of them (here), and the encoding is injective so all of them
+    // survive into the credential (the base64url case below, which pins the
+    // length and so rejects an encoding that has silently changed).
     expect(Buffer.from(token, 'base64url').length).toBeGreaterThanOrEqual(32);
   });
 
   it('is base64url, so it needs no further encoding in a URL, header or log line', () => {
-    expect(generateOpaqueToken().token).toMatch(/^[A-Za-z0-9_-]+$/);
+    const { token } = generateOpaqueToken();
+
+    // The alphabet alone does not pin the encoding: hex uses a SUBSET of the
+    // base64url alphabet, so `.toString('hex')` satisfies the regex, and it
+    // decodes as 48 base64url bytes so it satisfies the byte-count case above
+    // too. The length is what discriminates — 32 bytes is 43 base64url
+    // characters, 64 hex characters, or 44 standard-base64 characters with
+    // padding. Asserting both is what makes this test about the encoding rather
+    // than about the alphabet.
+    //
+    // 43 is exact on purpose, and it therefore also breaks if the credential is
+    // made LONGER. That is the same trade the hasher suite makes by writing its
+    // cost parameters out as literals: changing how much is drawn is a decision,
+    // and a decision should have to walk past a red test rather than slip
+    // through a `>=`. Deriving the expected length from the decoded byte count
+    // instead would defeat the purpose — 64 hex characters decode to 48 bytes,
+    // which re-encode to 64 characters, so a self-consistent check passes hex.
+    expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(token).toHaveLength(43);
   });
 
   it('does not repeat itself', () => {

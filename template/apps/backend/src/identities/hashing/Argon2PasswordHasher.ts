@@ -5,11 +5,18 @@ import type { PasswordPolicy } from '__FORGE_SCOPE__/core/identities/types';
 import type { IPasswordHasher, StoredSecret } from './IPasswordHasher';
 
 /**
- * The name recorded in `secret_algorithm`, and the only one this adapter reads.
+ * The name recorded in `secret_algorithm`.
  *
- * Spelled here rather than taken from the library so that a library upgrade that
- * renamed its own constant would be a compile error rather than a silent change
- * to the value written into every new row.
+ * It is spelled out here because there is nothing to take it from: `argon2`
+ * exports `argon2id` as the number `2` — the enum value this file imports and
+ * passes as `type` — and publishes no string at all. The only other place this text exists is
+ * inside argon2's own PHC encoding (`$argon2id$v=19$...`), which is a detail of
+ * a format, not an API.
+ *
+ * So this constant is the value written into a database column, and it has to
+ * stay stable for as long as rows carry it, independently of anything the
+ * library does to its own naming. That the two agree is not assumed: the suite
+ * parses the tag out of a real encoding and asserts it equals this constant.
  */
 export const ARGON2ID = 'argon2id';
 

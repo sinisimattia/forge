@@ -1,18 +1,35 @@
 /**
  * Everything persisted about one password, and nothing else.
  *
- * The three fields map one-to-one onto `auth_identities.secret_hash`,
- * `secret_algorithm` and `secret_params` (see `AuthIdentityRecord`). Nothing is
- * derived at write time and nothing is inferred at read time, so the mapping
- * both ways is a rename and cannot lose anything.
+ * The three fields correspond one-to-one to `auth_identities.secret_hash`,
+ * `secret_algorithm` and `secret_params` (see `AuthIdentityRecord`), but the two
+ * directions are NOT the same operation and the mapper must not treat them as
+ * one:
+ *
+ * - **Writing is a rename.** Nothing is derived, widened or dropped; the three
+ *   values go into the three columns as they stand.
+ * - **Reading is a parse, and it can fail.** All three columns are nullable,
+ *   because only a `PASSWORD` identity has a stored secret at all (ADR-0005) and
+ *   a federated one has three nulls by design. `secret_params` is `jsonb`, so it
+ *   comes back as `Record<string, unknown> | null` — wider than `params` — and
+ *   nothing in the database constrains its values to numbers.
+ *
+ * So a row does not become a `StoredSecret` by assertion. The mapper owes two
+ * decisions, and they are its to make because they cannot be made here: what a
+ * row with null columns means to its caller (there is no secret to verify, which
+ * is not the same as a secret that fails to verify), and what a `secret_params`
+ * value that is not a number means. A cast past either one moves both problems
+ * into {@link IPasswordHasher.needsRehash}, which is why that method re-checks
+ * `typeof value !== 'number'` for keys this type already promises are numbers —
+ * a guard that exists precisely because this type's promise stops at the column.
  *
  * `params` is its own field rather than being left implicit in `hash` — argon2's
  * encoded string does carry `m`, `t` and `p`, so this looks redundant — because
  * {@link IPasswordHasher.needsRehash} must be answerable without knowing how to
- * parse any particular algorithm's encoding. `secret_params` is `jsonb`, so the
- * parameters arrive back as the numbers that were written and a rehash decision
- * is a comparison of numbers rather than a string match against a format that
- * only one implementation understands.
+ * parse any particular algorithm's encoding. `secret_params` is `jsonb` rather
+ * than a serialized blob, so — once the mapper has established that they are
+ * numbers — a rehash decision is a comparison of numbers rather than a string
+ * match against a format only one implementation understands.
  *
  * Values are numbers because every cost parameter any password derivation takes
  * is a number, and because a comparison of "is the stored value weaker than the

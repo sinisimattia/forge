@@ -100,7 +100,14 @@ describe('Argon2PasswordHasher', () => {
       ['an empty string', ''],
       ['a truncated encoding', '$argon2id$v=19$m=19456,t=2,p=1'],
       ['a digest field that is not base64', '$argon2id$v=19$m=19456,t=2,p=1$####$####'],
-      ['an algorithm this adapter does not know', '$scrypt$n=16384$c2FsdA$ZGlnZXN0'],
+      ['an encoding whose own PHC tag names another algorithm', '$scrypt$n=16384$c2FsdA$ZGlnZXN0'],
+      // Every fixture above says `algorithm: ARGON2ID` while several of the
+      // encodings say otherwise, and that mismatch is not an oversight: `verify`
+      // never reads `stored.algorithm`. It decides from the encoded string,
+      // because the string is what the derivation was actually produced under
+      // and the column is only a copy of what somebody believed at write time.
+      // The column IS read — by `needsRehash`, which is where a mislabelled row
+      // gets caught and re-derived rather than silently trusted.
     ])('returns false rather than throwing for %s', async (_label, hash) => {
       await expect(hasher.verify(PLAINTEXT, { hash, algorithm: ARGON2ID, params: CURRENT }))
         .resolves.toBe(false);
