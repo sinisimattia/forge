@@ -48,7 +48,7 @@ Every task's requirements implicitly include this section.
 - **Zero source-project traces.** `grep -ri voku template/ tools/` returns nothing. Neutral example vocabulary in docs is `Article` / `Comment` / `Tag`.
 - **`npm run sanitize` must pass before any commit that touches `template/`.** Do not weaken a rule to make a commit pass. If a literal genuinely must stay, mark that line `# sanitize:allow — <reason>`; the gate prints every exemption it honours. Phase 1 ends with exactly one exemption — if this phase pushes the count past one, tighten the marker to per-rule granularity (that trigger is recorded in the Phase 1 log).
 - **`libs/core` purity, enforced two ways.** `libs/core/eslint.config.mjs` bans framework imports (static, dynamic and `require`); `libs/core/scripts/check-purity.mjs` bans transport vocabulary in *prose*. The forbidden prose substrings are, case-insensitively, `jwt`, `cookie`, `typeorm`, `pinia`, `nuxt`, `vue`, `nest.js`/`nest_js`/`nestjs`/`@nestjs`, `http`/`https`; plus `express.js`, `@express` and the capitalised `Express` (case-sensitively — the lowercase English verb is allowed). Matching is **substring**, so `SessionCookie`, `jwtToken` and `useCookie` are caught. Real `https://` links are stripped before matching; nothing else is.
-- **`libs/core` coverage thresholds are 100%** for statements, branches, functions and lines (`libs/core/jest.config.js`). Every executable line added to `libs/core/src` must be covered by a test in `libs/core/tests`. Interfaces, barrels, `types/` and `*ContractDeps` are excluded from coverage by config — code with runtime behaviour is not.
+- **`libs/core` coverage thresholds are 100%** for statements, branches, functions and lines (`libs/core/jest.config.js`) — but they are applied by **`npm run test:coverage -w libs/core`**, not by `nx test core`, whose target is a bare `jest`. Run the coverage command when a task claims a coverage figure. Note that the template's CI runs `nx affected -t lint typecheck test build purity` and never invokes `test:coverage`, so these thresholds are currently enforced in no generated project's CI; Task 18 owns closing that. Every executable line added to `libs/core/src` must be covered by a test in `libs/core/tests`. Interfaces, barrels, `types/` and `*ContractDeps` are excluded from coverage by config — code with runtime behaviour is not.
 - **Core tests live outside `src/`**, under `libs/core/tests/`, mirroring the `src/` structure, and import the code under test through its public `__FORGE_SCOPE__/core/<domain>/<folder>` subpath — never a relative path into `src/`.
 - **`libs/core` layout rules:** per-domain folders, one exported symbol per file named after the symbol, an `index.ts` barrel per folder, subpath-only exports, `I`-prefixed contracts, contracts speak in entities, TSDoc on every export, money as integer cents, UTC `Date` in entities and ISO-8601 strings on the wire, specific `DomainError` subclasses never the base class.
 - **The base `tsconfig.json` does not set `module`/`moduleResolution`, deliberately.** Setting `moduleResolution: "Bundler"` there makes any CommonJS package extending it fail with `TS5095`. Each package owns both options. Do not "fix" the base config.
@@ -1087,9 +1087,22 @@ Expected: PASS, coverage 100%.
 
 This is the phase's first instance of "a guard nobody has watched fail is not a guard".
 
-1. In the in-memory reference implementation, break `updateProfile` so it does not trim the display name. Run `npx nx test core`. **Observe the failure** and record the verbatim output.
-2. Restore it, and instead delete the trimming assertion from `runIUserServiceContract.ts`. Run again, with the broken implementation restored. **Observe that it now passes** — which is the point: a suite with a missing assertion is indistinguishable from a correct implementation.
+> **Corrected during execution.** This step originally named the display-name trimming as the
+> fault to inject. That target cannot discriminate: `User`'s constructor trims, and `fromJSON`
+> routes through the constructor, so **no** implementation returning a `User` can fail it — the
+> assertion tests the entity, not the implementation. The Task 4 implementer proved this rather
+> than arguing it, by making the reference implementation actively *pad* the name (strictly worse
+> than failing to trim) and watching all 64 tests still pass. Keep the trimming assertion — paired
+> with an `instanceof User` check it still earns its place — but inject the fault somewhere the
+> implementation actually owns.
+
+Use the pagination offset, which only the implementation computes:
+
+1. In the in-memory reference implementation, break `listUsers`'s offset from `(page - 1) * limit` to `page - 1`. Run `npx nx test core`. **Observe the failure** and record the verbatim output.
+2. Restore nothing. Leave the implementation broken, and delete the page-2-disjointness assertion from `runIUserServiceContract.ts`. Run again. **Observe that it now passes** — which is the point: a suite with a missing assertion is indistinguishable from a correct implementation, and the only thing between them is that somebody wrote the assertion.
 3. Restore both. Confirm green.
+
+When you pick an injection target for any later task, apply the same test first: **can the entity's own invariants make this assertion unfailable?** If the entity guarantees the property, the assertion documents the entity and discriminates nothing about the implementation.
 
 Report all three observations. Step 2 is the one that matters and is the one most likely to be skipped.
 
@@ -1319,7 +1332,7 @@ The key-set assertion is the one to write with care: it is the structural half o
 - [ ] **Step 5: Prove it discriminates**
 
 Inject, one at a time, observing and recording each failure:
-1. Add a `secretHash` field to `AuthIdentity.toJSON()` in the reference implementation → the key-set assertion must fail.
+1. Add a `secretHash` field to `AuthIdentity.toJSON()` — **in the entity itself**, not in the reference implementation. `toJSON` is the entity's method, so an implementation cannot add a field to it; injecting there would prove nothing. This is a deliberate fault in core source, the same shape as the D2/D14 probes. The key-set assertion must fail.
 2. Make `unlinkIdentity` permit removing the last identity → `LastIdentityRemovalError` assertion must fail.
 3. Make `unlinkIdentity` throw a *different* error for another user's identity than for a missing one → the "same error" assertion must fail.
 
@@ -2246,11 +2259,13 @@ Each spec is thin, following the source project's established shape:
 ```ts
 runIUserServiceContract({
   describe,
-  it: it as never,
-  expect: expect as never,
+  it,
+  expect: adaptJestToConformanceExpect(),
   makeContext: async () => makeIdentityWorld(),
 });
 ```
+
+**`ConformanceExpect` is a three-method surface — `equal`, `ok`, `rejects` — not a matcher chain**, so jest's `expect` cannot be passed through with a cast. The source project's suites call the matcher chain directly and are therefore *not* a copyable model here. Write one small adapter, once, in `src/common/testing/`, and reuse it for all four suites. The same applies to Task 16's vitest drivers.
 
 Run them. Expect failures — this is the first time the real services meet the contracts, and a mismatch here is a real finding about one side or the other. For each failure, decide **which** is wrong, the contract or the implementation, and say why. A contract bent to match an implementation is not a contract.
 
