@@ -29,7 +29,7 @@ Rationale: the webapp's implementation is exercised against a stub of the backen
 
 **DEC-2 — The audit guarantee is two database roles.** Migrations run as the schema owner; the application connects as a separate, restricted role. `ALTER DEFAULT PRIVILEGES` grants the app role `SELECT, INSERT, UPDATE, DELETE` on tables the owner creates afterwards, and `audit_entries` then has `UPDATE`/`DELETE` revoked from the app role specifically. This touches Phase 1 files (`compose.yaml`, `compose.prod.yaml`, `.env.example`, `src/db/data-source.ts`, `app.module.ts`) and that invasiveness is accepted. Default privileges are used rather than per-table grants so that a table added in Phase 3 is covered automatically — a generated project must not have a "remember to grant" step.
 
-**DEC-3 — Refresh credential in an httpOnly cookie, access token in memory.** The refresh credential is set by the backend as an httpOnly, `SameSite=Lax`, path-scoped cookie that JavaScript never reads. The short-lived access token lives in the webapp's Pinia store and is lost on reload, re-minted through `POST /auth/refresh`. Consequence, which Task 15 must handle rather than discover: a full page load in Nuxt starts unauthenticated and must re-mint during SSR, forwarding the incoming cookie on the server side.
+**DEC-3 — Refresh credential in an httpOnly cookie, access token in memory.** The refresh credential is set by the backend as an httpOnly, `SameSite=Lax`, path-scoped cookie that JavaScript never reads. The short-lived access token lives in the webapp's Pinia store and is lost on reload, re-minted through `POST /auth/refresh`. Consequence, which Task 16 must handle rather than discover: a full page load in Nuxt starts unauthenticated and must re-mint during SSR, forwarding the incoming cookie on the server side.
 
 **DEC-4 — The platform-admin endpoints ship in Phase 2.** `GET /users`, `GET /users/:id`, `PATCH /users/:id/platform-role`, `PATCH /users/:id/status`. They depend on `platformRole` only, never on an organization. Deferring them would ship `platformRole` with no enforcement path.
 
@@ -106,7 +106,7 @@ Every task's requirements implicitly include this section.
 | `src/mail/` | `IMailer` port + the dev adapter that writes messages to disk |
 | `src/common/` | **Modified** — `@Public()` decorator, the global guard registration |
 
-### `apps/webapp` — the same contracts over the wire (Tasks 14–16)
+### `apps/webapp` — the same contracts over the wire (Tasks 15–18)
 
 | Path | Responsibility |
 |---|---|
@@ -118,7 +118,7 @@ Every task's requirements implicitly include this section.
 | `app/pages/` | login, register, verify-email, forgot/reset password, `account/*` |
 | `app/components/{atoms,molecules,organisms}/` | The auth UI, each with a story |
 
-### Forge's own tests (Tasks 17–18)
+### Forge's own tests (Tasks 18–19)
 
 | Path | Responsibility |
 |---|---|
@@ -144,12 +144,13 @@ Every task's requirements implicitly include this section.
 | 11 | Registration, login and the session lifecycle | C | D6, D8 |
 | 12 | Recovery, profile and platform administration | C | D7, DEC-4 |
 | 13 | Backend conformance drivers and the security suite | C | D3 |
-| 14 | Webapp services and the shared conformance suite | D | The other half of DEC-1 |
-| 15 | Auth store, composables, middleware and SSR re-mint | D | DEC-3 |
-| 16 | Auth pages, components, stories and locale strings | D | The surface a user actually touches |
-| 17 | Generated-project gates | E | Inventory, purity, sanitize, CI |
-| 18 | Docker end-to-end identity walk | E | D6, D7, D8, D13 against the real stack |
-| 19 | Fix wave, decision log, roadmap update | E | Phase 2 closed honestly |
+| 14 | Design system and the generic component library | D | A real starting point instead of one button |
+| 15 | Webapp services and the shared conformance suite | D | The other half of DEC-1 |
+| 16 | Auth store, composables, middleware and SSR re-mint | D | DEC-3 |
+| 17 | Auth pages, components, stories and locale strings | D | The surface a user actually touches |
+| 18 | Generated-project gates | E | Inventory, purity, sanitize, CI |
+| 19 | Docker end-to-end identity walk | E | D6, D7, D8, D13 against the real stack |
+| 20 | Fix wave, decision log, roadmap update | E | Phase 2 closed honestly |
 
 ---
 
@@ -202,7 +203,7 @@ So: pay the enumeration tax in exactly one file, where it buys a loud failure. T
 
 **Verified working** (Node 26 — see the caveat below): `exports` wildcard, backend `paths` wildcard spanning two segments across two different domains, jest `moduleNameMapper` with `$1`, and vitest's **array** alias form with a RegExp `find` (the object form cannot do this; `$1` does interpolate, and `fileURLToPath(new URL(...))` leaves it unencoded). `"./*/*"` is invalid — Node permits one `*` per pattern.
 
-**Caveat, carried forward honestly:** only Node 26 is installed on this machine. `engines` pins `>=22 <23` and both Dockerfiles use `node:22-bookworm-slim`, so Node 22 is exercised for the first time in Task 18's Docker run. The `exports` semantics used here have been stable since Node 12, but **Node 22 is NOT VERIFIED on the host**. If Task 18 produces a resolution error, look here first.
+**Caveat, carried forward honestly:** only Node 26 is installed on this machine. `engines` pins `>=22 <23` and both Dockerfiles use `node:22-bookworm-slim`, so Node 22 is exercised for the first time in Task 19's Docker run. The `exports` semantics used here have been stable since Node 12, but **Node 22 is NOT VERIFIED on the host**. If Task 19 produces a resolution error, look here first.
 
 ### The two landmines
 
@@ -436,7 +437,7 @@ describe('normalizeEmail', () => {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Generate a project first if you do not have one (`node tools/create/index.mjs --name probeapp --out "$(mktemp -d)" --no-git --yes`), or work in `template/` and rely on Task 17's gate. Inside the generated project:
+Generate a project first if you do not have one (`node tools/create/index.mjs --name probeapp --out "$(mktemp -d)" --no-git --yes`), or work in `template/` and rely on Task 18's gate. Inside the generated project:
 
 Run: `npx nx test core`
 Expected: FAIL — `Cannot find module '@probeapp/core/shared/policies'`.
@@ -1662,7 +1663,7 @@ DEC-2, and the most structurally invasive task in the phase. It changes Phase 1 
 - Modify: `template/apps/backend/src/db/data-source.ts` (connect as the owner; register entities)
 - Modify: `template/apps/backend/src/app.module.ts` (connect as the app role; register entities)
 - Modify: `template/compose.yaml`, `template/compose.prod.yaml`, `template/.env.example`
-- Test: `template/apps/backend/src/db/__tests__/migration-sql.spec.ts` (the SQL is asserted as text; behaviour is proven in Task 18)
+- Test: `template/apps/backend/src/db/__tests__/migration-sql.spec.ts` (the SQL is asserted as text; behaviour is proven in Task 19)
 
 **Interfaces:**
 - Consumes: the core entities from Tasks 4–7 (the TypeORM entities carry the same field names plus the columns core deliberately does not model — secret derivations, token hashes).
@@ -1772,7 +1773,7 @@ the role migration throws when APP_DB_ROLE is absent
 the role migration rejects a role name containing a quote or a space
 ```
 
-The behavioural proof — that the database actually refuses the statement — is D13 in Task 18. Say so in the file header, so nobody reads this spec as the guarantee.
+The behavioural proof — that the database actually refuses the statement — is D13 in Task 19. Say so in the file header, so nobody reads this spec as the guarantee.
 
 - [ ] **Step 8: Clean up, verify Voku, sanitize, commit**
 
@@ -1794,7 +1795,7 @@ git commit -m "feat(backend): add the identity schema and the two-role append-on
 
 ## Task 9: The password hashing adapter
 
-**Start with the probe, not the code.** `argon2` is a native module, and the template ships a `package-lock.json` generated on this macOS/arm64 host while both Dockerfiles run `npm ci` inside `node:22-bookworm-slim`. That is the same shape as the Storybook failure nobody has root-caused. Find out in ten minutes rather than in Task 18.
+**Start with the probe, not the code.** `argon2` is a native module, and the template ships a `package-lock.json` generated on this macOS/arm64 host while both Dockerfiles run `npm ci` inside `node:22-bookworm-slim`. That is the same shape as the Storybook failure nobody has root-caused. Find out in ten minutes rather than in Task 19.
 
 **Why the port lives in the backend, not in core:** core models no stored secret at all — `AuthIdentity` has no field for one (Task 5, ADR-0005). A hashing port in core would have nothing to hash and would drag parameter tuning into a package that must stay free of runtime concerns. ADR-0008 asks for ports with dev adapters, not for every port to live in core.
 
@@ -1892,7 +1893,7 @@ git commit -m "feat(backend): add the password hashing adapter and opaque-token 
 
 ## Task 10: The mail port and its dev adapter
 
-ADR-0008's first instance. The template binds no account and carries no key; verification and reset messages are written to disk where a developer — and Task 18's e2e — can read them.
+ADR-0008's first instance. The template binds no account and carries no key; verification and reset messages are written to disk where a developer — and Task 19's e2e — can read them.
 
 `IMailer` lives in the backend for the same reason `IPasswordHasher` does: core has no notion of a message, and giving it one would mean modelling delivery in a package that must not know how anything reaches anyone.
 
@@ -1904,7 +1905,7 @@ ADR-0008's first instance. The template binds no account and carries no key; ver
 
 **Interfaces:**
 - Consumes: nothing from core.
-- Produces: `interface IMailer { send(message: OutboundMessage): Promise<void> }`, `MAILER` injection token, `FileMailer`. Tasks 11 and 12 inject `MAILER`; Task 18 reads the directory it writes to.
+- Produces: `interface IMailer { send(message: OutboundMessage): Promise<void> }`, `MAILER` injection token, `FileMailer`. Tasks 11 and 12 inject `MAILER`; Task 19 reads the directory it writes to.
 
 - [ ] **Step 1: Write the port and the adapter**
 
@@ -1957,7 +1958,7 @@ The endpoints that make an account real, and the two discriminating tests that p
 
 **Interfaces:**
 - Consumes: `IAuthService`, `AuthenticationOutcome`, `Session`, `User` from core; `IPasswordHasher`, `generateOpaqueToken`, `hashOpaqueToken` from Task 9; `MAILER` from Task 10; the entities from Task 8.
-- Produces: `AuthService implements IAuthService` (Task 13 drives both core suites against it); `@Public()`; `@CurrentUser()`; `RefreshTokenService.rotate(presented: string, client: ClientContext)`; the cookie name and options, which Tasks 15 and 18 depend on.
+- Produces: `AuthService implements IAuthService` (Task 13 drives both core suites against it); `@Public()`; `@CurrentUser()`; `RefreshTokenService.rotate(presented: string, client: ClientContext)`; the cookie name and options, which Tasks 16 and 19 depend on.
 
 - [ ] **Step 1: Register the global guard, and write D6 before anything else**
 
@@ -2078,7 +2079,7 @@ Password recovery, the `/users/me` surface, identity listing and unlinking, and 
 
 **Interfaces:**
 - Consumes: everything from Tasks 4–11.
-- Produces: `UsersService implements IUserService`, `IdentitiesService implements IIdentityService`, `AuditService implements IAuditService` — the three Task 13 drives the conformance suites against. `PlatformAdminGuard` and the `UserResponseDto` wire shape, which Task 14's webapp services parse.
+- Produces: `UsersService implements IUserService`, `IdentitiesService implements IIdentityService`, `AuditService implements IAuditService` — the three Task 13 drives the conformance suites against. `PlatformAdminGuard` and the `UserResponseDto` wire shape, which Task 15's webapp services parse.
 
 - [ ] **Step 1: Implement recovery, enumeration-safe throughout**
 
@@ -2129,7 +2130,7 @@ Record all three verbatim, then restore and confirm green.
 
 `GET /users/me/identities` and `DELETE /users/me/identities/:id` call `IIdentityService`, which calls core's `assertAtLeastOneIdentityRemains`. The controller must not re-implement the check — one rule, one place, and Task 5 put it in core precisely so both apps get the same answer.
 
-`UserResponseDto` is built from `User.toJSON()`. It must not acquire fields of its own: the whole point of the shared wire shape is that Task 14's webapp parses exactly what core's `fromJSON` expects. B9's grep exists to catch secret material here.
+`UserResponseDto` is built from `User.toJSON()`. It must not acquire fields of its own: the whole point of the shared wire shape is that Task 15's webapp parses exactly what core's `fromJSON` expects. B9's grep exists to catch secret material here.
 
 - [ ] **Step 5: Implement platform administration (DEC-4)**
 
@@ -2181,7 +2182,7 @@ git commit -m "feat(backend): add password recovery, the profile surface and pla
 
 The services are driven with real logic and fake persistence: an `InMemoryRepository<T>` implementing the slice of TypeORM's `Repository` the services actually use — `find`, `findOne`, `save`, `update`, `delete`, `count`, and a `manager.transaction` that simply runs the callback.
 
-Be honest about what this does not cover, in a comment at the top of the file: the fake transaction does not roll back, so the atomicity Task 11 relies on for token consumption and rotation is **not** proven here. It is proven in Task 18 against a real database. A harness that silently pretends to be transactional is worse than one that says it is not.
+Be honest about what this does not cover, in a comment at the top of the file: the fake transaction does not roll back, so the atomicity Task 11 relies on for token consumption and rotation is **not** proven here. It is proven in Task 19 against a real database. A harness that silently pretends to be transactional is worse than one that says it is not.
 
 `makeIdentityWorld()` builds the `UserServiceContractContext` — the actor, the other user and the admin — by driving the real `AuthService.register` and then verifying directly against the fake, so the world is constructed through the same code paths the application uses.
 
@@ -2221,7 +2222,142 @@ git commit -m "test(backend): drive the core conformance suites against the real
 
 ---
 
-## Task 14: Webapp services and the shared conformance suite
+## Task 14: The design system and the generic component library
+
+Stage D opens here because everything after it renders something. The source project has a mature, domain-free component library and the template ships exactly one component; importing the generic half gives a generated project a real starting point instead of a single button.
+
+**This is an extraction task, so §12 of the spec governs it:** copy by explicit per-file allowlist, generalize, and prove zero traces. `~/Progetti/Voku` is read-only.
+
+### Two prerequisites the import drags in, both verified before this was written
+
+**F1 — the components depend on a design system the template does not have.** The source project's `tailwind.config.ts` **replaces** `theme.colors` wholesale with a named palette — `surface`, `backdrop`, `primary.50–900`, `neutral`, `error`, `success`, `warning` — plus a `safelist`. The template's config defines none of it: only `minHeight.touch`/`minWidth.touch`. Every imported component is written in that vocabulary (`text-primary-600`, `bg-surface`, `text-error-600`), and Tailwind emits **nothing** for a class it does not know — so the components would copy across cleanly, typecheck, lint, pass their tests and render unstyled. The failure is silent and looks like a CSS bug.
+
+There is also `app/assets/scss/{_variables,_mixins,app}.scss`, which one candidate (`AppLogo`, via `$font-family-logo`) needs, and which requires `sass` plus the Nuxt wiring that injects it.
+
+Consequence for what already ships: the template's `AppButton.vue` is written in stock Tailwind (`bg-slate-900`, `bg-slate-100`). Once the palette lands it becomes the one component in the library speaking a different language. Re-base it.
+
+**F2 — the sanitize gate rejects DOM event types.** Verified by running the real `RULES` array against real component lines:
+
+```
+FAIL[source-domain type name] | function onChange(event: Event) {
+FAIL[source-domain identifier] | function onSubmit(e: SubmitEvent) {
+pass                           | const model = defineModel<string>();
+pass                           | base.push('pointer-events-none opacity-50');
+```
+
+The bare DOM `Event` type matches `/\bEvent(?!ual)/`, and every specific interface — `SubmitEvent`, `InputEvent`, `KeyboardEvent` — matches `/[a-z](Event|Payment|Ticket)/` on the lowercase letter preceding the capital. Five of the candidate atoms (`AppInput`, `AppTextarea`, `AppSelect`, `AppCheckbox`, `AppColorPicker`) type their handlers this way.
+
+The two rules cannot tell a DOM `Event` from the source project's `Event` entity — lexically they are the same string, and that is not a defect in the rules. **Do not weaken them.** The resolution is that the template does not name DOM event types: the affected atoms are converted to `defineModel<T>()`, which Vue 3.5 supports, eliminates the handler entirely, and is better code than what is being replaced. `pointer-events-none` is unaffected and needs no change.
+
+If you find a candidate that genuinely needs a DOM event type and cannot use `defineModel`, **report it** rather than adding a `sanitize:allow`. Phase 1 left exactly one exemption and a standing instruction to tighten the marker to per-rule granularity before the count reaches two.
+
+### What comes across, and what does not
+
+**Import — atoms (31, plus the `AppButton` already present):**
+
+`AppAlert`, `AppAvatar`, `AppBadge`, `AppCard`, `AppCheckbox`, `AppContainer`, `AppDivider`, `AppGrid`, `AppHeading`, `AppIcon`, `AppImage`, `AppInput`, `AppLink`, `AppLogo`, `AppOverlay`, `AppProgressBar`, `AppRadioGroup`, `AppSection`, `AppSelect`, `AppSpinner`, `AppStack`, `AppSurface`, `AppTab`, `AppTable`, `AppTableBody`, `AppTableCell`, `AppTableHead`, `AppTableRow`, `AppText`, `AppTextarea`, `AppToggle`
+
+**Import — molecules (4):** `AppTabGroup`, `ConfirmDialog`, `FormField`, `UserMenu`
+**Import — organisms (1):** `AppHeader`
+**Import — templates (1):** `AuthTemplate`
+
+**Leave behind — niche rather than domain-coupled:** `AppColorPicker`, `AppColorSwatch` (only meaningful for a theming feature that does not exist here) and `AppMapEmbed` (a mapping integration a generated project has no reason to inherit). None is a domain leak; they are simply not a starting point. Say so in the commit message so the decision is legible.
+
+**Leave behind — domain-coupled, all of them:** every `Event*`, `Ticket*`, `Payment*`, `Refund*`, `Rsvp*`, `Invitation*`, `Guest*`, `Series*`, `CostItem*`, `Organizer*`, `Provider*`, `*ModeDialog`, `OnlineCheckoutSection`, `MarkItemsPaidDialog`, `RecurrenceSelector` and `EventPageTemplate`. These are the source project's product, not its scaffolding.
+
+Two candidates need real edits rather than a rename:
+
+- **`UserMenu`** reads `user.firstName` and `user.lastName`. This phase's `User` has a single `displayName` (Task 4). Adapt it, and derive initials from `displayName` rather than inventing name fields the entity does not have.
+- **`AppHeader`** links to `/login` and `/register` and renders `UserMenu` behind `isAuthenticated`. Those routes exist by Task 17, and `isAuthenticated` comes from Task 16's store — so `AppHeader` is imported here but only becomes live then. Check that it references no route this phase does not ship.
+
+**Files:**
+- Create: `template/apps/webapp/app/components/atoms/*.vue` (31)
+- Create: `template/apps/webapp/app/components/molecules/{AppTabGroup,ConfirmDialog,FormField,UserMenu}.vue`
+- Create: `template/apps/webapp/app/components/organisms/AppHeader.vue`
+- Create: `template/apps/webapp/app/components/templates/AuthTemplate.vue`
+- Create: `template/apps/webapp/stories/{atoms,molecules,organisms}/*.stories.ts`
+- Create: `template/apps/webapp/app/assets/scss/{_variables.scss,_mixins.scss,app.scss}`
+- Modify: `template/apps/webapp/tailwind.config.ts`, `nuxt.config.ts`, `package.json`, `app/locales/en.json`
+- Modify: `template/apps/webapp/app/components/atoms/AppButton.vue` (re-base onto the palette)
+- Delete: the three `.gitkeep` files, now that the folders hold components
+- Modify: `template/package-lock.json`
+
+**Interfaces:**
+- Consumes: nothing from earlier tasks.
+- Produces: the component vocabulary Tasks 16 and 17 build on — `AuthTemplate` wraps the login and register pages, `FormField` + `AppInput` compose every form, `AppAlert` carries the one fixed login-failure message, `ConfirmDialog` guards account deletion, `AppTable*` renders the session list.
+
+- [ ] **Step 1: Import the design system first, and prove it took effect**
+
+Copy the palette and `safelist` into `template/apps/webapp/tailwind.config.ts`, keeping the existing `minHeight`/`minWidth` touch tokens. Copy the three SCSS files, add `sass` to `devDependencies`, and wire it in `nuxt.config.ts` exactly as the source project does — read its config rather than guessing at the injection syntax.
+
+Prove it before importing a single component: add a throwaway element using `bg-primary-600` and `text-surface`, run `npx nx build webapp`, and confirm the utilities appear in the emitted CSS. Then remove it. An import on top of a palette that is not actually in effect produces 37 silently unstyled files.
+
+- [ ] **Step 2: Re-base `AppButton` and watch its test still pass**
+
+Rewrite its `primary`/`secondary` classes in palette terms. Its existing spec asserts on class names, so it will fail — update the spec to the new classes, and keep both directions of the two assertions Phase 1 added (the suite must still catch a component that ignores `disabled` or returns both variant class sets).
+
+- [ ] **Step 3: Copy the atoms by explicit allowlist**
+
+One `cp` per file from the list above — never `cp -r` of the directory, which is how the excluded components come along by accident. After copying, sweep for traces with **substring** matching, not word boundaries:
+
+```bash
+cd /Users/sinisimattia/Progetti/forge/template/apps/webapp
+grep -rniE 'voku|event|ticket|rsvp|payment|refund|invitation|organizer|stripe' app/components/ stories/
+```
+
+Triage every hit by hand. `pointer-events-none` and a DOM `Event` are not domain leaks; `EventCard` or `eventId` would be. Phase 1's log records this exact grep being written with `\b` and missing three real leaks, so use the substring form and read the output.
+
+- [ ] **Step 4: Convert the five form atoms to `defineModel`**
+
+`AppInput`, `AppTextarea`, `AppSelect`, `AppCheckbox` (and `AppColorPicker` if you chose to keep it) replace their `defineProps`/`emit`/handler triple with:
+
+```ts
+const model = defineModel<string>();
+```
+
+and bind `v-model="model"` on the native element. The `modelValue` prop and `update:modelValue` emit disappear, which is API-compatible for every caller using `v-model`. Update each component's story and any spec that reached for the old emit.
+
+Then run `npm run sanitize` and confirm zero hits. This is the step F2 exists for; if it still trips, the conversion is incomplete.
+
+- [ ] **Step 5: Import the molecules, the organism and the template**
+
+Copy the six, apply the `UserMenu` and `AppHeader` adaptations described above, and confirm each one's imports resolve to components that were actually imported — a molecule reaching for an atom left behind fails typecheck, which is the good outcome, but a molecule reaching for one that exists under a *different* name fails silently at runtime.
+
+- [ ] **Step 6: Import the stories**
+
+The source project ships a story for nearly every generic atom plus `ConfirmDialog`, `FormField` and `AppHeader`. Import the ones matching imported components; W5 is satisfied for free. Four imported atoms have no story upstream (`AppTab`, `AppTableBody`, `AppTableCell`, `AppTableHead`) — write them, following the existing `AppButton.stories.ts` shape.
+
+**The Storybook build is known broken** and this task does not fix it. Stories must be correct; they will not be built. If `build-storybook` starts working, that is new evidence about a root cause currently unknown — report it, do not chase it.
+
+- [ ] **Step 7: Import the locale keys the components reference**
+
+`AppHeader` uses `common.nav.*`; `UserMenu` uses a menu key. Copy only the keys the imported components actually reference into `app/locales/en.json`, and grep the components for every `t('...')` call to be sure none is left pointing at a key that does not exist — a missing key renders as the key itself, in the UI, in production.
+
+- [ ] **Step 8: Verify the whole webapp, including the review dimensions**
+
+```bash
+npx nx lint webapp && npx nx typecheck webapp && npx nx test webapp && npx nx build webapp
+```
+
+Then run W1–W8's signals over the imported tree and triage by hand. W1 matters most here: with `molecules/`, `organisms/` and `templates/` now populated, its greps run against real directories for the first time — until now they exited 2 with "No such file or directory", which reads like a clean result unless someone checks the exit code. Confirm each of the three greps now returns a real result, and construct one synthetic violation (an atom importing an atom) to watch the signal fire.
+
+- [ ] **Step 9: Sanitize, verify the source project, commit**
+
+```bash
+cd /Users/sinisimattia/Progetti/forge
+npm run refresh-lockfile
+npm run sanitize
+git -C ~/Progetti/Voku status --porcelain     # must be empty
+git -C ~/Progetti/Voku rev-parse --short HEAD # must be fdfdbde
+git add template/apps/webapp template/package-lock.json
+git commit -m "feat(webapp): add the design system and the generic component library"
+```
+
+Commit the palette and SCSS separately from the components if it helps a reviewer see the two halves; one commit is fine if it does not.
+
+---
+
+## Task 15: Webapp services and the shared conformance suite
 
 The other half of DEC-1: the same contracts, implemented over the wire, driven by the same shared suites under vitest.
 
@@ -2234,7 +2370,7 @@ The other half of DEC-1: the same contracts, implemented over the wire, driven b
 
 **Interfaces:**
 - Consumes: `IAuthService`, `IUserService`, `IIdentityService` and the `*JSON` wire shapes from core; the `UserResponseDto` shape Task 12 produces.
-- Produces: `AuthHttpService implements IAuthService`, `UserHttpService implements IUserService`, `IdentityHttpService implements IIdentityService`; `stubBackend()`, which Task 16's component tests reuse.
+- Produces: `AuthHttpService implements IAuthService`, `UserHttpService implements IUserService`, `IdentityHttpService implements IIdentityService`; `stubBackend()`, which Task 17's component tests reuse.
 
 - [ ] **Step 1: Write the fetchers**
 
@@ -2301,7 +2437,7 @@ git commit -m "feat(webapp): implement the core contracts over the wire and driv
 
 ---
 
-## Task 15: The auth store, composables, middleware and the SSR re-mint
+## Task 16: The auth store, composables, middleware and the SSR re-mint
 
 DEC-3's consequence, handled rather than discovered. The access token lives in memory, so a full page load starts with nothing and must renew during SSR, forwarding the incoming cookie by hand.
 
@@ -2317,8 +2453,8 @@ DEC-3's consequence, handled rather than discovered. The access token lives in m
 - Test: `template/apps/webapp/app/middleware/__tests__/{auth.spec.ts,guest.spec.ts}`
 
 **Interfaces:**
-- Consumes: the three services from Task 14; the refresh fetcher.
-- Produces: `useAuthStore()` with `accessToken`, `currentUser`, `isAuthenticated`, `login()`, `logout()`, `renew()`, `initialize()`; `useAuth()`; `useCurrentUser()`; the `auth` and `guest` route middleware Task 16's pages declare.
+- Consumes: the three services from Task 15; the refresh fetcher.
+- Produces: `useAuthStore()` with `accessToken`, `currentUser`, `isAuthenticated`, `login()`, `logout()`, `renew()`, `initialize()`; `useAuth()`; `useCurrentUser()`; the `auth` and `guest` route middleware Task 17's pages declare.
 
 - [ ] **Step 1: Write the store**
 
@@ -2381,30 +2517,31 @@ git commit -m "feat(webapp): add the auth store, middleware and the server-side 
 
 ---
 
-## Task 16: Auth pages, components, stories and locale strings
+## Task 17: Auth pages, components, stories and locale strings
 
 The surface a person actually touches. Every component carries a story (W5) and every string is translated (W6).
 
+**Build on Task 14's library rather than around it.** `AppInput`, `AppAlert`, `AppCard`, `AppStack`, `AppText`, `AppHeading`, `FormField`, `ConfirmDialog`, `AppTable*` and `AuthTemplate` already exist. This task adds only what is genuinely new: one molecule and four auth organisms. If you find yourself writing an atom, stop — either it was left behind for a stated reason (`AppColorPicker`, `AppColorSwatch`, `AppMapEmbed`) or the library already has it under another name.
+
 **Files:**
-- Create: `template/apps/webapp/app/components/atoms/{AppInput.vue,AppAlert.vue}`
-- Create: `template/apps/webapp/app/components/molecules/{FormField.vue,PasswordField.vue}`
+- Create: `template/apps/webapp/app/components/molecules/PasswordField.vue`
 - Create: `template/apps/webapp/app/components/organisms/{LoginForm.vue,RegisterForm.vue,SessionList.vue,IdentityList.vue}`
 - Create: `template/apps/webapp/app/pages/{login.vue,register.vue,verify-email.vue,forgot-password.vue,reset-password.vue}`
 - Create: `template/apps/webapp/app/pages/account/{profile.vue,security.vue,sessions.vue,identities.vue}`
-- Create: `template/apps/webapp/app/layouts/auth.vue`
-- Create: `template/apps/webapp/stories/{atoms,molecules,organisms}/*.stories.ts` (one per component)
+- Create: `template/apps/webapp/app/layouts/auth.vue` (wraps `AuthTemplate`)
+- Create: `template/apps/webapp/stories/{molecules,organisms}/*.stories.ts` (one per component this task creates)
 - Modify: `template/apps/webapp/app/locales/en.json`
 - Test: `template/apps/webapp/app/components/__tests__/*.spec.ts`
 
 **Interfaces:**
 - Consumes: `useAuth`, `useCurrentUser`, the services, the middleware.
-- Produces: the routes Task 18's e2e walks.
+- Produces: the routes Task 19's e2e walks.
 
-- [ ] **Step 1: Write the atoms and molecules with their stories**
+- [ ] **Step 1: Write `PasswordField` and its story**
 
-Follow the existing `AppButton.vue` exactly — it is the one component the template ships and the pattern every reviewer dimension was written against. `PasswordField` shows policy violations returned by core's `evaluatePassword`, so the rule a person sees while typing is the rule the server applies.
+Follow the imported library's conventions, not `AppButton`'s alone. `PasswordField` is a molecule composing `FormField` with a visibility toggle, and it shows the policy violations core's `evaluatePassword` returns — so the rule a person sees while typing is the rule the server applies. It must not re-derive the rule locally; that is the second copy the shared policy exists to prevent.
 
-W1: an atom importing another atom is a violation. `FormField` is a molecule because it composes `AppInput` with a label and an error.
+W1: a molecule may import atoms and nothing at its own level or above.
 
 - [ ] **Step 2: Write the pages**
 
@@ -2441,7 +2578,7 @@ The `does NOT` assertions are the ones that catch a real regression. A test that
 
 - [ ] **Step 4: Stories**
 
-One story file per component, `satisfies Meta<typeof X>` with `type Story = StoryObj<typeof meta>`, importing via the `~/components/...` alias. Mirror the existing `AppButton.stories.ts`.
+One story file per component **this task creates** — the five new ones; Task 14 brought the library's own. `satisfies Meta<typeof X>` with `type Story = StoryObj<typeof meta>`, importing via the `~/components/...` alias.
 
 **The template's Storybook build is known broken** (`[vite:build-html] Missing field 'moduleType'`) and it is not this task's job. Write the stories correctly and move on. If `build-storybook` happens to start working, say so — that would be new evidence about a root cause that is currently unknown.
 
@@ -2460,7 +2597,7 @@ git commit -m "feat(webapp): add the authentication and account pages"
 
 ---
 
-## Task 17: The generated-project gates
+## Task 18: The generated-project gates
 
 Forge's own integration tier, extended to the new surface. Phase 1's gate test proved a generated project passes `lint`, `typecheck`, `test`, `build` and `purity`; it now has roughly ten times as much to prove it against.
 
@@ -2533,7 +2670,7 @@ git commit -m "test(forge): extend the generated-project gate to the identity su
 
 ---
 
-## Task 18: The Docker end-to-end identity walk
+## Task 19: The Docker end-to-end identity walk
 
 The stack, running, doing the whole thing. **D13 can only be proven here** — and D6, D7 and D8 are re-proven against the real database rather than against fakes.
 
@@ -2633,7 +2770,7 @@ git commit -m "test(forge): walk the identity flow end to end and prove the audi
 
 ---
 
-## Task 19: Fix wave, decision log, roadmap
+## Task 20: Fix wave, decision log, roadmap
 
 Phase 1 closed with a single fix-wave dispatch and a preserved decision log, and both are why this plan could be written at all. Do the same.
 
