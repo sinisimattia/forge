@@ -67,8 +67,15 @@ function recording(
  * every depth, so a member nested inside another object would be dropped from
  * the comparison rather than compared. Nothing this suite records is nested.
  *
+ * Two blind spots, both accepted. `JSON.stringify` drops a member whose value
+ * is `undefined`, so an implementation that turned a recorded `undefined` into
+ * an absence compares equal here — the case that matters, a member recorded
+ * with `null`, is pinned on its own above and by name, which is where the
+ * effort belongs. And the return is not quite "equal exactly when the data is":
+ * it is that for the flat data this suite records, and no more.
+ *
  * @param data - an entry's `metadata`, as it crosses the wire
- * @returns a rendering two of which are equal exactly when the data is
+ * @returns a rendering two of which are equal when the flat data is
  */
 function canonical(data: Readonly<Record<string, unknown>>): string {
   return JSON.stringify(data, Object.keys(data).sort());
@@ -215,6 +222,10 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
         // Against the input, which is what the caller supplied — never against
         // the entry, which agrees with itself however wrong it is.
         expect.equal(String(entry.actorId), String(input.actorId), 'the entry must name who did it');
+        // Less redundant with the filter above than it looks, and worth keeping
+        // for the gap it covers: the filter matches on the stored row, this
+        // reads the entity built from that row. A read mapping that mangles the
+        // action after matching on it is caught here and nowhere else.
         expect.equal(entry.action, input.action, 'the entry must record what happened');
         expect.equal(entry.resourceType, input.resourceType, 'the entry must record what kind of thing it was about');
         expect.equal(entry.resourceId, input.resourceId, 'the entry must record which thing it was about');
@@ -245,6 +256,9 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
         }));
 
         const page = await service.query(readerId, wholeHistory({ action: freshAction }));
+        // Before indexing, so that an implementation returning nothing reports
+        // the promise it broke instead of throwing a TypeError off `data[0]`.
+        expect.equal(page.data.length, 1, 'exactly the entry just recorded must come back');
         const entry = page.data[0];
         expect.equal(entry.resourceType, null, 'an entry about no thing must come back about no thing');
         expect.equal(entry.resourceId, null, 'an entry about no thing must come back about no thing');
@@ -366,6 +380,10 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
         // exactly the faults this test exists to catch.
         const actual: AuditEntryJSON = fetched.toJSON();
         const field = (name: string): string => `the promised entry's ${name} must cross unchanged`;
+        // Pinned already by the line that selected `fetched`, and kept so the
+        // list below is visibly all ten fields rather than nine and a gap. What
+        // actually catches an id the implementation lost is the `ok(fetched)`
+        // above, where the entry simply never comes back.
         expect.equal(actual.id, expected.id, field('id'));
         expect.equal(actual.organizationId, expected.organizationId, field('organizationId'));
         expect.equal(actual.actorId, expected.actorId, field('actorId'));
@@ -377,11 +395,21 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
         expect.equal(actual.clientLabel, expected.clientLabel, field('clientLabel'));
         expect.equal(actual.occurredAt, expected.occurredAt, field('occurredAt'));
 
-        // The other half of "two implementations agree on the shape between
-        // them": whatever this one emits, the receiving side has to be able to
-        // rebuild. The call IS the check — `fromJSON` throws on a payload it
-        // cannot make an entry of — so there is nothing to assert about what it
-        // returns.
+        // NOT the check its counterpart in the other three domains is, and the
+        // difference is named here because the sentence that used to stand in
+        // this place was carried over with the pattern and was false of this
+        // entity. There, `fromJSON` re-runs an invariant and throws on a payload
+        // that violates one, so making the call is itself an assertion. Here
+        // there is no invariant to re-run — this entity refuses nothing at
+        // construction, deliberately — and `actual` came out of a real entity
+        // besides, so no run of this line can fail.
+        //
+        // It stays for a compile-time property, the way the auth suite's
+        // `describeOutcome` exists for one: whatever `toJSON` emits must be
+        // something `fromJSON` accepts, so the round trip between two
+        // implementations is closed, and widening one side without the other
+        // stops this file building. The run-time half of "they agree on the
+        // shape between them" is the ten comparisons above, and only those.
         AuditEntry.fromJSON(actual);
       });
     });

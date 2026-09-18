@@ -7,13 +7,24 @@ import type { AuditEntryProps } from '../types/AuditEntryProps';
 /**
  * One thing that happened, recorded so it can be reconstructed later.
  *
- * The entity has no invariant that can refuse a value, and the absence is
- * deliberate rather than an oversight. Recording is not allowed to fail for a
- * business reason — see {@link IAuditService.record} — and an entity that threw
- * would hand every caller a reason to record less. The one thing the
- * constructor does do is take the history out of its author's hands: `metadata`
- * is copied and frozen, so an entry cannot be altered through the object a
- * caller happens to still be holding.
+ * The entity refuses nothing **at construction**, and the qualifier carries
+ * weight. Recording is not allowed to fail for a business reason — see
+ * {@link IAuditService.record} — and an entity that threw would hand every
+ * caller a reason to record less, so there is no value a caller can offer that
+ * this constructor rejects. The one thing it does do is take the history out of
+ * its author's hands: `metadata` is copied and frozen, so an entry cannot be
+ * altered through the object a caller happens to still be holding.
+ *
+ * One thing can still fail, later than anybody would want it to. A row whose
+ * `occurredAt` cannot be parsed builds an entry silently and then throws from
+ * {@link AuditEntry.toJSON} when somebody reads it — refusing at read time,
+ * which for an append-only table is the worse of the two places, because the
+ * row that provoked it is one nothing may correct. Nothing in this phase can
+ * produce such a row: the only writer is `record`, and it is handed a `Date`.
+ * If a later phase gives this entity a second way in — rows from somewhere
+ * other than this application's own writes — {@link AuditEntry.fromJSON} is
+ * where that has to be caught, being the one boundary where refusing costs a
+ * reader nothing and a writer nothing.
  *
  * That freeze is shallow, and saying so is the point: an object nested inside
  * `metadata` stays mutable to whoever passed it. Walking arbitrary caller data
