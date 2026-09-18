@@ -1,5 +1,3 @@
-import type { ConformanceExpect } from '__FORGE_SCOPE__/core/shared/testing';
-import { explain } from '__FORGE_SCOPE__/core/shared/testing';
 import type { PaginatedResult } from '__FORGE_SCOPE__/core/shared/types';
 import type { IUserService } from '__FORGE_SCOPE__/core/users/contracts';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
@@ -13,6 +11,7 @@ import type {
   UserJSON,
   UserQuery,
 } from '__FORGE_SCOPE__/core/users/types';
+import { jestConformanceExpect } from '../../shared/testing/jestConformanceExpect';
 
 /**
  * A reference implementation over a Map of wire rows.
@@ -89,37 +88,6 @@ class InMemoryUserService implements IUserService {
   }
 }
 
-/**
- * Adapts jest's assertions to the runner-agnostic surface the suite is driven through.
- *
- * The optional message is part of that surface, and a host that drops it turns "the
- * world must seed the actor from an address the domain has to normalize" into
- * `Received: false` at a line number — an unreadable failure gets worked around rather
- * than fixed. Jest accepts at most one argument to `expect`, so the message is raised as
- * the failure itself where jest's own report says nothing a reader needs (`ok`), and put
- * in front of it by the shared `explain` helper where the diff is worth keeping.
- */
-const conformanceExpect: ConformanceExpect = {
-  equal: (actual, expected, message) => {
-    try {
-      expect(actual).toBe(expected);
-    } catch (error) {
-      throw explain(error, message);
-    }
-  },
-  ok: (value, message) => {
-    if (!value && message !== undefined) throw new Error(message);
-    expect(value).toBeTruthy();
-  },
-  rejects: async (operation, errorType, message) => {
-    try {
-      await expect(operation()).rejects.toBeInstanceOf(errorType);
-    } catch (error) {
-      throw explain(error, message);
-    }
-  },
-};
-
 // Deliberately not in normal form: the suite requires it, because it is what
 // makes normalization something an implementation can be caught failing to do.
 // An implementation that hands back the row its store holds, rather than
@@ -151,28 +119,10 @@ async function makeContext(): Promise<UserServiceContractContext> {
   };
 }
 
-// The adapter's third argument is the contract's, and both reference drivers dropped it
-// silently through Tasks 4 and 5 — every explanatory message in both suites went to
-// nothing. Pinned here so the next driver cannot quietly do it again: a plan rule asks,
-// a test enforces.
-describe('the jest conformance adapter', () => {
-  it('raises the suite\'s message when `ok` fails', () => {
-    expect(() => {
-      conformanceExpect.ok(false, 'the world must seed a normalizable value');
-    }).toThrow('the world must seed a normalizable value');
-  });
-
-  it('keeps jest\'s own report underneath the message when `equal` fails', () => {
-    expect(() => {
-      conformanceExpect.equal(1, 2, 'the two sides must agree');
-    }).toThrow(/the two sides must agree[\s\S]*Expected: 2[\s\S]*Received: 1/);
-  });
-});
-
 runIUserServiceContract({
   describe,
   it,
-  expect: conformanceExpect,
+  expect: jestConformanceExpect,
   makeContext,
   // Well-formed for this store — its keys are plain strings — and in no world.
   absentId: 'no-such-user' as UserId,
