@@ -52,6 +52,12 @@ Every task's requirements implicitly include this section.
 - **Core tests live outside `src/`**, under `libs/core/tests/`, mirroring the `src/` structure, and import the code under test through its public `__FORGE_SCOPE__/core/<domain>/<folder>` subpath — never a relative path into `src/`.
 - **`libs/core` layout rules:** per-domain folders, one exported symbol per file named after the symbol, an `index.ts` barrel per folder, subpath-only exports, `I`-prefixed contracts, contracts speak in entities, TSDoc on every export, money as integer cents, UTC `Date` in entities and ISO-8601 strings on the wire, specific `DomainError` subclasses never the base class.
 - **The base `tsconfig.json` does not set `module`/`moduleResolution`, deliberately.** Setting `moduleResolution: "Bundler"` there makes any CommonJS package extending it fail with `TS5095`. Each package owns both options. Do not "fix" the base config.
+- **Docker hygiene — a task cleans up after itself.** Three image builds with a full `npm ci`
+  exhausted this machine's Docker VM disk during Phase 2 and crashed an unrelated Postgres that
+  was mid-transaction; the VM was carrying 16.8 GB of images and 12.4 GB of build cache at the
+  time. Before building, check headroom with `docker system df`. After building, remove the images
+  and build cache **you** created (`docker builder prune --filter until=…`, and your own tags).
+  Leaving it for the next task is how the ceiling is reached again.
 - **Never touch a Docker container you did not create.** This machine runs unrelated live containers, including a Postgres on 5432. Allocate free ports with `net.createServer().listen(0)` and publish through the `POSTGRES_PORT`/`BACKEND_PORT`/`BACKEND_DEBUG_PORT`/`WEBAPP_PORT` overrides. Never `docker stop`, `docker rm`, `docker system prune` or reconfigure anything you did not start, and always scope compose commands with the per-run `-p` project name.
 - **Known broken, not yours:** the template's Storybook build fails with `[vite:build-html] Missing field 'moduleType'`. Dependency drift was tested and **falsified** as the cause; the root cause is unknown. Forge's storybook CI job is `continue-on-error: true`. Do not chase it, do not re-adopt the drift explanation, and do not let it block a task.
 
