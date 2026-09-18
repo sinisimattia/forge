@@ -1304,7 +1304,11 @@ export interface IBreachedPasswordRegistry {
 throws IdentityNotFoundError when the id is not in the list
 throws LastIdentityRemovalError when the list holds exactly that one identity
 returns normally when two identities exist and one is being removed
-throws LastIdentityRemovalError for an empty list (via not-found first — assert which error wins and why)
+throws IdentityNotFoundError for an empty list — NOT LastIdentityRemovalError. The
+not-found check runs first, and that order is load-bearing rather than incidental: deciding
+the count first would answer differently for an id that exists than for one that does not,
+which is an enumeration oracle. Assert it both positively and negatively, and say why in a
+comment.
 ```
 
 `evaluatePassword.spec.ts` must cover every branch of every policy flag in both directions — that is what 100% branch coverage demands here, and it is also the honest test of a function whose whole job is branching.
