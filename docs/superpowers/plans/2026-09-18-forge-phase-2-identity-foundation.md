@@ -72,6 +72,12 @@ Every task's requirements implicitly include this section.
 
 - **Treat this plan as a set of hypotheses, not a specification.** Twelve times in Phase 1 a prescribed fix was wrong and an implementer caught it by testing before applying — a regex that false-positived on the real file, a `\bevent\b` grep that cannot match `eventId`, a claim that `npm ci` with no lockfile is a harmless no-op when it errors outright. If a step's literal code does not work, **test it, then report the failure and your correction**. Do not silently comply, and do not silently deviate. `DONE_WITH_CONCERNS` asking the controller to confirm intent is the right escalation.
 - **A guard nobody has watched fail is not a guard.** Every discriminating test in this plan must be run with its fault injected and observed to fail, then observed to pass once the fault is removed. Report the verbatim failure output.
+- **An inherited sentence is a claim about the thing you pasted it into.** Four consecutive core
+  suites shipped an assertion that could not fail, and the fourth was caused by copying the
+  *justification* along with the pattern it justified: "the call IS the check — `fromJSON` throws on
+  a payload it cannot make an entry of" is true of three entities and false of the fourth, whose own
+  task had just decided it validates nothing. A rationale carried across reads as considered,
+  because it was — elsewhere. For every sentence you inherit, ask whether it is true *of this thing*.
 - **A claim about evidence is not evidence.** Phase 1 caught four separate cases of inaccurate evidence in otherwise-correct work — a RED log pasted from a different test, a fixture claimed to fire that could not have. If you did not run it, say "NOT VERIFIED". Candid self-retraction is the behaviour being rewarded here.
 - **`grep` in this session is a shim, not the system grep — verify signals with `/usr/bin/grep`.**
   `type grep` reports a shell function backed by ugrep, and the two disagree on real patterns:
@@ -1763,7 +1769,7 @@ Inject and observe: add a `deleteEntry` method to the reference implementation a
 ```bash
 cd /Users/sinisimattia/Progetti/forge
 npm run sanitize
-git add template/libs/core/src/audit template/libs/core/tests/audit template/libs/core/package.json
+git add template/libs/core/src/audit template/libs/core/tests/audit template/libs/core/package.json template/libs/core/README.md template/libs/core/src/auth/enums/AuthenticationRejectionReason.ts
 git commit -m "feat(core): add the append-only audit contract"
 ```
 
