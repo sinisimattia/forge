@@ -1,4 +1,5 @@
 import type { ConformanceExpect } from '__FORGE_SCOPE__/core/shared/testing';
+import { explain } from '__FORGE_SCOPE__/core/shared/testing';
 import type { PaginatedResult } from '__FORGE_SCOPE__/core/shared/types';
 import type { IUserService } from '__FORGE_SCOPE__/core/users/contracts';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
@@ -95,14 +96,9 @@ class InMemoryUserService implements IUserService {
  * world must seed the actor from an address the domain has to normalize" into
  * `Received: false` at a line number — an unreadable failure gets worked around rather
  * than fixed. Jest accepts at most one argument to `expect`, so the message is raised as
- * the failure itself where jest's own report says nothing a reader needs (`ok`), and
- * prefixed to it where the diff is worth keeping.
+ * the failure itself where jest's own report says nothing a reader needs (`ok`), and put
+ * in front of it by the shared `explain` helper where the diff is worth keeping.
  */
-function explain(error: unknown, message: string | undefined): Error {
-  if (message === undefined) return error as Error;
-  return new Error(`${message}\n\n${(error as Error).message}`);
-}
-
 const conformanceExpect: ConformanceExpect = {
   equal: (actual, expected, message) => {
     try {
@@ -154,6 +150,24 @@ async function makeContext(): Promise<UserServiceContractContext> {
     admin: User.fromJSON(adminRow),
   };
 }
+
+// The adapter's third argument is the contract's, and both reference drivers dropped it
+// silently through Tasks 4 and 5 — every explanatory message in both suites went to
+// nothing. Pinned here so the next driver cannot quietly do it again: a plan rule asks,
+// a test enforces.
+describe('the jest conformance adapter', () => {
+  it('raises the suite\'s message when `ok` fails', () => {
+    expect(() => {
+      conformanceExpect.ok(false, 'the world must seed a normalizable value');
+    }).toThrow('the world must seed a normalizable value');
+  });
+
+  it('keeps jest\'s own report underneath the message when `equal` fails', () => {
+    expect(() => {
+      conformanceExpect.equal(1, 2, 'the two sides must agree');
+    }).toThrow(/the two sides must agree[\s\S]*Expected: 2[\s\S]*Received: 1/);
+  });
+});
 
 runIUserServiceContract({
   describe,
