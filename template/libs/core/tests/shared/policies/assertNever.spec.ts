@@ -5,23 +5,17 @@ describe('assertNever', () => {
     expect(() => assertNever('UNHANDLED' as never)).toThrow(/UNHANDLED/);
   });
 
-  it('is reachable only through a cast, which is the point', () => {
-    // A union with every branch handled leaves `never` at the default, so this
-    // compiles. Adding a branch to the union makes the argument no longer `never`
-    // and turns this into a compile error at every call site — the reason the
-    // helper exists.
+  it('refuses a value the compiler has not narrowed to never', () => {
     type Status = 'A' | 'B';
-    const describeStatus = (status: Status): string => {
-      switch (status) {
-        case 'A':
-          return 'a';
-        case 'B':
-          return 'b';
-        default:
-          return assertNever(status);
-      }
-    };
-    expect(describeStatus('A')).toBe('a');
-    expect(describeStatus('B')).toBe('b');
+    const status = 'A' as Status;
+    expect(() => {
+      // @ts-expect-error — `assertNever` accepts only `never`. A union member
+      // that has not been narrowed away is a COMPILE error, and that is the
+      // whole guarantee: adding a branch to a union turns every switch that
+      // does not handle it into a build failure. `@ts-expect-error` fails the
+      // typecheck if that error stops occurring, so this assertion is enforced
+      // by `nx typecheck core`, not just by the runtime throw below.
+      assertNever(status);
+    }).toThrow(/A/);
   });
 });
