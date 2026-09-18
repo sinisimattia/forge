@@ -18,6 +18,7 @@ const PHRASES = {
   actor: 'correct-horse-battery-staple',
   pending: 'the-pending-account-phrase',
   suspended: 'the-suspended-account-phrase',
+  blockedUnverified: 'the-blocked-and-unverified-phrase',
   deleted: 'the-deleted-account-phrase',
   replacement: 'another-perfectly-good-phrase',
 };
@@ -26,6 +27,7 @@ const {
   actor: actorSecret,
   pending: pendingSecret,
   suspended: suspendedSecret,
+  blockedUnverified: blockedUnverifiedSecret,
   deleted: deletedSecret,
   replacement: replacementSecret,
 } = PHRASES;
@@ -67,6 +69,18 @@ async function makeContext(): Promise<AuthServiceSecurityContractContext> {
     }),
     suspendedSecret,
   );
+  // Blocked AND never verified, so that two reasons apply to one attempt and the
+  // order between them is a thing this suite can observe rather than assume.
+  service.seedUser(
+    makeUserJSON({
+      id: 'user-blocked-unverified' as UserId,
+      email: 'katherine@example.com',
+      displayName: 'Katherine',
+      status: UserStatus.SUSPENDED,
+      emailVerifiedAt: null,
+    }),
+    blockedUnverifiedSecret,
+  );
   service.seedUser(
     makeUserJSON({
       id: 'user-deleted' as UserId,
@@ -96,6 +110,8 @@ async function makeContext(): Promise<AuthServiceSecurityContractContext> {
     pendingSecret,
     suspendedEmail: 'grace@example.com',
     suspendedSecret,
+    blockedUnverifiedEmail: 'katherine@example.com',
+    blockedUnverifiedSecret,
     deletedEmail: 'alan@example.com',
     deletedSecret,
     unknownEmail: 'nobody@example.com',

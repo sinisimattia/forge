@@ -147,6 +147,56 @@ export function runIAuthServiceSecurityContract(
         );
       });
 
+      // The precedence rule, asserted rather than documented — and this is the one
+      // place in either suite where that distinction has teeth beyond tidiness.
+      // `reason` is what goes into the audit record, so an implementation that
+      // decided verification before suspension writes "never verified" about an
+      // account an administrator had actually blocked: wrong data in the one table
+      // nothing is permitted to correct afterwards, read by whoever is working out
+      // what happened. Two implementations disagreeing here produce two different
+      // histories of the same event.
+      it('names the more permanent state when more than one applies', async () => {
+        const { service, blockedUnverifiedEmail, blockedUnverifiedSecret } = await makeContext();
+        const outcome = await service.authenticate(
+          attempt(blockedUnverifiedEmail, blockedUnverifiedSecret),
+        );
+
+        expect.equal(
+          outcome.status,
+          AuthenticationStatus.REJECTED,
+          'an account that is blocked and unverified must never authenticate',
+        );
+        expect.equal(
+          (outcome as RejectedOutcome).reason,
+          AuthenticationRejectionReason.ACCOUNT_SUSPENDED,
+          'a blocked account that was never verified is recorded as blocked: '
+          + 'verifying it would not make it usable, so that is not why it was refused',
+        );
+      });
+
+      // The top of the same order, and the half of it with a security consequence.
+      // No state of an account may be reachable by somebody who does not hold its
+      // secret — so the account with the most to say about itself is exactly the
+      // one to ask with the wrong secret. Free to assert: it reuses the world the
+      // test above it already needs.
+      it('says nothing about an account\'s state to whoever misses its secret', async () => {
+        const { service, blockedUnverifiedEmail, blockedUnverifiedSecret } = await makeContext();
+        const outcome = await service.authenticate(
+          attempt(blockedUnverifiedEmail, `${blockedUnverifiedSecret}-not`),
+        );
+
+        expect.equal(
+          outcome.status,
+          AuthenticationStatus.REJECTED,
+          'a wrong secret must never authenticate',
+        );
+        expect.equal(
+          (outcome as RejectedOutcome).reason,
+          AuthenticationRejectionReason.INVALID_SECRET,
+          'the secret is decided before any state of the account is looked at',
+        );
+      });
+
       it('refuses a wrong secret for an address it knows', async () => {
         const { service, actorEmail, actorSecret } = await makeContext();
         const outcome = await service.authenticate(attempt(actorEmail, `${actorSecret}-not`));

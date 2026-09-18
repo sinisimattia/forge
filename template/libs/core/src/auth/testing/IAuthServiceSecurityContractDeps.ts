@@ -41,6 +41,29 @@ export interface AuthServiceSecurityContractContext {
   /** The **correct** secret for the suspended account. */
   suspendedSecret: string;
 
+  /**
+   * An account that is blocked **and** has never proven its address, so that two
+   * reasons apply to one attempt at once.
+   *
+   * It exists to pin the precedence rule in
+   * {@link AuthenticationRejectionReason}, which is not cosmetic: `reason` is
+   * what goes into the audit record, and an implementation that decided
+   * verification first would write "never verified" about an account an
+   * administrator had actually blocked.
+   *
+   * Half of this promise is self-enforcing and half is not, which is worth
+   * knowing before relying on it. Seed an account that is *not* blocked and the
+   * suite answers `EMAIL_NOT_VERIFIED` and fails. Seed one that is blocked but
+   * *is* verified and the suite passes while proving nothing — nothing a caller
+   * of this contract can do distinguishes a verified blocked account from an
+   * unverified one, so the suite cannot check that half from outside. It is the
+   * second obligation here that has to be taken on trust, and like the first it
+   * says so rather than looking airtight.
+   */
+  blockedUnverifiedEmail: string;
+  /** The **correct** secret for the account that is blocked and unverified. */
+  blockedUnverifiedSecret: string;
+
   /** A verified account that has been soft-deleted. */
   deletedEmail: string;
   /** The **correct** secret for the soft-deleted account. */
