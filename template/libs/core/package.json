@@ -19,6 +19,30 @@
     "./shared/types": {
       "types": "./dist/shared/types/index.d.ts",
       "default": "./dist/shared/types/index.js"
+    },
+    "./users/contracts": {
+      "types": "./dist/users/contracts/index.d.ts",
+      "default": "./dist/users/contracts/index.js"
+    },
+    "./users/entities": {
+      "types": "./dist/users/entities/index.d.ts",
+      "default": "./dist/users/entities/index.js"
+    },
+    "./users/enums": {
+      "types": "./dist/users/enums/index.d.ts",
+      "default": "./dist/users/enums/index.js"
+    },
+    "./users/errors": {
+      "types": "./dist/users/errors/index.d.ts",
+      "default": "./dist/users/errors/index.js"
+    },
+    "./users/testing": {
+      "types": "./dist/users/testing/index.d.ts",
+      "default": "./dist/users/testing/index.js"
+    },
+    "./users/types": {
+      "types": "./dist/users/types/index.d.ts",
+      "default": "./dist/users/types/index.js"
     }
   },
   "scripts": {

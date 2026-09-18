@@ -19,10 +19,11 @@ the shared tests — not convention or code review — keep them identical. See
 
 ## What's inside
 
-This skeleton ships only the cross-domain `shared/` folder. Each domain added later (see
-_How to add a domain_ below) gets its own folder under `src/` with six subfolders — `entities/`,
-`contracts/`, `enums/`, `errors/`, `types/`, `testing/` — one file per exported symbol, named
-exactly after the symbol.
+This skeleton ships the cross-domain `shared/` folder and the `users/` domain — the first real
+domain, and the shape every later one copies. Each domain gets its own folder under `src/` with up
+to seven subfolders — `entities/`, `contracts/`, `enums/`, `errors/`, `types/`, `testing/`,
+`policies/` — one file per exported symbol, named exactly after the symbol. A domain that has no
+rule needing a standalone function simply has no `policies/` folder.
 
 - **`__FORGE_SCOPE__/core/shared/errors`** — the base `DomainError` class every domain error
   extends. Callers catch broadly (`instanceof DomainError`) or narrowly (a specific subclass); it
@@ -33,7 +34,7 @@ exactly after the symbol.
 - **`__FORGE_SCOPE__/core/shared/types`** — cross-domain pure types, e.g. `Brand<T, B>` for nominal
   typing of primitives.
 
-Once a domain exists, it adds:
+Each domain adds:
 
 - **`__FORGE_SCOPE__/core/<domain>/entities`** — pure domain entity classes. Entities own their
   invariants and provide a `fromJSON` reviver (JSON has no `Date`/class instances).
@@ -45,6 +46,9 @@ Once a domain exists, it adds:
   value types, and create-input/result types. No enums, classes, or errors live here.
 - **`__FORGE_SCOPE__/core/<domain>/testing`** — runner-agnostic conformance suites that every
   consumer drives with its own test runner, plus fixtures.
+- **`__FORGE_SCOPE__/core/<domain>/policies`** — pure functions over that domain's entities, enums
+  and types: the domain rules that are not a method on an entity because they span entities or must
+  be callable without constructing one.
 
 There is no bare `__FORGE_SCOPE__/core` export — everything is imported via a per-domain,
 per-folder subpath declared in `package.json` `exports`.
@@ -129,7 +133,8 @@ An implementation that crosses a serialization boundary receives its data as pla
 
 ## How to add a domain
 
-1. Create `src/<domain>/{entities,contracts,enums,errors,types,testing}/`, one file per symbol
+1. Create `src/<domain>/{entities,contracts,enums,errors,types,testing}/` (plus `policies/` if the
+   domain needs one), one file per symbol
    (filename = symbol name, e.g. `Article.ts`, `IArticleService.ts`, `Visibility.ts`,
    `ArticleTitleRequiredError.ts`, `CreateArticleInput.ts`, `runIArticleServiceContract.ts`), plus
    an `index.ts` barrel per folder.
@@ -140,7 +145,8 @@ An implementation that crosses a serialization boundary receives its data as pla
    with `Omit`/`Pick`, plus any create-input/result types under `types/`.
 4. Add a `run<IName>Contract` suite + fixtures under `testing/`.
 5. Declare the new subpaths (`./<domain>/entities`, `/contracts`, `/enums`, `/errors`, `/types`,
-   `/testing`) in `libs/core/package.json` `exports` — and **nowhere else**. Every other
+   `/testing`, and `/policies` if present) in `libs/core/package.json` `exports` — and **nowhere
+   else**. Every other
    resolution point (`libs/core/tsconfig.json` `paths`, `libs/core/jest.config.js`
    `moduleNameMapper`, `apps/backend/tsconfig.json` `paths`, `apps/backend/jest.config.ts`
    `moduleNameMapper`, `apps/webapp/vitest.config.ts` `resolve.alias`) is a `__FORGE_SCOPE__/core/*`
