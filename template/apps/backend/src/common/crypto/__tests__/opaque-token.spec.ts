@@ -38,8 +38,10 @@ describe('generateOpaqueToken', () => {
     // cost parameters out as literals: changing how much is drawn is a decision,
     // and a decision should have to walk past a red test rather than slip
     // through a `>=`. Deriving the expected length from the decoded byte count
-    // instead would defeat the purpose — 64 hex characters decode to 48 bytes,
-    // which re-encode to 64 characters, so a self-consistent check passes hex.
+    // instead would defeat the purpose — 64 hex characters decoded AS BASE64URL
+    // are 48 bytes, which re-encode to 64 characters, so a self-consistent check
+    // passes hex. (Decoded as hex they would be 32 bytes; the decoder the test
+    // uses is what makes the number 48, and that is the whole trap.)
     expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(token).toHaveLength(43);
   });
