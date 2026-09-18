@@ -8,6 +8,10 @@
       "types": "./dist/shared/errors/index.d.ts",
       "default": "./dist/shared/errors/index.js"
     },
+    "./shared/policies": {
+      "types": "./dist/shared/policies/index.d.ts",
+      "default": "./dist/shared/policies/index.js"
+    },
     "./shared/testing": {
       "types": "./dist/shared/testing/index.d.ts",
       "default": "./dist/shared/testing/index.js"
@@ -15,10 +19,6 @@
     "./shared/types": {
       "types": "./dist/shared/types/index.d.ts",
       "default": "./dist/shared/types/index.js"
-    },
-    "./shared/policies": {
-      "types": "./dist/shared/policies/index.d.ts",
-      "default": "./dist/shared/policies/index.js"
     }
   },
   "scripts": {
