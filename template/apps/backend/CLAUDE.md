@@ -101,6 +101,13 @@ named `<Thing>Record` because `__FORGE_SCOPE__/core` already exports `User`,
   (the key access credentials are signed with) and `PUBLIC_WEBAPP_URL` (the origin every
   mail link is built from). All three are `getOrThrow` with no default, deliberately —
   see `.env.example`.
+- `nest-cli.json` carries `"entryFile": "apps/backend/src/main"`, and it is load-bearing.
+  `tsconfig.json` pins `rootDir` to the workspace root, so `nest build` emits
+  `dist/apps/backend/src/main.js`; `nest start` (what `start:dev` and therefore the dev
+  container run) otherwise looks for `dist/main` and dies with `MODULE_NOT_FOUND` **after
+  reporting a clean compile**, so the container reports "Up", never healthy, and everything
+  waiting on `service_healthy` stalls. `start:prod` and `migration:run:prod` name the same
+  layout in `package.json`; this is the third consumer of it.
 - `src/db/data-source.ts` — the TypeORM CLI data source for `migration:generate` /
   `migration:run`, reading `MIGRATION_DATABASE_URL` and falling back to `DATABASE_URL`.
   **Two roles, on purpose:** migrations run as the schema owner, the application connects
