@@ -573,6 +573,30 @@ git commit -m "feat(core): add the shared primitives the identity domains build 
 
 ## Task 3: Platform ADRs 0005–0008 and the STANDARDS updates
 
+> **Traceability, recorded here because it cannot live in the artifact.** The shipped ADRs
+> deliberately carry no `spec §` pointers: `template/docs/superpowers/specs/` holds only a
+> `.gitkeep`, so a generated project would inherit links to a document it does not have. The
+> mapping therefore lives in this plan, on Forge's side of the line:
+>
+> | Template ADR | Comes from | Binds |
+> |---|---|---|
+> | `0005-identity-is-separate-from-user` | spec §9.1 ADR-0005, roadmap ordering decision 1 | Tasks 5, 8, 12 |
+> | `0006-authorization-is-a-pure-function-in-core` | spec §9.1 ADR-0006, §9.5 | Task 12 now; Phase 3 fully |
+> | `0007-tenancy-is-explicit-never-ambient` | spec §9.1 ADR-0007 | Tasks 4, 7; Phase 3 fully |
+> | `0008-ports-not-vendors` | spec §9.1 ADR-0008 | Tasks 9, 10 |
+>
+> **These four ADRs make promises later tasks must keep**, or the ADR becomes the
+> "decision contradicts the code" defect it exists to prevent. Each is a commitment, not prose:
+>
+> - ADR-0006 states that `PLATFORM_ADMIN` passing a check is **recorded in the audit log**. Task 12
+>   owes that entry on every admin route, not only on the interesting ones.
+> - ADR-0005 states that **at least one usable identity must remain**. Task 5 owes the pure policy
+>   and Task 12 owes the call site; a controller re-implementing the count instead breaks it.
+> - ADR-0007 states the audit record carries a **nullable `organizationId`**. Task 7 owes the field
+>   and Task 8 owes the column, both before any organization exists.
+> - B10 cites `IAuditService.record()`, which does not exist until Task 7. The dimension is written
+>   ahead of its subject deliberately; Task 7 makes the citation resolve.
+
 Spec §8.2 says a generated project ships platform ADRs 0005–0008. It does not — `template/docs/adrs/` holds 0000–0004. Every design decision Tasks 4–16 depend on is currently undocumented in the artifact that is supposed to carry it, and a generated project would inherit the code without the reasoning. This task closes that, and makes the two layout changes Phase 2 needs to the packages' own standards.
 
 **Files:**
