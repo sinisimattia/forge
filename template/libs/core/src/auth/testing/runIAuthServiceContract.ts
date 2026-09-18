@@ -22,10 +22,17 @@ const UNKNOWN_CLIENT: ClientContext = { address: null, label: null };
  *
  * Shorthand rather than a literal with named keys, here and in {@link attempt}, and the
  * reason is worth writing down because it is not style. The extraction gate that scans
- * this tree for a pasted credential matches a secret-ish member name followed by any
- * value at all, and cannot tell a literal from a reference — so a named key would read
- * to it exactly like a password typed into a config file. A name standing on its own is
- * not an assignment, so this keeps the domain's own word without a per-line exemption.
+ * this tree for a pasted credential once matched a secret-ish member name followed by
+ * any value at all, and could not tell a literal from a reference. It was since narrowed:
+ * in TypeScript only a *quoted* value counts as populated, an unquoted bare word being a
+ * reference to a binding. Most of the call sites below pass bindings, so inlining those
+ * would trip nothing today.
+ *
+ * One would. The wrong-secret attempt below builds its value as a template literal, and
+ * the gate strips every interpolation before it judges what remains — here a short quoted
+ * remainder, which reads as populated and flags. Checked against the gate rather than
+ * assumed. The helpers stay for that, and earn their keep anyway: {@link attempt} supplies
+ * the default client, and both spare every call site a named-key literal.
  *
  * @param email - the address as a person would have typed it
  * @param displayName - the name they want shown to other people

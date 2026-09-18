@@ -11,8 +11,12 @@ const A_DAY = 24 * 60 * 60 * 1000;
 /**
  * The secrets this world is seeded with, gathered into one object and read out of it by
  * destructuring — see the note on the same construction in the shared suite's driver.
- * The extraction gate matches a secret-ish member name followed by any value at all, so
- * the names the deps interface asks for are introduced as bindings rather than as keys.
+ * These values are quoted string literals, which is precisely what the extraction gate
+ * flags when it sits under a secret-ish member name. The narrowing that taught the gate
+ * to tolerate an unquoted *reference* in TypeScript does not help here — named for what
+ * they are, all six below would flag, which was checked rather than assumed. So this
+ * stands as it is: the names the deps interface asks for are introduced as bindings,
+ * not as keys.
  */
 const PHRASES = {
   actor: 'correct-horse-battery-staple',
