@@ -9,13 +9,14 @@ import { lineFindings, pathFindings } from '../../tools/sanitize.mjs';
 
 // The gate's value is entirely in what it refuses, so every case below is stated as a
 // line a real file could contain, and asserted in both directions: the lines that must
-// still be caught, and the lines the rules deliberately tolerate. The exemptions
-// narrowing the populated-secret rule are the reason this file exists — they can be
-// widened by one character, and nothing else in the repository would notice.
+// still be caught, and the lines the rules deliberately tolerate. The narrowings of the
+// populated-secret rule are the reason this file exists — they can be widened by one
+// character, and nothing else in the repository would notice.
 //
-// Every case names the file it is in, because the file is part of the judgement: the two
-// source-code exemptions apply to TypeScript only, and the same text means different
-// things in `AuthProvider.ts` and in `compose.yaml`.
+// Every case names the file it is in, because the file is part of the judgement: TypeScript
+// is judged by its own populated-secret rule (a value must be quoted) plus the
+// self-named-value exemption, so the same text means different things in `AuthProvider.ts`
+// and in `compose.yaml`.
 const TS = 'libs/core/src/identities/enums/AuthProvider.ts';
 const YAML = 'compose.yaml';
 const ENV = '.env.example';
@@ -50,6 +51,25 @@ test('a value that cannot be a secret is not flagged', () => {
   assert.equal(flagged('  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}', YAML), false);
   assert.equal(flagged('POSTGRES_PASSWORD:', YAML), false);
   assert.equal(flagged('API_KEY=', ENV), false);
+  // The same three under the TypeScript rule, which carries its own copies of the token and
+  // empty-value exemptions rather than inheriting them.
+  assert.equal(flagged("  password: '__FORGE_NAME__',", TS), false);
+  assert.equal(flagged('  password: `${resolvedSecret}`,', TS), false);
+  assert.equal(flagged("  password: '',", TS), false);
+});
+
+// DOCUMENTED LIMITATION, pinned here so the next reader finds the decision rather than
+// rediscovering the gap and "fixing" it into a false positive. The rule requires the key to be
+// *immediately* followed by its separator, so a key carrying a suffix slips, in every file
+// type. Making the key suffix-tolerant was tested against the whole tree and ruled against: it
+// false-positives on our own shipped source. The last two assertions are verbatim lines from
+// template/ that a suffix-tolerant key would flag — the first under the gate as it stood
+// before the quoted-literal rule, the second under the gate as it stands now.
+test('a key carrying a suffix is a documented miss, not an oversight', () => {
+  assert.equal(flagged("  PASSWORD_HASH: 'actual-secret',", TS), false);
+  assert.equal(flagged('PASSWORD_HASH: actual-secret', YAML), false);
+  assert.equal(flagged('export const DEFAULT_PASSWORD_POLICY: PasswordPolicy = {', TS), false);
+  assert.equal(flagged("const PASSWORD_ACCOUNT_AS_GIVEN = '  Ada@Example.COM ';", TS), false);
 });
 
 test('a string enum member naming itself is not a populated secret in TypeScript', () => {
@@ -58,6 +78,10 @@ test('a string enum member naming itself is not a populated secret in TypeScript
   assert.equal(flagged("  SECRET: 'SECRET',", TS), false);
 });
 
+// These still pass, but no longer because a list of tolerated primitive type names says so —
+// that exemption is gone. They pass for the general reason: in TypeScript a populated secret
+// must be a quoted literal, and an annotation's type is never quoted. The cases are kept
+// because they are the behaviour that matters; only the mechanism underneath them changed.
 test('a TypeScript type annotation is not a populated secret in TypeScript', () => {
   assert.equal(flagged('  secret: string;', TS), false);
   assert.equal(flagged('  readonly token: string,', TS), false);
@@ -67,10 +91,12 @@ test('a TypeScript type annotation is not a populated secret in TypeScript', () 
   assert.equal(flagged('  isKnownBreached(secret: string): Promise<boolean>;', TS), false);
 });
 
-// The two exemptions above are facts about source code. Neither shape exists in YAML or
-// an env file, where the rule was written and was correct as written — so neither may
-// reach one. These cases pin that scoping: it is a decision, not an accident.
-test('the source-code exemptions do not reach YAML or env files', () => {
+// The narrowings above are facts about source code: an enum member published in the source,
+// and a value that must be quoted because TypeScript has no unquoted string literals. Neither
+// holds in YAML or an env file, where the rule was written and is correct as written — so
+// neither may reach one. `secret: string` in a compose file is a key with the literal value
+// `string`. These cases pin that scoping: it is a decision, not an accident.
+test('the source-code narrowings do not reach YAML or env files', () => {
   assert.equal(labels("  PASSWORD = 'PASSWORD',", YAML), 'populated secret');
   assert.equal(labels("  PASSWORD = 'PASSWORD',", ENV), 'populated secret');
   assert.equal(labels('  secret: string', YAML), 'populated secret');
@@ -128,21 +154,70 @@ test('a self-named member whose key carries a prefix is still self-named', () =>
   assert.equal(labels("  INVALID_SECRET = 'INVALID_SECRET',", YAML), 'populated secret');
 });
 
-test('a bare word after a colon that is not a primitive type is still flagged', () => {
-  assert.equal(labels('PASSWORD: hunter2', TS), 'populated secret');
-  assert.equal(labels('  token: hunter2,', TS), 'populated secret');
-  // `=` never introduces an annotation, so the annotation exemption must not reach it.
-  assert.equal(labels('  secret = string', TS), 'populated secret');
+// In TypeScript a populated secret must be a QUOTED literal, because TypeScript has no
+// unquoted string literals: an unquoted bare word after a colon is a reference to a binding,
+// not a credential. This is the rule that dissolves the `secret: <reference>` false-positive
+// class — a whole task's worth of them, which had already pushed working code into shapes
+// chosen by the gate rather than by the domain.
+test('an unquoted value in TypeScript is a reference to a binding, not a credential', () => {
+  assert.equal(flagged('  secret: candidateSecret,', TS), false);
+  assert.equal(flagged('  token: refreshToken,', TS), false);
+  assert.equal(flagged('    return { secret: hashedSecret, token: issuedToken };', TS), false);
+  assert.equal(flagged('  const secret = candidateSecret;', TS), false);
+  // Quote the very same value and it is a literal again, so it flags.
+  assert.equal(labels("  secret: 'candidateSecret',", TS), 'populated secret');
+});
+
+// RE-ARGUED. `PASSWORD: hunter2` and `token: hunter2` were pinned here as FLAGGING in a `.ts`
+// file, to stop the type-annotation exemption widening from a closed list of primitive type
+// names to "any bare word after a colon" — a widening that would have exempted `token: hunter2`
+// along with `token: string`. That protection was real and is why those pins existed.
+//
+// The quoted-literal rule removes the thing they guarded: there is no list of tolerated type
+// names left to widen, because in TypeScript nothing unquoted matches at all. So the original
+// assertions invert — and they must, since `PASSWORD: hunter2` in TypeScript is a reference to
+// a binding named `hunter2`, which is the exact false-positive class this change exists to end.
+//
+// But the pins were never really about the text `hunter2`. They were about a credential spelled
+// `<secret key>: hunter2` not escaping the gate. That protection is kept, re-expressed twice:
+// in TypeScript, in the only form the credential can actually take there (quoted); and
+// unquoted, in the file types where an unquoted value genuinely is a literal and the original
+// rule still applies unchanged. Widening either rule to swallow these fails this test, which is
+// what the originals were for.
+test('the credential the bare-word pins protected is still flagged, in each form it can take', () => {
+  assert.equal(labels("PASSWORD: 'hunter2'", TS), 'populated secret');
+  assert.equal(labels('  token: "hunter2",', TS), 'populated secret');
+  assert.equal(labels('  secret: `hunter2`,', TS), 'populated secret');
+  // Unquoted, the same lines are references in TypeScript — and still literals everywhere else.
+  assert.equal(flagged('PASSWORD: hunter2', TS), false);
+  assert.equal(labels('PASSWORD: hunter2', YAML), 'populated secret');
+  assert.equal(labels('  token: hunter2,', ENV), 'populated secret');
+  assert.equal(labels('DB_PASS: correct-horse-battery', 'deploy.conf'), 'populated secret');
+});
+
+// A quoted initializer sitting behind a type annotation is a real credential shape, and it was
+// flagged before the quoted-literal rule (by accident: the annotation's own type name counted
+// as the value). Keeping it flagged is why the rule accepts `KEY: <type> = <quoted>` as well as
+// `KEY: <quoted>` — otherwise this change would have quietly traded one false negative in.
+test('a quoted initializer behind a type annotation is still a populated secret', () => {
+  assert.equal(labels("  private readonly secret: string = 'dev-secret';", TS), 'populated secret');
+  assert.equal(labels("  token: string | undefined = 'literal';", TS), 'populated secret');
+  // The annotation alone is still not a value.
+  assert.equal(flagged('  secret: string | undefined;', TS), false);
+  // The annotation stops at its own declaration: a `,` or `;` ends it, so an unrelated default
+  // further along the line is not attributed to the annotated secret parameter.
+  assert.equal(flagged("function f(secret: string, name = 'bob') {}", TS), false);
+  assert.equal(flagged("  { secret: string; name = 'bob' }", TS), false);
 });
 
 test('a line carrying both an exempt shape and a real secret is still flagged', () => {
-  // Why the exemptions strip spans rather than skipping the line: one exempt match must
+  // Why the exemption strips spans rather than skipping the line: one exempt match must
   // never buy amnesty for the rest of the line.
   assert.equal(
     labels("  { PASSWORD = 'PASSWORD', API_KEY = 'live-key-value' }", TS),
     'populated secret',
   );
-  assert.equal(labels('  secret: string; token: hunter2', TS), 'populated secret');
+  assert.equal(labels("  SECRET: 'SECRET', token: 'hunter2'", TS), 'populated secret');
 });
 
 test('the ordinary English the rules deliberately tolerate is not flagged', () => {

@@ -23,6 +23,77 @@ const ROOTS = ['template', 'tools'].map((root) => path.join(REPO_ROOT, root));
 // way a linter excludes its own config from its own rules.
 const SELF = path.resolve(fileURLToPath(import.meta.url));
 
+// The names a credential is actually spelled with. Defined once and shared by the
+// populated-secret rules and the self-named-value exemption below, so the two can never
+// drift apart — they were once two identical copies of this list, which is exactly the
+// arrangement in which one gets extended and the other does not.
+
+//
+// `CREDENTIALS?` was proposed alongside these but is deliberately left out: tested against
+// the real template it false-positives on `apps/backend/src/main.ts`'s
+// `app.enableCors({ ..., credentials: true })` — a NestJS/fetch boolean config flag, not a
+// secret value, and a name that common in this stack's own framework config.
+const SECRET_KEYS = 'SECRET|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY|ACCESS_KEY|DB_PASS';
+
+// The populated-secret rule as written for YAML, env and every other non-TypeScript file,
+// where an unquoted value genuinely is a literal: anything non-empty after the separator is
+// the secret. `KEY: value` is as common as `KEY=value` in the scanned files, and a real
+// password pasted into compose.yaml takes exactly that form. Exempt only what cannot be a
+// credential: an unsubstituted token, a `${...}` interpolation, or an empty value. A
+// deliberate literal must carry an explicit `sanitize:allow` marker so every exemption is
+// greppable and reviewable rather than invisible (see stripInterpolations below for why
+// `${...}` spans are stripped before this rule runs, not just checked for at the match site).
+// Case-insensitive: a Nest/Nuxt codebase's conventional casing is `password:`, not `PASSWORD=`.
+//
+// DOCUMENTED LIMITATION, deliberate — do not "fix" this. The key must be *immediately*
+// followed by the separator, so a key carrying a suffix (`PASSWORD_HASH: 'actual-secret'`)
+// is missed, in every file type. Making the key suffix-tolerant — wrapping the alternation
+// in `[A-Za-z0-9_]*` — was tested against the whole tree and rejected: it false-positives on
+// our own shipped source. Against the gate as it stood before the quoted-literal rule it
+// produced ten, led by
+// `template/libs/core/src/identities/policies/DEFAULT_PASSWORD_POLICY.ts:25`
+// (`export const DEFAULT_PASSWORD_POLICY: PasswordPolicy = {`), where the key is a policy
+// name and the "value" is a type. The quoted-literal rule below happens to neutralise that
+// particular one — its value is unquoted — but not the class: it still flags
+// `template/libs/core/tests/identities/testing/runIIdentityServiceContract.spec.ts:50`
+// (`const PASSWORD_ACCOUNT_AS_GIVEN = '  Ada@Example.COM ';`), an email fixture whose name
+// merely begins with `PASSWORD_`. A miss is the cheaper failure here: this gate is only
+// useful while its findings are believed.
+const POPULATED_SECRET = new RegExp(
+  `(?:${SECRET_KEYS})\\s*[:=]\\s*(?!__FORGE_|\\$\\{|\\s*$)\\S+`,
+  'i',
+);
+
+// The same rule for TypeScript source, where a populated secret is a QUOTED literal.
+//
+// The argument: TypeScript has no unquoted string literals, so an unquoted bare word after a
+// colon is a reference to a binding — `secret: candidateSecret`, `token: refreshToken` — and
+// a reference is not a credential. Any credential that can actually exist in `.ts`/`.tsx` is
+// written in single quotes, double quotes or backticks. Requiring quotes therefore loses no
+// credential this file type can carry, while dissolving the whole `secret: <reference>` class
+// of false positives that had already caused two tasks to restructure working code around the
+// gate. A gate that cries wolf is the one that gets switched off.
+//
+// Consequences of the quote requirement, both intended:
+//   - a numeric literal (`password: 12345`) no longer flags in TypeScript. A number is not a
+//     quoted literal, and a key immediately followed by a digit is far more often a count or
+//     a TTL (`maxAttemptsPerToken: 5`) than a credential.
+//   - the former type-annotation exemption is gone rather than narrowed: `secret: string` no
+//     longer needs a list of tolerated primitive type names, because nothing unquoted matches
+//     in TypeScript at all. There is no list left to widen by accident.
+//
+// The second alternative covers `secret: string = 'dev-secret'` — a quoted initializer behind
+// a type annotation, which is a real credential shape and was flagged before this change. The
+// annotation's character class deliberately excludes `,` and `;` so an annotation cannot run
+// past its own declaration and adopt an unrelated default elsewhere on the line
+// (`function f(secret: string, name = 'bob')` must not flag). The `__FORGE_` and empty-value
+// exemptions are carried over; `${...}` needs none, since stripInterpolations has already
+// reduced an interpolated template literal to an empty pair of backticks by the time this runs.
+const POPULATED_SECRET_TS = new RegExp(
+  `(?:${SECRET_KEYS})\\??\\s*(?:[:=]|:\\s*[A-Za-z0-9_$<>\\[\\]| ]+=)\\s*['"\`](?!__FORGE_)[^'"\`]`,
+  'i',
+);
+
 export const RULES = [
   ['source-project trace', /voku/i],
   // Terms with no innocent generic use — always a leak.
@@ -52,24 +123,9 @@ export const RULES = [
   ['source-domain constant', /\b(EVENT|PAYMENT|TICKET|INVITATION|REFUND)_/],
   ['source-domain module', /\b(event|payment|ticket|invitation)s?\.(module|service|controller|entity|repository|guard|dto|resolver|interceptor|pipe|strategy|gateway)\b/i],
   ['stripe-style key', /\b(sk_|pk_live)/],
-  // YAML's `KEY: value` is as common as `KEY=value` in the scanned files, and a real
-  // password pasted into compose.yaml would take that form. Exempt only what cannot be
-  // a secret: an unsubstituted token, a ${...} interpolation, or an empty value. A
-  // deliberate literal must carry an explicit `sanitize:allow` marker so every
-  // exemption is greppable and reviewable rather than invisible (see
-  // stripInterpolations below for why ${...} spans are stripped before this rule
-  // runs, not just checked for at the match site). Case-insensitive: a Nest/Nuxt
-  // codebase's conventional casing is `password:`/`{ password: ... }`, not just
-  // `PASSWORD=`; verified the only case-insensitive matches in the template today
-  // are the `${...}` interpolations and `__FORGE_NAME__` token, both already exempt.
-  // Key list widened beyond the four original names to the other plausible shapes a
-  // real credential takes. `CREDENTIALS?` was proposed alongside these but is
-  // deliberately left out: tested against the real template it false-positives on
-  // `apps/backend/src/main.ts`'s `app.enableCors({ ..., credentials: true })` — a
-  // NestJS/fetch boolean config flag, not a secret value, and a name that common in
-  // this stack's own framework config. `PRIVATE_KEY`/`ACCESS_KEY`/`DB_PASS` carry no
-  // such conflict and are included.
-  ['populated secret', /(SECRET|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY|ACCESS_KEY|DB_PASS)\s*[:=]\s*(?!__FORGE_|\$\{|\s*$)\S+/i],
+  // The non-TypeScript form of the populated-secret rule; `lineFindings` substitutes
+  // POPULATED_SECRET_TS for this one in `.ts`/`.tsx`. See both definitions above.
+  ['populated secret', POPULATED_SECRET],
   ['private key', /BEGIN [A-Z ]*PRIVATE KEY/],
 ];
 
@@ -98,20 +154,24 @@ export function stripInterpolations(line) {
   return line.replace(/\$\{[^}]*\}/g, '');
 }
 
-// The same rule, scanning TypeScript source rather than YAML and env files, matches two
-// shapes that cannot carry a credential. Both are stripped from the probe rather than
-// exempted at the match site, for the reason stripInterpolations gives: a span-level strip
-// handles a line carrying a false positive AND a real secret, where a lookahead anchored at
-// one key's match site would skip the whole line. Case-insensitive throughout, including
-// the backreference.
+// One shape survives the quoted-literal requirement above and still cannot carry a
+// credential: a quoted value identical to its own key. It is stripped from the probe rather
+// than exempted at the match site, for the reason stripInterpolations gives — a span-level
+// strip handles a line carrying a false positive AND a real secret, where a lookahead
+// anchored at one key's match site would skip the whole line.
 //
-// Applied to TypeScript source ONLY — see isTypeScriptFile. The justification for each of
-// these exemptions is a fact about source code (an enum member published in the source, a
-// type annotation), and neither shape exists in YAML or env files, where the rule was
-// correct as written. Applying them everywhere silently un-flagged
-// `POSTGRES_PASSWORD: "password"` in a compose file, which is the commonest shape a
-// weak-but-real credential takes.
-const SECRET_KEYS = 'SECRET|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY|ACCESS_KEY|DB_PASS';
+// Applied to TypeScript source ONLY — see isTypeScriptFile. Its justification is a fact about
+// source code (an enum member published in the source), and the shape does not exist in YAML
+// or env files, where the rule is correct as written. Applying it everywhere silently
+// un-flagged `POSTGRES_PASSWORD: "password"` in a compose file, which is the commonest shape
+// a weak-but-real credential takes.
+//
+// A type-annotation exemption used to sit beside this one, accepting a closed list of
+// primitive type names after the colon. It is gone, not narrowed: under POPULATED_SECRET_TS
+// nothing unquoted matches in TypeScript at all, so `secret: string` passes for the general
+// reason rather than by being on a list. Deleting it removes the widening risk that list
+// carried, and leaving it in place would have been worse than useless — dead code that reads
+// as a safety net and that no test could distinguish from a working one.
 
 // A quoted value identical to its own key: a string enum member naming itself
 // (`PASSWORD = 'PASSWORD'`, `INVALID_SECRET = 'INVALID_SECRET'`). The value is the key's
@@ -128,9 +188,7 @@ const SECRET_KEYS = 'SECRET|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY|ACCESS_KEY|DB_PAS
 // this exemption exists for. Capturing the whole key does both jobs at once and is the
 // more direct statement of the rule: a key is self-named when the value is the key.
 // `POSTGRES_PASSWORD = 'password'` still flags, because `password` is not
-// `POSTGRES_PASSWORD`. The type-annotation rule below deliberately keeps no such anchor:
-// `dbPassword: string` is a type annotation like any other, and the populated-secret rule
-// it is exempting matches by substring too.
+// `POSTGRES_PASSWORD`.
 //
 // Case-SENSITIVE — the only rule here that is, and the `i` this once carried was a hole.
 // JS applies `i` to a backreference too, so `const PASSWORD = 'password'` and
@@ -146,25 +204,16 @@ const SELF_NAMED_VALUE = new RegExp(
   'g',
 );
 
-// A TypeScript type annotation: `secret: string`, `readonly token: string,`. A type is not
-// a value, so nothing is populated. Only the primitive type names are accepted — an
-// unrecognised bare word after the colon (`DB_PASS: correct-horse-battery`) is still a
-// value and is still flagged. `=` is deliberately absent: an annotation never uses one.
-const TYPE_ANNOTATION = new RegExp(
-  `(${SECRET_KEYS})\\??\\s*:\\s*(string|number|boolean|bigint|symbol|unknown|Date)(\\[\\])?\\s*(?=[;,)|>]|$)`,
-  'gi',
-);
-
 /**
- * Removes the two source-code shapes that cannot be a populated secret. Replaced with a
- * space rather than deleted, so stripping never splices two halves of a line into a match
- * that was not there before.
+ * Removes the source-code shape that cannot be a populated secret. Replaced with a space
+ * rather than deleted, so stripping never splices two halves of a line into a match that was
+ * not there before.
  */
 export function stripNonSecrets(line) {
-  return line.replace(SELF_NAMED_VALUE, ' ').replace(TYPE_ANNOTATION, ' ');
+  return line.replace(SELF_NAMED_VALUE, ' ');
 }
 
-/** Whether a path is TypeScript source — the only file type the two exemptions above apply to. */
+/** Whether a path is TypeScript source — the only file type the exemption above applies to. */
 export function isTypeScriptFile(file) {
   return /\.tsx?$/.test(file);
 }
@@ -176,24 +225,27 @@ export function isTypeScriptFile(file) {
  * exemptions do not get tested.
  *
  * The file is part of the judgement, not decoration: `PASSWORD = 'PASSWORD'` is an enum
- * member in a `.ts` file and a real credential in a compose file. `${...}` stripping is
- * unconditional — it exists *for* YAML — while the two source-code exemptions apply only to
- * TypeScript. Anything whose type is unknown is judged as a non-source file, which is the
- * strict direction.
+ * member in a `.ts` file and a real credential in a compose file, and `secret: candidateSecret`
+ * is a reference to a binding in a `.ts` file and a literal value in an env file. TypeScript
+ * therefore gets its own populated-secret pattern (a value must be quoted) as well as the
+ * self-named-value strip; `${...}` stripping is unconditional, because it exists *for* YAML.
+ * Anything whose type is unknown is judged as a non-source file, which is the strict direction.
  *
  * @param line - one raw line, exactly as read from the file
  * @param file - the path it came from; anything but `.ts`/`.tsx` gets the unexempted rule
  * @returns the labels of the rules it matched, possibly empty
  */
 export function lineFindings(line, file = '') {
+  const isSource = isTypeScriptFile(file);
   const interpolationsStripped = stripInterpolations(line);
-  const secretProbe = isTypeScriptFile(file)
-    ? stripNonSecrets(interpolationsStripped)
-    : interpolationsStripped;
+  const secretProbe = isSource ? stripNonSecrets(interpolationsStripped) : interpolationsStripped;
   const labels = [];
   for (const [label, pattern] of RULES) {
-    const subject = label === 'populated secret' ? secretProbe : line;
-    if (pattern.test(subject)) labels.push(label);
+    if (label === 'populated secret') {
+      if ((isSource ? POPULATED_SECRET_TS : pattern).test(secretProbe)) labels.push(label);
+      continue;
+    }
+    if (pattern.test(line)) labels.push(label);
   }
   return labels;
 }
