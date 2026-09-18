@@ -81,9 +81,10 @@ Every task's requirements implicitly include this section.
   The operative check is one question, not a habit of mind: **what breaks if I delete this?** Asked
   of the line and of the comment. Twice in that task the answer was "nothing", and it would have
   been reached without having to notice that one was reasoning by analogy — which is the part
-  nobody can be relied on to notice. The implementer's own words after the second round: "a
-  justification arrives already feeling like a conclusion — the reasoning was done elsewhere and I
-  inherit the confidence with the words."
+  nobody can be relied on to notice. The implementer's own account after the second
+  round: "What defeated me both times is that a justification arrives feeling like a conclusion.
+  The first came with a pattern, the second with an analogy; in both cases the reasoning had been
+  done somewhere else and I inherited the confidence along with the words."
 - **A claim about evidence is not evidence.** Phase 1 caught four separate cases of inaccurate evidence in otherwise-correct work — a RED log pasted from a different test, a fixture claimed to fire that could not have. If you did not run it, say "NOT VERIFIED". Candid self-retraction is the behaviour being rewarded here.
 - **`grep` in this session is a shim, not the system grep — verify signals with `/usr/bin/grep`.**
   `type grep` reports a shell function backed by ugrep, and the two disagree on real patterns:
