@@ -1,5 +1,5 @@
 /**
- * One way a proposed phrase falls short of a {@link PasswordPolicy}.
+ * One way a proposed password falls short of a {@link PasswordPolicy}.
  *
  * A string union rather than an enum because `types/` holds no runtime values:
  * these are names a caller matches on and shows a person, not a table anything

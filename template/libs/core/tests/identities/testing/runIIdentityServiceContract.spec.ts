@@ -56,12 +56,13 @@ const conformanceExpect: ConformanceExpect = {
   },
 };
 
-// Deliberately not in normal form: the suite requires the world to be built
-// from an account identifier the domain has to normalize, so that normalization
-// is something an implementation can be caught failing to do.
+// Deliberately not in normal form: the suite requires it, because it is what
+// makes the wire-shape comparison bite. An implementation that hands back the
+// row its store holds, rather than rebuilding the entity from it, returns a
+// providerAccountId that differs visibly from the promised one.
 const PASSWORD_ACCOUNT_AS_GIVEN = '  Ada@Example.COM ';
 
-/** A fresh world holding three users: two with a pair of identities, one with a single identity. */
+/** A fresh world holding two users: the actor with a pair of identities, and one with a single. */
 async function makeContext(): Promise<IdentityServiceContractContext> {
   const actorPasswordRow = makeAuthIdentityJSON({
     id: 'identity-1' as AuthIdentityId,
@@ -76,40 +77,25 @@ async function makeContext(): Promise<IdentityServiceContractContext> {
     provider: AuthProvider.GOOGLE,
     providerAccountId: 'subject-90210',
   });
-  const otherFirstRow = makeAuthIdentityJSON({
+  // The second user's ONLY identity. It is both the last-identity case and the
+  // not-yours case, and it has to be their last one for the second of those to
+  // catch an implementation that checks the count before ownership.
+  const soleRow = makeAuthIdentityJSON({
     id: 'identity-3' as AuthIdentityId,
     userId: 'user-2' as UserId,
     providerAccountId: 'grace@example.com',
   });
-  const otherSecondRow = makeAuthIdentityJSON({
-    id: 'identity-4' as AuthIdentityId,
-    userId: 'user-2' as UserId,
-    provider: AuthProvider.GITHUB,
-    providerAccountId: 'subject-4711',
-  });
-  const soleRow = makeAuthIdentityJSON({
-    id: 'identity-5' as AuthIdentityId,
-    userId: 'user-3' as UserId,
-    providerAccountId: 'only@example.com',
-  });
 
   return {
-    service: new InMemoryIdentityService([
-      actorPasswordRow,
-      actorFederatedRow,
-      otherFirstRow,
-      otherSecondRow,
-      soleRow,
-    ]),
+    service: new InMemoryIdentityService([actorPasswordRow, actorFederatedRow, soleRow]),
     actorId: 'user-1' as UserId,
     actorIdentities: [
       AuthIdentity.fromJSON(actorPasswordRow),
       AuthIdentity.fromJSON(actorFederatedRow),
     ],
     passwordAccountIdAsGiven: PASSWORD_ACCOUNT_AS_GIVEN,
-    otherUsersIdentityId: 'identity-3' as AuthIdentityId,
-    soleIdentityUserId: 'user-3' as UserId,
-    soleIdentityId: 'identity-5' as AuthIdentityId,
+    soleIdentityUserId: 'user-2' as UserId,
+    soleIdentityId: 'identity-3' as AuthIdentityId,
   };
 }
 

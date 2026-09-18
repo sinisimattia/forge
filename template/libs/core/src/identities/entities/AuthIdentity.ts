@@ -9,10 +9,10 @@ import type { AuthIdentityProps } from '../types/AuthIdentityProps';
 /**
  * One way a particular user can prove who they are.
  *
- * Deliberately empty of secret material. The derivation of a phrase lives
+ * Deliberately empty of secret material. The derivation of a password lives
  * beside the record that stores it and is never part of this entity, so no
  * serialization of an identity can leak one: there is no field for it. A caller
- * that needs to *verify* a phrase does not need to see it, which is why
+ * that needs to *verify* a password does not need to see it, which is why
  * verification is a capability of the implementation rather than a property of
  * the entity (ADR-0005).
  */

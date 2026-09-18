@@ -97,6 +97,38 @@ function stripInterpolations(line) {
   return line.replace(/\$\{[^}]*\}/g, '');
 }
 
+// The same rule, scanning TypeScript source rather than YAML and env files, matches two
+// shapes that cannot carry a credential. Both are stripped from the probe rather than
+// exempted at the match site, for the reason stripInterpolations gives: a span-level strip
+// handles a line carrying a false positive AND a real secret, where a lookahead anchored at
+// one key's match site would skip the whole line. Case-insensitive throughout, including
+// the backreference.
+const SECRET_KEYS = 'SECRET|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY|ACCESS_KEY|DB_PASS';
+
+// A quoted value identical to its own key: a string enum member naming itself
+// (`PASSWORD = 'PASSWORD'`). The value is the key's own name, published in the source by
+// definition, so there is nothing secret about it. The backreference is what keeps this
+// narrow — `PASSWORD = 'hunter2'` does not match it and is still flagged.
+const SELF_NAMED_VALUE = new RegExp(`(${SECRET_KEYS})\\s*[:=]\\s*(['"\`])\\1\\2`, 'gi');
+
+// A TypeScript type annotation: `secret: string`, `readonly token: string,`. A type is not
+// a value, so nothing is populated. Only the primitive type names are accepted — an
+// unrecognised bare word after the colon (`DB_PASS: correct-horse-battery`) is still a
+// value and is still flagged. `=` is deliberately absent: an annotation never uses one.
+const TYPE_ANNOTATION = new RegExp(
+  `(${SECRET_KEYS})\\??\\s*:\\s*(string|number|boolean|bigint|symbol|unknown|Date)(\\[\\])?\\s*(?=[;,)|>]|$)`,
+  'gi',
+);
+
+/**
+ * Removes the two source-code shapes that cannot be a populated secret. Replaced with a
+ * space rather than deleted, so stripping never splices two halves of a line into a match
+ * that was not there before.
+ */
+function stripNonSecrets(line) {
+  return line.replace(SELF_NAMED_VALUE, ' ').replace(TYPE_ANNOTATION, ' ');
+}
+
 async function* walk(dir) {
   let entries;
   try { entries = await fs.readdir(dir, { withFileTypes: true }); }
@@ -137,7 +169,7 @@ for (const root of ROOTS) {
         exemptions.push(`${file}:${index + 1}  ${line.trim()}`);
         return;
       }
-      const secretProbe = stripInterpolations(line);
+      const secretProbe = stripNonSecrets(stripInterpolations(line));
       for (const [label, pattern] of RULES) {
         const subject = label === 'populated secret' ? secretProbe : line;
         if (pattern.test(subject)) findings.push(`${file}:${index + 1}  ${label}  ${line.trim()}`);

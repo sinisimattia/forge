@@ -11,8 +11,11 @@ describe('makeUserJSON', () => {
     expect(json.deletedAt).toBeNull();
   });
 
+  // Against the literal, not against a function of the value under test: the
+  // latter holds for any address the fixture happens to return in normal form,
+  // including an empty one, so it could not fail.
   it('defaults to an address already in normal form', () => {
-    expect(makeUserJSON().email).toBe(makeUserJSON().email.trim().toLowerCase());
+    expect(makeUserJSON().email).toBe('ada@example.com');
   });
 
   it('lets an override win over the default', () => {

@@ -32,6 +32,10 @@ export interface IIdentityService {
    * @throws LastIdentityRemovalError if it is the only one they have
    * @throws IdentityNotFoundError if it is not theirs — indistinguishable from
    * not existing, so the call cannot be used to probe for other people's ids
+   * @see assertAtLeastOneIdentityRemains — the domain policy that decides both
+   * of the above, in that order. Every implementation of this method calls it
+   * rather than restating the rule as its own count query, because a second
+   * copy of a rule is a copy that can diverge.
    */
   unlinkIdentity(actorId: UserId, identityId: AuthIdentityId): Promise<void>;
 }

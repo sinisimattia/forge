@@ -19,13 +19,13 @@ the shared tests — not convention or code review — keep them identical. See
 
 ## What's inside
 
-This skeleton ships the cross-domain `shared/` folder, the `users/` domain — the first real domain,
-and the shape every later one copies — and the `identities/` domain, which models the ways a user
-can prove who they are as rows rather than columns on a user
+This skeleton ships the cross-domain `shared/` folder, the `users/` domain — the first real
+domain, and the shape every later one copies — and the `identities/` domain, which models the
+ways a user can prove who they are as rows rather than columns on a user
 ([ADR-0005](../../docs/adrs/0005-identity-is-separate-from-user.md)). Each domain gets its own
-folder under `src/` with up to seven subfolders — `entities/`, `contracts/`, `enums/`, `errors/`, `types/`, `testing/`,
-`policies/` — one file per exported symbol, named exactly after the symbol. A domain that has no
-rule needing a standalone function simply has no `policies/` folder.
+folder under `src/` with up to seven subfolders — `entities/`, `contracts/`, `enums/`, `errors/`,
+`types/`, `testing/`, `policies/` — one file per exported symbol, named exactly after the symbol.
+A domain that has no rule needing a standalone function simply has no `policies/` folder.
 
 - **`__FORGE_SCOPE__/core/shared/errors`** — the base `DomainError` class every domain error
   extends. Callers catch broadly (`instanceof DomainError`) or narrowly (a specific subclass); it

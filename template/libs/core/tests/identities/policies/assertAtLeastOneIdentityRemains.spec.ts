@@ -38,7 +38,7 @@ describe('assertAtLeastOneIdentityRemains', () => {
   // Not-found wins, and it has to. An empty list contains nothing, so the id
   // being removed is not in it, and "this identity is not yours" is the honest
   // answer; LastIdentityRemovalError would claim the caller owned something it
-  // never did, and would tell a caller holding a guessed id that the id exists.
+  // never did, and would refuse on a ground that was never the real one.
   it('throws IdentityNotFoundError, not LastIdentityRemovalError, for an empty list', () => {
     expect(() => assertAtLeastOneIdentityRemains([], FIRST)).toThrow(IdentityNotFoundError);
     expect(() => assertAtLeastOneIdentityRemains([], FIRST)).not.toThrow(LastIdentityRemovalError);

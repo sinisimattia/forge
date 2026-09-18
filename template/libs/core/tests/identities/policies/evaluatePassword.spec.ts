@@ -28,7 +28,7 @@ describe('DEFAULT_PASSWORD_POLICY', () => {
 
 describe('evaluatePassword', () => {
   describe('length', () => {
-    it('accepts a phrase that is exactly the minimum length', () => {
+    it('accepts a secret that is exactly the minimum length', () => {
       expect(ACCEPTABLE).toHaveLength(DEFAULT_PASSWORD_POLICY.minLength);
       expect(evaluatePassword(ACCEPTABLE, DEFAULT_PASSWORD_POLICY)).toEqual([]);
     });
@@ -37,7 +37,7 @@ describe('evaluatePassword', () => {
       expect(evaluatePassword('correcthors', DEFAULT_PASSWORD_POLICY)).toEqual(['TOO_SHORT']);
     });
 
-    it('accepts a phrase that is exactly the maximum length', () => {
+    it('accepts a secret that is exactly the maximum length', () => {
       const atTheLimit = 'a'.repeat(DEFAULT_PASSWORD_POLICY.maxLength);
       expect(evaluatePassword(atTheLimit, DEFAULT_PASSWORD_POLICY)).toEqual([]);
     });
@@ -53,17 +53,17 @@ describe('evaluatePassword', () => {
       expect(evaluatePassword(ACCEPTABLE, policyWith({ requireMixedCase: false }))).toEqual([]);
     });
 
-    it('reports NEEDS_MIXED_CASE for an all-lowercase phrase when the rule is on', () => {
+    it('reports NEEDS_MIXED_CASE for an all-lowercase secret when the rule is on', () => {
       expect(evaluatePassword(ACCEPTABLE, policyWith({ requireMixedCase: true })))
         .toEqual(['NEEDS_MIXED_CASE']);
     });
 
-    it('reports NEEDS_MIXED_CASE for an all-uppercase phrase when the rule is on', () => {
+    it('reports NEEDS_MIXED_CASE for an all-uppercase secret when the rule is on', () => {
       expect(evaluatePassword('CORRECTHORSE', policyWith({ requireMixedCase: true })))
         .toEqual(['NEEDS_MIXED_CASE']);
     });
 
-    it('accepts a phrase carrying both cases when the rule is on', () => {
+    it('accepts a secret carrying both cases when the rule is on', () => {
       expect(evaluatePassword('CorrectHorse', policyWith({ requireMixedCase: true }))).toEqual([]);
     });
   });
@@ -73,12 +73,12 @@ describe('evaluatePassword', () => {
       expect(evaluatePassword(ACCEPTABLE, policyWith({ requireDigit: false }))).toEqual([]);
     });
 
-    it('reports NEEDS_DIGIT for a phrase with no digit when the rule is on', () => {
+    it('reports NEEDS_DIGIT for a secret with no digit when the rule is on', () => {
       expect(evaluatePassword(ACCEPTABLE, policyWith({ requireDigit: true })))
         .toEqual(['NEEDS_DIGIT']);
     });
 
-    it('accepts a phrase carrying a digit when the rule is on', () => {
+    it('accepts a secret carrying a digit when the rule is on', () => {
       expect(evaluatePassword('correcthors3', policyWith({ requireDigit: true }))).toEqual([]);
     });
   });

@@ -12,8 +12,8 @@
  * every row already written (ADR-0005).
  */
 export enum AuthProvider {
-  /** A phrase only the person knows, verified against a stored derivation of it. */
-  PASSWORD = 'PASSWORD', // sanitize:allow — a provider name, never a credential
+  /** A secret only the person knows, verified against a stored derivation of it. */
+  PASSWORD = 'PASSWORD',
   /** A federated provider, reached through its own adapter. */
   GOOGLE = 'GOOGLE',
   /** A federated provider, reached through its own adapter. */

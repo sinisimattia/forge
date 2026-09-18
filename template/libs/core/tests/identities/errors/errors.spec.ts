@@ -31,7 +31,7 @@ const CASES: ReadonlyArray<[string, DomainError, string]> = [
   [
     'WeakPasswordError',
     new WeakPasswordError(['TOO_SHORT', 'NEEDS_DIGIT']),
-    'The proposed phrase does not meet the policy: TOO_SHORT, NEEDS_DIGIT.',
+    'The proposed password does not meet the policy: TOO_SHORT, NEEDS_DIGIT.',
   ],
 ];
 
