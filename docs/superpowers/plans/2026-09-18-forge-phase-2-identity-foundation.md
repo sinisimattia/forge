@@ -67,6 +67,20 @@ Every task's requirements implicitly include this section.
 - **Treat this plan as a set of hypotheses, not a specification.** Twelve times in Phase 1 a prescribed fix was wrong and an implementer caught it by testing before applying — a regex that false-positived on the real file, a `\bevent\b` grep that cannot match `eventId`, a claim that `npm ci` with no lockfile is a harmless no-op when it errors outright. If a step's literal code does not work, **test it, then report the failure and your correction**. Do not silently comply, and do not silently deviate. `DONE_WITH_CONCERNS` asking the controller to confirm intent is the right escalation.
 - **A guard nobody has watched fail is not a guard.** Every discriminating test in this plan must be run with its fault injected and observed to fail, then observed to pass once the fault is removed. Report the verbatim failure output.
 - **A claim about evidence is not evidence.** Phase 1 caught four separate cases of inaccurate evidence in otherwise-correct work — a RED log pasted from a different test, a fixture claimed to fire that could not have. If you did not run it, say "NOT VERIFIED". Candid self-retraction is the behaviour being rewarded here.
+- **`grep` in this session is a shim, not the system grep — verify signals with `/usr/bin/grep`.**
+  `type grep` reports a shell function backed by ugrep, and the two disagree on real patterns:
+  ugrep treats a leading `$` as an anchor where GNU and BSD treat it as a literal, so
+  `grep -e '$fetch('` finds nothing through the shim and matches under `/usr/bin/grep`. Phase 1
+  recorded a wrapper claim it could not reproduce and left it unadopted; the wrapper is real and
+  this is a reproducible divergence, just a different one. Any grep whose result is *evidence* —
+  a review-dimension signal, an extraction sweep, a discriminating check — must be run under
+  `/usr/bin/grep` (or `bash -c`), and the output presented must say which was used. A signal that
+  ships to generated projects is executed there by CI's GNU grep, not by anything on this machine.
+- **No review-dimension Signal may contain a `|`.** A markdown table forces `|` to be written
+  `\|`, which is a literal pipe under `grep -E` and correct alternation only under BRE — so the
+  same cell means different things depending on whether the reader sees raw or rendered markdown.
+  Use repeated `-e` patterns, which are correct under both. Six shipped signals carried this
+  defect and four were silently dead.
 - **Domain and vocabulary greps are substring, not word-boundary.** `\bevent\b` matches none of `events`, `eventId`, `userPaymentSummaryByEvent`. Triage hits by hand.
 - **BSD `sed` silently ignores `\b`** — it exits 0 and changes nothing. Use `perl -pi -e` with ASCII-only patterns for in-place edits.
 - **`node --test <directory>` does not work** — it treats the directory as a test file and runs nothing. Use a glob.
