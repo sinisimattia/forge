@@ -8,15 +8,27 @@ export interface UserServiceContractContext {
   /** The implementation under test, holding exactly the three users below. */
   service: IUserService;
   /**
-   * An ordinary, active, verified user.
+   * An ordinary, active, verified user, built from `actorEmailAsGiven` and
+   * therefore carrying the normal form of it.
    *
-   * The world must be built from an address that is **not** already in normal
-   * form — mixed case, with surrounding whitespace — while this entity carries
-   * the normal form. That difference is what makes normalization observable: an
-   * implementation handing back the address it was given, rather than the one
-   * the domain defines, returns something this user does not equal.
+   * It is the right-hand side of every comparison the suite makes about a
+   * profile: what the service returns is checked against the world the host
+   * promised, never against itself.
    */
   actor: User;
+  /**
+   * The address `actor` was **built from**, which must *not* already be in
+   * normal form — mixed case, with surrounding whitespace.
+   *
+   * It is what makes normalization observable. An implementation that hands
+   * back the address its store holds, rather than rebuilding the entity from
+   * it, returns an `email` that differs from the promised one in a visible way;
+   * seed the normal form instead and that field becomes identical on both sides
+   * whatever the implementation does. The suite checks this promise before
+   * relying on it, so a world that got it wrong fails loudly rather than
+   * quietly proving nothing.
+   */
+  actorEmailAsGiven: string;
   /**
    * A second ordinary, active, verified user.
    *

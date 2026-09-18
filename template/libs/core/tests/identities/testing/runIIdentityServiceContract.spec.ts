@@ -43,16 +43,39 @@ class InMemoryIdentityService implements IIdentityService {
   }
 }
 
-/** Adapts jest's assertions to the runner-agnostic surface the suite is driven through. */
+/**
+ * Adapts jest's assertions to the runner-agnostic surface the suite is driven through.
+ *
+ * The optional message is part of that surface, and a host that drops it turns "the
+ * world must seed the password identity in a form the domain has to normalize" into
+ * `Received: false` at a line number — an unreadable failure gets worked around rather
+ * than fixed. Jest accepts at most one argument to `expect`, so the message is raised as
+ * the failure itself where jest's own report says nothing a reader needs (`ok`), and
+ * prefixed to it where the diff is worth keeping.
+ */
+function explain(error: unknown, message: string | undefined): Error {
+  if (message === undefined) return error as Error;
+  return new Error(`${message}\n\n${(error as Error).message}`);
+}
+
 const conformanceExpect: ConformanceExpect = {
-  equal: (actual, expected) => {
-    expect(actual).toBe(expected);
+  equal: (actual, expected, message) => {
+    try {
+      expect(actual).toBe(expected);
+    } catch (error) {
+      throw explain(error, message);
+    }
   },
-  ok: (value) => {
+  ok: (value, message) => {
+    if (!value && message !== undefined) throw new Error(message);
     expect(value).toBeTruthy();
   },
-  rejects: async (operation, errorType) => {
-    await expect(operation()).rejects.toBeInstanceOf(errorType);
+  rejects: async (operation, errorType, message) => {
+    try {
+      await expect(operation()).rejects.toBeInstanceOf(errorType);
+    } catch (error) {
+      throw explain(error, message);
+    }
   },
 };
 

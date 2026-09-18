@@ -88,25 +88,52 @@ class InMemoryUserService implements IUserService {
   }
 }
 
-/** Adapts jest's assertions to the runner-agnostic surface the suite is driven through. */
+/**
+ * Adapts jest's assertions to the runner-agnostic surface the suite is driven through.
+ *
+ * The optional message is part of that surface, and a host that drops it turns "the
+ * world must seed the actor from an address the domain has to normalize" into
+ * `Received: false` at a line number — an unreadable failure gets worked around rather
+ * than fixed. Jest accepts at most one argument to `expect`, so the message is raised as
+ * the failure itself where jest's own report says nothing a reader needs (`ok`), and
+ * prefixed to it where the diff is worth keeping.
+ */
+function explain(error: unknown, message: string | undefined): Error {
+  if (message === undefined) return error as Error;
+  return new Error(`${message}\n\n${(error as Error).message}`);
+}
+
 const conformanceExpect: ConformanceExpect = {
-  equal: (actual, expected) => {
-    expect(actual).toBe(expected);
+  equal: (actual, expected, message) => {
+    try {
+      expect(actual).toBe(expected);
+    } catch (error) {
+      throw explain(error, message);
+    }
   },
-  ok: (value) => {
+  ok: (value, message) => {
+    if (!value && message !== undefined) throw new Error(message);
     expect(value).toBeTruthy();
   },
-  rejects: async (operation, errorType) => {
-    await expect(operation()).rejects.toBeInstanceOf(errorType);
+  rejects: async (operation, errorType, message) => {
+    try {
+      await expect(operation()).rejects.toBeInstanceOf(errorType);
+    } catch (error) {
+      throw explain(error, message);
+    }
   },
 };
 
+// Deliberately not in normal form: the suite requires it, because it is what
+// makes normalization something an implementation can be caught failing to do.
+// An implementation that hands back the row its store holds, rather than
+// rebuilding the entity from it, returns an email that differs visibly from the
+// promised one.
+const ACTOR_EMAIL_AS_GIVEN = '  Ada@Example.COM ';
+
 /** A fresh world holding exactly the three users the suite is promised. */
 async function makeContext(): Promise<UserServiceContractContext> {
-  // Deliberately not in normal form: the suite requires the world to be built
-  // from an address the domain has to normalize, so that normalization is
-  // something an implementation can be caught failing to do.
-  const actorRow = makeUserJSON({ email: '  Ada@Example.COM ' });
+  const actorRow = makeUserJSON({ email: ACTOR_EMAIL_AS_GIVEN });
   const otherRow = makeUserJSON({
     id: 'user-2' as UserId,
     email: 'grace@example.com',
@@ -122,6 +149,7 @@ async function makeContext(): Promise<UserServiceContractContext> {
   return {
     service: new InMemoryUserService([actorRow, otherRow, adminRow]),
     actor: User.fromJSON(actorRow),
+    actorEmailAsGiven: ACTOR_EMAIL_AS_GIVEN,
     other: User.fromJSON(otherRow),
     admin: User.fromJSON(adminRow),
   };

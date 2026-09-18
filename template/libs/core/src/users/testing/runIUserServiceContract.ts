@@ -39,8 +39,20 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
       // The world was built from an address that is not in normal form, and
       // `actor` carries the normal form; comparing the two is what an
       // implementation returning the address it was given fails.
+      //
+      // Which is true only while the world honours that promise, so the promise
+      // is checked and not assumed. A host that seeded an address already in
+      // normal form would leave this assertion comparing a value to itself —
+      // unfailable, and silently so. Checked here as well as in the wire-shape
+      // test because either test can be run on its own, and each has to say why
+      // it is worth running.
       it('returns the address in normal form, not the form the world was given', async () => {
-        const { service, actor } = await makeContext();
+        const { service, actor, actorEmailAsGiven } = await makeContext();
+        expect.ok(
+          actor.email !== actorEmailAsGiven,
+          'the world must seed the actor from an address the domain has to normalize',
+        );
+
         const profile = await service.getProfile(actor.id, actor.id);
         expect.equal(profile.email, actor.email);
       });
@@ -210,8 +222,19 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
       // `email` back from its stored row emits `"  Ada@Example.COM "` here, and
       // `User.fromJSON(...).toJSON()` would turn that back into
       // `"ada@example.com"` before the comparison ever saw it.
+      //
+      // It reads the actor on purpose. That is the user the world seeded in a
+      // form the domain has to normalize, so an implementation that hands back
+      // its stored row instead of rebuilding the entity from it differs from
+      // the promised user in a field this test reads — which is why the seeding
+      // is asserted before anything is compared.
       it('carries every field of the promised user out through the wire shape', async () => {
-        const { service, actor } = await makeContext();
+        const { service, actor, actorEmailAsGiven } = await makeContext();
+        expect.ok(
+          actor.email !== actorEmailAsGiven,
+          'the world must seed the actor from an address the domain has to normalize',
+        );
+
         const fetched = await service.getProfile(actor.id, actor.id);
 
         const actual = fetched.toJSON();
