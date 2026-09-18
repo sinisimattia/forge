@@ -1829,14 +1829,14 @@ Verify, in order, and record the verbatim result of each:
 4. `ALTER DEFAULT PRIVILEGES FOR ROLE current_user IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app;` — then create a table **as the owner** and confirm the app role can write to it **without any explicit grant**.
 5. Confirm the same for sequences (`GRANT USAGE, SELECT ON SEQUENCES`), or establish that the schema's identity columns do not need it — find out rather than including a statement that does nothing.
 6. `REVOKE UPDATE, DELETE ON audit_entries FROM app;` — then, connected **as the app role**, confirm `INSERT` and `SELECT` succeed and `UPDATE` and `DELETE` are rejected with `permission denied`. Paste the error.
-7. Confirm the app role cannot regain the privilege itself: as the app role, `GRANT UPDATE ON audit_entries TO app;` must fail. If it does not, the guarantee is decorative and this task's design is wrong — report that immediately.
+7. Confirm the app role cannot regain the privilege itself: as the app role, run `GRANT UPDATE ON audit_entries TO app;` and then assert that **the privilege is still absent** — `SELECT has_table_privilege('<app role>', 'audit_entries', 'UPDATE')` must be false. Do **not** assert that the statement fails: it does not. Postgres emits `WARNING: no privileges were granted`, reports `GRANT`, and exits 0, granting nothing (verified at Postgres 16). An assertion written as "the statement errors" passes today for the wrong reason and would keep passing if the privilege were genuinely restored — which is the precise failure this check exists to catch. If `has_table_privilege` comes back true, the guarantee is decorative and this task's design is wrong — report that immediately.
 
 - [ ] **Step 2: Write the role migration**
 
 `1758000000000-AppRoleAndDefaultPrivileges.ts` must:
 
 - Read `APP_DB_ROLE` and `APP_DB_PASSWORD` from the environment and **fail loudly** if either is missing. A default password here would ship a known credential in every generated project.
-- Validate the role name against `/^[a-z_][a-z0-9_]{0,62}$/` and throw otherwise, before it reaches any SQL. `format('%I')` escapes correctly, but a role name arriving from configuration deserves a check that is readable in review.
+- Validate the role name against `/^[a-z_][a-z0-9_-]{0,62}$/` and throw otherwise, before it reaches any SQL. `format('%I')` escapes correctly, but a role name arriving from configuration deserves a check that is readable in review. **The hyphen in that class is load-bearing, not tolerance:** `NAME_RE` in `tools/create/args.mjs` admits hyphens, so a project called `my-app` has an application role called `my-app-app`, and the hyphen-free form of this regex would throw on the first migration of every generated project whose name has a hyphen.
 - Create the role only if absent, grant `CONNECT` on the database and `USAGE` on schema `public`.
 - Set the default privileges **before** any table exists. Ordering is the whole mechanism.
 - `down()` revokes and drops the role. Guard the drop: a role that owns objects cannot be dropped, so `down()` must fail clearly rather than half-succeed.
@@ -1863,7 +1863,7 @@ Constraints that are load-bearing, not decoration:
 - `auth_identities (provider, provider_account_id)` — unique. This is what makes "one account per address per provider" true in the database rather than in a race-prone check-then-insert.
 - `refresh_tokens.token_hash` — unique, and indexed: it is looked up on every renewal.
 - Every `*_token_hash` column stores a hash, never the credential. Say so in a column comment — a `COMMENT ON COLUMN` survives into `\d+` where a code comment does not.
-- Foreign keys to `users` are `ON DELETE CASCADE` for sessions and tokens, and **not** for `audit_entries`: an audit entry must outlive the account it refers to, which is the whole reason `actor_user_id` is nullable.
+- Foreign keys to `users` are `ON DELETE CASCADE` for sessions and tokens. `audit_entries` gets **no foreign key at all** — not merely a different referential action. Referential-integrity actions execute with the **table owner's** privileges, not the caller's, so any FK routes straight around the revoke: with `UPDATE`/`DELETE` already revoked from the app role, `ON DELETE SET NULL` still lets the application erase `actor_user_id` by deleting a user, and `ON DELETE CASCADE` deletes the audit row outright (both verified at Postgres 16). Since an audit entry must outlive the account it names — the whole reason `actor_user_id` is nullable — every referential action is either wrong or a bypass, and no FK is the only option left. Say this in a column comment: the next person to run `migration:generate` will be offered this foreign key by the tool.
 
 - [ ] **Step 4: Write the append-only migration**
 
@@ -1887,17 +1887,17 @@ Dev `compose.yaml` — obviously-local credentials inline, exactly as Phase 1 es
 
 ```yaml
     environment:
-      DATABASE_URL: postgresql://__FORGE_NAME___app:__FORGE_NAME___app@postgres:5432/__FORGE_DB_NAME__
+      DATABASE_URL: postgresql://__FORGE_NAME__-app:__FORGE_NAME__-app@postgres:5432/__FORGE_DB_NAME__
       MIGRATION_DATABASE_URL: postgresql://__FORGE_NAME__:__FORGE_NAME__@postgres:5432/__FORGE_DB_NAME__
-      APP_DB_ROLE: __FORGE_NAME___app
-      APP_DB_PASSWORD: __FORGE_NAME___app
+      APP_DB_ROLE: __FORGE_NAME__-app
+      APP_DB_PASSWORD: __FORGE_NAME__-app
 ```
 
 `compose.prod.yaml` — every value from the environment with no default, `${APP_DB_PASSWORD:?required}`, on both the `migrate` one-shot and the `backend` service. The `migrate` service gets `MIGRATION_DATABASE_URL`; `backend` must **not** receive it, so a mistake cannot silently run the application as the owner.
 
 `.env.example` — document both URLs and the role variables, values empty or dev-local as Phase 1 established.
 
-**Run `npm run sanitize` at this point, before going further.** Phase 1's populated-secret rule matches `KEY: value` as well as `KEY=value`, case-insensitively, after stripping `${...}` interpolations. `APP_DB_PASSWORD: __FORGE_NAME___app` may well trip it where `POSTGRES_PASSWORD: __FORGE_NAME__` does not — verify rather than assume, and if it trips, report it before reaching for `# sanitize:allow`. The exemption count is currently one, and Phase 1 left a standing instruction to tighten the marker to per-rule granularity if it ever exceeds one.
+**Run `npm run sanitize` at this point, before going further.** Phase 1's populated-secret rule matches `KEY: value` as well as `KEY=value`, case-insensitively, after stripping `${...}` interpolations. `APP_DB_PASSWORD: __FORGE_NAME__-app` may well trip it where `POSTGRES_PASSWORD: __FORGE_NAME__` does not — verify rather than assume, and if it trips, report it before reaching for `# sanitize:allow`. (It was verified in execution and does **not** trip: the rule's `(?!__FORGE_)` lookahead and its `stripInterpolations` pass both exempt a token-valued key. The exemption count stayed at one.) The exemption count is currently one, and Phase 1 left a standing instruction to tighten the marker to per-rule granularity if it ever exceeds one.
 
 - [ ] **Step 7: Write the SQL text test**
 
@@ -1911,7 +1911,14 @@ the role migration throws when APP_DB_ROLE is absent
 the role migration rejects a role name containing a quote or a space
 ```
 
-The behavioural proof — that the database actually refuses the statement — is D13 in Task 19. Say so in the file header, so nobody reads this spec as the guarantee.
+**Those five are not enough, and a list of assertions is the wrong shape for this job.** Write the assertions from the list of *bypasses* instead — every one below was demonstrated to erase or destroy audit data at a real Postgres 16 while the shipped `REVOKE` was in place and the suite stayed green:
+
+- **A foreign key on `audit_entries`.** RI actions run as the table owner. An assertion scoped to the parenthesised `CREATE TABLE` body cannot see an FK added by `ALTER TABLE` — which is how `migration:generate` emits every FK — nor a `@ManyToOne` on the record class. Guard all three surfaces.
+- **`TRUNCATE` in the `ALTER DEFAULT PRIVILEGES` grant list.** It is a privilege distinct from `DELETE`, one word long, and it empties the whole log. Assert the grant list *exactly*, and assert `TRUNCATE` appears in no migration.
+- **A later migration re-creating `audit_entries`.** `ALTER DEFAULT PRIVILEGES` is standing configuration: anything the owner subsequently creates in `public` carries `arwd` for the app role again, silently. Assert `CREATE TABLE audit_entries` appears in exactly one migration.
+- **`REFERENCES`** granted to the app role, which would let it re-add the FK itself later.
+
+The behavioural proof — that the database actually refuses the statement — is D13 in Task 19. Say so in the file header, so nobody reads this spec as the guarantee. But note what the file header cannot excuse: three of these bypasses are invisible to the *database* test too, because each one leaves a schema in which the app role is legitimately permitted to do what it does. They are caught by reading the migration text or not at all.
 
 - [ ] **Step 8: Clean up, verify Voku, sanitize, commit**
 
@@ -2819,6 +2826,7 @@ The stack, running, doing the whole thing. **D13 can only be proven here** — a
 
 **Files:**
 - Modify: `tests/integration/docker.test.mjs`
+- Modify: the backend's bootstrap, for the startup privilege guard in Step 3b
 
 **Interfaces:**
 - Consumes: the generated project, Docker, the mail outbox from Task 10.
@@ -2875,9 +2883,22 @@ Then the assertion that makes it a guarantee rather than a configuration detail:
 ```bash
 # as the app role — it must not be able to grant itself the privilege back
 psql ... -c "GRANT UPDATE ON audit_entries TO CURRENT_USER;"
+psql ... -tAc "SELECT has_table_privilege(CURRENT_USER, 'audit_entries', 'UPDATE');"
 ```
 
-Assert this fails too. If it succeeds, D13 is decorative and Task 8's design is wrong; report it as a blocking finding rather than adjusting the test.
+**Assert the second command prints `f`. Do not assert that the first one fails — it does not.** Postgres answers a self-grant of a privilege you do not hold with `WARNING: no privileges were granted`, reports `GRANT`, and exits 0; nothing is granted. This was verified at Postgres 16 during Task 8, and the earlier form of this step (which asserted the statement errors) was wrong. The distinction is the whole point: an assertion on the statement's exit status passes today for the wrong reason and would go on passing if the privilege were genuinely restored. If `has_table_privilege` returns `t`, D13 is decorative and Task 8's design is wrong; report it as a blocking finding rather than adjusting the test.
+
+- [ ] **Step 3b: Make D13 a property of the process, not of the deployment**
+
+`src/db/data-source.ts` falls back to `DATABASE_URL` when `MIGRATION_DATABASE_URL` is unset — deliberately, because a generated project that cannot migrate at all is worse. But the consequence is that a deployment which is neither of the two compose files can run its migrations as the application role, end up with an app role that **owns** its own tables, and lose D13 with no signal anywhere. Both compose files close this; nothing else does.
+
+Add the guard to the backend's bootstrap (this expands the file list above — Task 19 owns it because it is the only task that stands up a real two-role database, so the guard and its proof can be written in one pass):
+
+```sql
+SELECT has_table_privilege(current_user, 'audit_entries', 'UPDATE')
+```
+
+Run it once at startup and refuse to start if it is true, with an error naming `MIGRATION_DATABASE_URL`. This has no false positives: in a correctly configured deployment the application role genuinely lacks the privilege. It does not reintroduce the problem the fallback exists to solve — the project still migrates; it declines to *serve* over an over-privileged connection. Prove it by pointing `DATABASE_URL` at the owner and watching the backend refuse to boot.
 
 - [ ] **Step 4: Prove the walk discriminates**
 
@@ -2887,8 +2908,9 @@ An end-to-end test that only ever runs green proves nothing about itself. Inject
 2. Remove the reuse branch from `RefreshTokenService` → the D8 assertions must fail.
 3. Add a `message` field to the unknown-address `forgot-password` response → the D7 comparison must fail.
 4. Mark `GET /users/me` `@Public()` → the D6 assertion must fail.
+5. Add `ALTER TABLE audit_entries ADD CONSTRAINT fk_audit_actor FOREIGN KEY (actor_user_id) REFERENCES users (id) ON DELETE SET NULL` to the schema migration, rebuild, delete the walk's user → the actor on its audit entries must survive. This is the bypass Task 8's review found: referential-integrity actions execute with the **table owner's** privileges, so the revoke does not apply to them, and the direct `UPDATE` in Step 3 still fails while the data is erased anyway. It is the one injection here that the `REVOKE` cannot catch.
 
-This is four full rebuild-and-run cycles and it is the most expensive step in the plan. It is also the only thing that turns a green e2e into evidence. Do not skip it, and do not substitute reasoning for running it.
+This is five full rebuild-and-run cycles and it is the most expensive step in the plan. It is also the only thing that turns a green e2e into evidence. Do not skip it, and do not substitute reasoning for running it.
 
 - [ ] **Step 5: Verify the machine is as you found it**
 
@@ -2919,8 +2941,11 @@ Phase 1 closed with a single fix-wave dispatch and a preserved decision log, and
 
 **Files:**
 - Create: `docs/superpowers/phase-2-decision-log.md`
+- Create: `template/docs/adrs/0009-two-database-roles.md`
 - Modify: `docs/superpowers/phase-roadmap.md`
 - Modify: whatever the wave fixes.
+
+**ADR-0009 is not optional bookkeeping.** Task 8's brief told its implementer to cite ADR-0008 for the two-role design; the implementer read ADR-0008, found it is about external service capabilities being ports rather than vendor bindings, and correctly refused to paste a citation that is true elsewhere and false there. The result is that the most structurally binding decision in the backend has no ADR at all, and Task 8's review proved it has consequences a future reader will violate by accident. The ADR must record: why two roles rather than one; that referential-integrity actions execute with the **table owner's** privileges, so no foreign key may ever be added to `audit_entries`; that `TRUNCATE` is a privilege distinct from `DELETE` and must stay out of the default-privileges grant list; that `ALTER DEFAULT PRIVILEGES` is standing configuration, so re-creating `audit_entries` in a later migration silently restores `UPDATE` and `DELETE`; and that the whole guarantee is void if the application connects as the owner.
 
 - [ ] **Step 1: Triage everything deferred during the phase**
 
