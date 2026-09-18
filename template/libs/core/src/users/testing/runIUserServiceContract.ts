@@ -201,13 +201,20 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
       // world the host promised. Comparing a round trip against itself would
       // prove only that the entity can serialize, which the entity's own tests
       // already establish and no implementation can get wrong.
+      //
+      // It reads the payload the service emitted, and nothing downstream of it.
+      // Reviving through `fromJSON` re-runs the entity's invariants — it
+      // normalizes the address and trims the display name — so comparing a
+      // revived round trip launders exactly the faults this test exists to
+      // catch: an implementation that rebuilt the entity and then patched
+      // `email` back from its stored row emits `"  Ada@Example.COM "` here, and
+      // `User.fromJSON(...).toJSON()` would turn that back into
+      // `"ada@example.com"` before the comparison ever saw it.
       it('carries every field of the promised user out through the wire shape', async () => {
         const { service, actor } = await makeContext();
         const fetched = await service.getProfile(actor.id, actor.id);
-        const revived = User.fromJSON(fetched.toJSON());
-        expect.ok(revived instanceof User, 'fromJSON must produce a real entity');
 
-        const actual = revived.toJSON();
+        const actual = fetched.toJSON();
         const promised = actor.toJSON();
         expect.equal(actual.id, promised.id);
         expect.equal(actual.email, promised.email);
@@ -218,6 +225,15 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
         expect.equal(actual.createdAt, promised.createdAt);
         expect.equal(actual.updatedAt, promised.updatedAt);
         expect.equal(actual.deletedAt, promised.deletedAt);
+
+        // The other half of "two implementations agree on the shape between
+        // them": whatever this one emits, the receiving side has to be able to
+        // rebuild. Failable, and not a statement about `fromJSON`'s return
+        // type — `fromJSON` re-runs every invariant and *throws* on a payload
+        // that violates one, so an implementation emitting an unacceptable wire
+        // shape fails on this line rather than on the assertion.
+        const revived = User.fromJSON(actual);
+        expect.ok(revived instanceof User, 'the emitted payload must survive the reviver');
       });
     });
   });
