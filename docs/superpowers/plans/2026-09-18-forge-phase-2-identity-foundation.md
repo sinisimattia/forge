@@ -552,7 +552,7 @@ One sentence of rationale in the file: a domain rule that is not a method on an 
 it spans entities, or because it must be callable without constructing one — has nowhere else to
 live, and hiding it as a static method on a class with no instances is worse.
 
-Then add `./shared/policies` to `template/libs/core/package.json` `exports`, to `template/libs/core/tsconfig.json` `paths` and to `template/libs/core/jest.config.js` `moduleNameMapper`, in whichever form Task 1 established. `shared/types` already exists in all three and needs no change.
+Then add `./shared/policies` to `template/libs/core/package.json` `exports` — **and to nothing else.** Task 1 replaced the per-subpath tables in `template/libs/core/tsconfig.json` and `template/libs/core/jest.config.js` with one `__FORGE_SCOPE__/core/*` wildcard each, which already covers every subpath that will ever exist. Adding a per-subpath entry back into either would undo Task 1's central decision. `libs/core/README.md`'s "How to add a domain" section is the current authority on this; read it before editing.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -683,7 +683,7 @@ Every contract method in this phase takes the acting user's id as its first argu
 - Create: `template/libs/core/src/users/types/{UserId.ts,UserJSON.ts,UserProps.ts,UpdateUserProfileInput.ts,UserQuery.ts,index.ts}`
 - Create: `template/libs/core/src/users/contracts/{IUserService.ts,index.ts}`
 - Create: `template/libs/core/src/users/testing/{IUserServiceContractDeps.ts,runIUserServiceContract.ts,user-fixtures.ts,index.ts}`
-- Modify: `template/libs/core/package.json`, `tsconfig.json`, `jest.config.js` (six new subpaths)
+- Modify: `template/libs/core/package.json` (six new subpaths in `exports`, and nothing else — `tsconfig.json` and `jest.config.js` carry Task 1's wildcard and need no per-subpath entry)
 - Test: `template/libs/core/tests/users/entities/User.spec.ts`
 - Test: `template/libs/core/tests/users/testing/runIUserServiceContract.spec.ts`
 
@@ -1086,7 +1086,7 @@ Roadmap ordering decision 1, made real. Password is not "the" way to log in; it 
 - Create: `template/libs/core/src/identities/policies/{assertAtLeastOneIdentityRemains.ts,evaluatePassword.ts,index.ts}`
 - Create: `template/libs/core/src/identities/contracts/{IIdentityService.ts,IBreachedPasswordRegistry.ts,index.ts}`
 - Create: `template/libs/core/src/identities/testing/{IIdentityServiceContractDeps.ts,runIIdentityServiceContract.ts,identity-fixtures.ts,index.ts}`
-- Modify: `template/libs/core/package.json`, `tsconfig.json`, `jest.config.js`
+- Modify: `template/libs/core/package.json` (new subpaths in `exports` only — see Task 4)
 - Test: `template/libs/core/tests/identities/entities/AuthIdentity.spec.ts`
 - Test: `template/libs/core/tests/identities/policies/{assertAtLeastOneIdentityRemains.spec.ts,evaluatePassword.spec.ts}`
 - Test: `template/libs/core/tests/identities/testing/runIIdentityServiceContract.spec.ts`
@@ -1321,7 +1321,7 @@ Spec §9.1 says core "does **not** name JWTs, cookies, **headers** or HTTP". Spe
 - Create: `template/libs/core/src/auth/types/{SessionId.ts,SessionJSON.ts,AuthenticationOutcome.ts,AuthenticationAttempt.ts,RegisterInput.ts,ClientContext.ts,index.ts}`
 - Create: `template/libs/core/src/auth/contracts/{IAuthService.ts,index.ts}`
 - Create: `template/libs/core/src/auth/testing/{IAuthServiceContractDeps.ts,runIAuthServiceContract.ts,runIAuthServiceSecurityContract.ts,auth-fixtures.ts,index.ts}`
-- Modify: `template/libs/core/package.json`, `tsconfig.json`, `jest.config.js`
+- Modify: `template/libs/core/package.json` (new subpaths in `exports` only — see Task 4)
 - Test: `template/libs/core/tests/auth/entities/Session.spec.ts`
 - Test: `template/libs/core/tests/auth/testing/{runIAuthServiceContract.spec.ts,runIAuthServiceSecurityContract.spec.ts}`
 
