@@ -36,9 +36,28 @@ services:
       - '${BACKEND_DEBUG_PORT:-9229}:9229'
     # NOTE: `environment:` takes precedence over `env_file:`, so these pinned values win
     # over anything in apps/backend/.env.
+    # Two roles, two URLs. `postgres` above creates `__FORGE_NAME__`, which owns the
+    # schema; the first migration creates `__FORGE_NAME__-app`, which owns nothing and is
+    # what the API actually connects as. That separation is the whole of the append-only
+    # audit guarantee: a privilege revoked from a non-owner is one the application cannot
+    # grant back to itself. See apps/backend/src/db/migrations/ for the argument in full.
+    #
+    # There is no `migrate` service here, unlike compose.prod.yaml. The dev image's own
+    # CMD is `npm run migration:run -w apps/backend && npm run start:dev -w apps/backend`
+    # (apps/backend/Dockerfile, `dev` target), so migrations already run to completion, in
+    # this container, before Nest bootstraps — including the one that creates the role the
+    # line below connects as. A separate one-shot would build a second image and do the
+    # same work twice.
+    #
+    # These credentials are obviously-local and inline on purpose, exactly as the
+    # postgres service's own are: a dev stack that needs a populated .env before it will
+    # start is a dev stack nobody runs.
     environment:
       NODE_ENV: development
-      DATABASE_URL: postgresql://__FORGE_NAME__:__FORGE_NAME__@postgres:5432/__FORGE_DB_NAME__
+      DATABASE_URL: postgresql://__FORGE_NAME__-app:__FORGE_NAME__-app@postgres:5432/__FORGE_DB_NAME__
+      MIGRATION_DATABASE_URL: postgresql://__FORGE_NAME__:__FORGE_NAME__@postgres:5432/__FORGE_DB_NAME__
+      APP_DB_ROLE: __FORGE_NAME__-app
+      APP_DB_PASSWORD: __FORGE_NAME__-app
       PORT: '3000'
       CORS_ORIGIN: http://localhost:${WEBAPP_PORT:-3001}
     env_file:

@@ -65,7 +65,11 @@ src/<module>/
 └── <module>.repository.ts          # Only if complex queries exist
 ```
 
-**Present today:** `health/` (liveness probe, no business logic).
+**Present today:** `health/` (liveness probe, no business logic), and the persistence
+record classes for the identity foundation — `users/`, `identities/`, `auth/entities/`,
+`audit/`. Those are `<Thing>Record` row classes only: no modules, controllers or services
+yet. They are named `Record` because `__FORGE_SCOPE__/core` already exports `User`,
+`AuthIdentity`, `Session` and `AuditEntry`, and a repository imports both in one file.
 
 **Shared utilities:** `src/common/` — filters, interceptors, pipes, types, i18n plumbing.
 
@@ -76,14 +80,18 @@ src/<module>/
 ## What's wired up
 
 - `AppModule` — `ConfigModule` (global, `.env`), `TypeOrmModule.forRootAsync` reading
-  `DATABASE_URL`, and `HealthModule`.
+  `DATABASE_URL`, the seven persistence record classes, and `HealthModule`.
 - `main.ts` — global `I18nValidationPipe`, `I18nResponseInterceptor`, and
   `HttpExceptionFilter`; CORS from `CORS_ORIGIN`; listens on `PORT` (default `3000`).
   There is **no** global route prefix — `GET /health` is polled unprefixed by the
   container healthcheck and by Task 14's e2e smoke test; keep it that way unless every
   consumer of `/health` is updated at the same time.
 - `src/db/data-source.ts` — the TypeORM CLI data source for `migration:generate` /
-  `migration:run`, reading `DATABASE_URL`.
+  `migration:run`, reading `MIGRATION_DATABASE_URL` and falling back to `DATABASE_URL`.
+  **Two roles, on purpose:** migrations run as the schema owner, the application connects
+  as a restricted role that owns nothing, and `UPDATE`/`DELETE` on `audit_entries` are
+  revoked from that role — which a non-owner cannot grant back to itself. That is the
+  whole of the append-only audit guarantee; see `src/db/migrations/` and `.env.example`.
 - `src/i18n/en/*.json` + `src/common/i18n/` — translation plumbing, scaffolded but not
   yet registered as an `I18nModule` (no translated routes exist yet). See
   `STANDARDS.md` — nestjs-i18n mechanics.

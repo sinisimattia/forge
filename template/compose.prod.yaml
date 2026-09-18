@@ -33,6 +33,11 @@ services:
       retries: 10
 
   # One-shot: applies TypeORM migrations, then exits. `backend` waits for it to succeed.
+  #
+  # This is the only service that connects as the schema owner, and the only one that is
+  # told the application role's password — it is the service that creates that role. The
+  # split is the mechanism behind the append-only audit log: the application connects as a
+  # role that owns nothing, so a privilege revoked from it is one it cannot grant back.
   migrate:
     <<: *backend-image
     restart: 'no'
@@ -41,7 +46,9 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@postgres:5432/${POSTGRES_DB:?required}
+      MIGRATION_DATABASE_URL: postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@postgres:5432/${POSTGRES_DB:?required}
+      APP_DB_ROLE: ${APP_DB_ROLE:?required}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?required}
     command: ['npm', 'run', 'migration:run:prod']
 
   backend:
@@ -54,9 +61,19 @@ services:
       - '3000:3000'
     # NOTE: `environment:` takes precedence over `env_file:`, so these pinned values win
     # over anything in apps/backend/.env.
+    #
+    # `MIGRATION_DATABASE_URL` is deliberately absent, and its absence is load-bearing.
+    # `db/data-source.ts` falls back to `DATABASE_URL` when it is unset, so handing this
+    # service the owner's URL under either name would run the application as the schema
+    # owner — and an owner can grant itself back every privilege the audit migration took
+    # away. Nothing would fail; the guarantee would just quietly not hold. The application
+    # is given the restricted role's URL and nothing else — the owner's credentials reach
+    # no service but `migrate`. (`APP_DB_PASSWORD` is read here too, of course: it is the
+    # password in the URL below. It is `APP_DB_ROLE`/`APP_DB_PASSWORD` as a *pair of
+    # migration inputs* that this service has no use for.)
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:?required}:${POSTGRES_PASSWORD:?required}@postgres:5432/${POSTGRES_DB:?required}
+      DATABASE_URL: postgresql://${APP_DB_ROLE:?required}:${APP_DB_PASSWORD:?required}@postgres:5432/${POSTGRES_DB:?required}
       PORT: '3000'
       CORS_ORIGIN: http://localhost:3001
     env_file:
