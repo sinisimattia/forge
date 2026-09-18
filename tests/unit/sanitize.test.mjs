@@ -95,6 +95,20 @@ test('a key that merely ends like a secret key is not self-named', () => {
   assert.equal(labels("  const DB_PASSWORD = 'password';", TS), 'populated secret');
 });
 
+// A credential that happens to be spelled like its key is still a credential. The `i`
+// this exemption once carried applied to the backreference too, so `PASSWORD = 'password'`
+// and `password: 'password'` — a hardcoded dev credential in a config object — wore the
+// enum member's exemption. Only the shipped shape is exempt: UPPER_SNAKE key, value
+// spelled identically.
+test('a self-named value is exempt only in the exact case of its key', () => {
+  assert.equal(labels("const PASSWORD = 'password';", TS), 'populated secret');
+  assert.equal(labels("const SECRET = 'secret';", TS), 'populated secret');
+  assert.equal(labels("  password: 'password',", TS), 'populated secret');
+  assert.equal(labels("  PASSWORD: 'Password',", TS), 'populated secret');
+  // The shape the exemption exists for, unchanged.
+  assert.equal(flagged("  PASSWORD = 'PASSWORD',", TS), false);
+});
+
 test('a bare word after a colon that is not a primitive type is still flagged', () => {
   assert.equal(labels('PASSWORD: hunter2', TS), 'populated secret');
   assert.equal(labels('  token: hunter2,', TS), 'populated secret');

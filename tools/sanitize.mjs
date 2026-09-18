@@ -125,9 +125,19 @@ const SECRET_KEYS = 'SECRET|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY|ACCESS_KEY|DB_PAS
 // `_PASSWORD` has no boundary before `P`.) The type-annotation rule below deliberately
 // keeps no such anchor: `dbPassword: string` is a type annotation like any other, and the
 // populated-secret rule it is exempting matches by substring too.
+//
+// Case-SENSITIVE — the only rule here that is, and the `i` this once carried was a hole.
+// JS applies `i` to a backreference too, so `const PASSWORD = 'password'` and
+// `password: 'password'` both satisfied `\1` and exempted themselves: a hardcoded dev
+// credential in a config object, wearing the enum member's exemption. The justification
+// ("the value is the key's own name, published in the source by definition") holds only
+// for the shipped shape, which is an UPPER_SNAKE enum member whose value is spelled
+// identically — so that is exactly what this matches and nothing else. A self-named member
+// in some other casing (`Password = 'Password'`) is flagged, and can carry a
+// `sanitize:allow` marker like any other deliberate literal; the gate errs strict.
 const SELF_NAMED_VALUE = new RegExp(
   `(?<![A-Za-z0-9_])(${SECRET_KEYS})\\s*[:=]\\s*(['"\`])\\1\\2`,
-  'gi',
+  'g',
 );
 
 // A TypeScript type annotation: `secret: string`, `readonly token: string,`. A type is not
