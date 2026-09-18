@@ -4,8 +4,8 @@ import type { SessionId } from './SessionId';
 /**
  * Everything needed to construct a {@link Session}.
  *
- * A named object rather than positional parameters, for the reason
- * {@link UserProps} gives and more sharply: four of the eight fields are
+ * A named object rather than positional parameters, for the reason the users
+ * domain's own props type gives and more sharply: four of the eight fields are
  * instants and all four are adjacent, so a positional constructor makes a
  * silent transposition possible that no compiler can catch.
  */

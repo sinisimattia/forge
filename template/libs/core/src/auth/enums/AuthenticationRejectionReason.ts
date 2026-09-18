@@ -8,6 +8,20 @@
  * existence, one attempt at a time. The identical-answer rule is asserted by
  * {@link runIAuthServiceSecurityContract} and is the reason this enum is part
  * of no wire shape.
+ *
+ * **When more than one applies, the order is fixed and is part of the contract.**
+ * `INVALID_SECRET` is decided first: whoever does not hold the secret is told
+ * nothing about the account behind the address, so no state of that account may
+ * be reachable ahead of it. Among the states, the order is `ACCOUNT_DELETED`,
+ * then `ACCOUNT_SUSPENDED`, then `EMAIL_NOT_VERIFIED` — most permanent first, so
+ * that the recorded reason is the one that would still be true after the others
+ * were fixed. An account that was never verified and has since been deleted is
+ * recorded as deleted, because verifying it now would change nothing.
+ *
+ * The order is stated here rather than left to each implementation because this
+ * is what is written to the audit record: two implementations that disagreed
+ * would produce two different histories of the same event, and a reader of one
+ * could not compare it with the other.
  */
 export enum AuthenticationRejectionReason {
   /** No account answers to that address. */

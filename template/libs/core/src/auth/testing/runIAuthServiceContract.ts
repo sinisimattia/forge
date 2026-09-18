@@ -204,7 +204,16 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
           'the world must seed the actor from an address the domain has to normalize',
         );
 
-        const outcome = await service.authenticate(attempt(actorEmailAsGiven, actorSecret, { address: '198.51.100.7', label: 'a client' }));
+        // Named rather than written inline, because it is the right-hand side of an
+        // assertion below and not scene-setting. Nothing else in either suite pins
+        // this: the wire-shape test compares against a session the *world* seeded, so
+        // an implementation that dropped the client context on the floor would satisfy
+        // every other assertion here and still show a person their own session list
+        // with nulls where another implementation shows values.
+        const client: ClientContext = { address: '198.51.100.7', label: 'a client' };
+        const outcome = await service.authenticate(
+          attempt(actorEmailAsGiven, actorSecret, client),
+        );
         expect.equal(
           outcome.status,
           AuthenticationStatus.AUTHENTICATED,
@@ -223,8 +232,16 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
         // Against the world the host promised, not against itself: an
         // implementation that returned somebody else's account satisfies every
         // internal consistency check there is.
-        expect.equal(String(authenticated.user.id), String(actorId));
-        expect.equal(authenticated.user.email, normalizeEmail(actorEmailAsGiven));
+        expect.equal(
+          String(authenticated.user.id),
+          String(actorId),
+          'the outcome must name the person whose secret was offered',
+        );
+        expect.equal(
+          authenticated.user.email,
+          normalizeEmail(actorEmailAsGiven),
+          'the outcome must carry the actor\'s own address, in normal form',
+        );
 
         expect.equal(
           String(authenticated.session.userId),
@@ -234,6 +251,16 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
         expect.ok(
           authenticated.session.isActive(new Date()),
           'a session issued now must be usable now',
+        );
+        expect.equal(
+          authenticated.session.clientAddress,
+          client.address,
+          'what the caller could tell about the client must reach the session',
+        );
+        expect.equal(
+          authenticated.session.clientLabel,
+          client.label,
+          'what the caller could tell about the client must reach the session',
         );
       });
 
@@ -308,7 +335,11 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
         );
 
         const outcome = await service.authenticate(attempt(actorEmailAsGiven, actorSecret));
-        expect.equal(outcome.status, AuthenticationStatus.AUTHENTICATED);
+        expect.equal(
+          outcome.status,
+          AuthenticationStatus.AUTHENTICATED,
+          'the actor\'s own secret must authenticate them',
+        );
         const fresh = (outcome as AuthenticatedOutcome).session;
 
         const listed = await service.listSessions(actorId);
@@ -317,7 +348,11 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
 
         expect.equal(listed.length, 2, 'the world\'s session and the fresh one, and nothing else');
         expect.equal(String(listed[0].id), String(fresh.id), 'newest first');
-        expect.equal(String(listed[1].id), String(actorSession.id));
+        expect.equal(
+          String(listed[1].id),
+          String(actorSession.id),
+          'the world\'s own session must be the older of the two',
+        );
       });
 
       it('ends one of the actor\'s own sessions', async () => {
@@ -394,7 +429,11 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
         expect.ok(before.length > 1, 'the actor must hold more than one session to end them all');
 
         await service.revokeAllSessions(actorId);
-        expect.equal((await service.listSessions(actorId)).length, 0);
+        expect.equal(
+          (await service.listSessions(actorId)).length,
+          0,
+          'revoking them all must leave the actor holding none',
+        );
       });
     });
 
@@ -421,18 +460,18 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
       // prove only that the entity can serialize, which the entity's own tests
       // already establish and no implementation can get wrong.
       //
-      // A session has no field the domain normalizes, so what makes this bite
-      // is the instant: ISO-8601 has more than one spelling of one moment, and
-      // an implementation that hands back its stored row rather than rebuilding
-      // the entity from it emits the spelling its store holds.
+      // Unlike its sibling in `identities`, this test has no normalized field to
+      // lean on. A session normalizes nothing, so there is no value a store can
+      // hold in one form and the domain emit in another, and no seeding trick
+      // makes one — both sides of every comparison below are produced by the same
+      // `Date.toISOString()`. What is left failable, and what this pins, is that a
+      // real entity comes back and that all eight of its fields are the promised
+      // session's: an implementation whose mapping drops `clientLabel`, or that
+      // returns a different session of the same user, fails here. Handing back a
+      // raw store row fails one line earlier, on `instanceof`.
       it('carries every field of the promised session out through the wire shape', async () => {
-        const { service, actorId, actorSession, seededSessionCreatedAtAsGiven }
-          = await makeContext();
+        const { service, actorId, actorSession } = await makeContext();
         const expected = actorSession.toJSON();
-        expect.ok(
-          seededSessionCreatedAtAsGiven !== expected.createdAt,
-          'the world must store the session\'s createdAt in a form the domain has to rewrite',
-        );
 
         const listed = await service.listSessions(actorId);
         const fetched = listed.filter((session) => session.id === actorSession.id)[0];
@@ -440,26 +479,27 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
         expect.ok(fetched instanceof Session, 'listSessions must return a real entity');
 
         // Compared BEFORE any round trip, and that is the whole point. Reviving
-        // through `fromJSON` re-runs the entity's invariants and rewrites the
-        // instants, so a round trip launders exactly the fault this test exists
-        // to catch.
+        // through `fromJSON` re-runs the entity's invariants, so a round trip
+        // launders exactly the faults this test exists to catch.
         const actual = fetched.toJSON();
-        expect.equal(actual.id, expected.id);
-        expect.equal(actual.userId, expected.userId);
-        expect.equal(actual.createdAt, expected.createdAt);
-        expect.equal(actual.lastUsedAt, expected.lastUsedAt);
-        expect.equal(actual.expiresAt, expected.expiresAt);
-        expect.equal(actual.revokedAt, expected.revokedAt);
-        expect.equal(actual.clientAddress, expected.clientAddress);
-        expect.equal(actual.clientLabel, expected.clientLabel);
+        const field = (name: string): string => `the promised session's ${name} must cross unchanged`;
+        expect.equal(actual.id, expected.id, field('id'));
+        expect.equal(actual.userId, expected.userId, field('userId'));
+        expect.equal(actual.createdAt, expected.createdAt, field('createdAt'));
+        expect.equal(actual.lastUsedAt, expected.lastUsedAt, field('lastUsedAt'));
+        expect.equal(actual.expiresAt, expected.expiresAt, field('expiresAt'));
+        expect.equal(actual.revokedAt, expected.revokedAt, field('revokedAt'));
+        expect.equal(actual.clientAddress, expected.clientAddress, field('clientAddress'));
+        expect.equal(actual.clientLabel, expected.clientLabel, field('clientLabel'));
 
         // The other half of "two implementations agree on the shape between
         // them": whatever this one emits, the receiving side has to be able to
-        // rebuild. `fromJSON` re-runs every invariant and *throws* on a payload
-        // that violates one, so an implementation emitting an unacceptable wire
-        // shape fails on this line rather than on the assertion.
-        const revived = Session.fromJSON(actual);
-        expect.ok(revived instanceof Session, 'the emitted payload must survive the reviver');
+        // rebuild. The call IS the check — `fromJSON` re-runs every invariant and
+        // *throws* on a payload that violates one — so there is nothing to assert
+        // about what it returns. An `instanceof` on the result would be a guard the
+        // return type already makes unfailable, which is the shape this suite's own
+        // preamble warns about.
+        Session.fromJSON(actual);
       });
     });
 
@@ -474,8 +514,16 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
         const good = await service.authenticate(attempt(actorEmailAsGiven, actorSecret));
         const bad = await service.authenticate(attempt(unknownEmail, actorSecret));
 
-        expect.equal(describeOutcome(good).startsWith('AUTHENTICATED:'), true);
-        expect.equal(describeOutcome(bad).startsWith('REJECTED:'), true);
+        expect.equal(
+          describeOutcome(good).startsWith('AUTHENTICATED:'),
+          true,
+          'a good attempt must take the AUTHENTICATED branch of a consumer\'s switch',
+        );
+        expect.equal(
+          describeOutcome(bad).startsWith('REJECTED:'),
+          true,
+          'a failed attempt must take the REJECTED branch of a consumer\'s switch',
+        );
 
         await expect.rejects(
           async () => describeOutcome({ status: 'NOT_A_MEMBER' } as unknown as AuthenticationOutcome),

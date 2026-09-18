@@ -119,7 +119,11 @@ export function runIAuthServiceSecurityContract(
         const { service, suspendedEmail, suspendedSecret } = await makeContext();
         const outcome = await service.authenticate(attempt(suspendedEmail, suspendedSecret));
 
-        expect.equal(outcome.status, AuthenticationStatus.REJECTED);
+        expect.equal(
+          outcome.status,
+          AuthenticationStatus.REJECTED,
+          'a blocked account must never authenticate, correct secret or not',
+        );
         expect.equal(
           (outcome as RejectedOutcome).reason,
           AuthenticationRejectionReason.ACCOUNT_SUSPENDED,
@@ -131,7 +135,11 @@ export function runIAuthServiceSecurityContract(
         const { service, deletedEmail, deletedSecret } = await makeContext();
         const outcome = await service.authenticate(attempt(deletedEmail, deletedSecret));
 
-        expect.equal(outcome.status, AuthenticationStatus.REJECTED);
+        expect.equal(
+          outcome.status,
+          AuthenticationStatus.REJECTED,
+          'signing in must not resurrect an account its owner asked to remove',
+        );
         expect.equal(
           (outcome as RejectedOutcome).reason,
           AuthenticationRejectionReason.ACCOUNT_DELETED,
@@ -143,10 +151,15 @@ export function runIAuthServiceSecurityContract(
         const { service, actorEmail, actorSecret } = await makeContext();
         const outcome = await service.authenticate(attempt(actorEmail, `${actorSecret}-not`));
 
-        expect.equal(outcome.status, AuthenticationStatus.REJECTED);
+        expect.equal(
+          outcome.status,
+          AuthenticationStatus.REJECTED,
+          'a secret that is not the account\'s must never authenticate',
+        );
         expect.equal(
           (outcome as RejectedOutcome).reason,
           AuthenticationRejectionReason.INVALID_SECRET,
+          'the world must seed the actor with the secret this test offers a variant of',
         );
       });
 
@@ -154,7 +167,11 @@ export function runIAuthServiceSecurityContract(
         const { service, unknownEmail, actorSecret } = await makeContext();
         const outcome = await service.authenticate(attempt(unknownEmail, actorSecret));
 
-        expect.equal(outcome.status, AuthenticationStatus.REJECTED);
+        expect.equal(
+          outcome.status,
+          AuthenticationStatus.REJECTED,
+          'an address nothing answers to must never authenticate',
+        );
         expect.equal(
           (outcome as RejectedOutcome).reason,
           AuthenticationRejectionReason.UNKNOWN_ACCOUNT,
@@ -252,7 +269,11 @@ export function runIAuthServiceSecurityContract(
       it('makes a session unusable although it had not run out', async () => {
         const { service, actorId, actorEmail, actorSecret } = await makeContext();
         const outcome = await service.authenticate(attempt(actorEmail, actorSecret));
-        expect.equal(outcome.status, AuthenticationStatus.AUTHENTICATED);
+        expect.equal(
+          outcome.status,
+          AuthenticationStatus.AUTHENTICATED,
+          'the actor\'s own secret must authenticate them',
+        );
         const session = (outcome as AuthenticatedOutcome).session;
 
         await service.revokeSession(actorId, session.id);

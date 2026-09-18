@@ -45,20 +45,6 @@ const GOOD_VERIFICATION = 'verification-live';
 const STALE_VERIFICATION = 'verification-stale';
 
 /**
- * The same instant, spelled the way a store might hold it rather than the way the
- * entity emits it.
- *
- * ISO-8601 has more than one spelling of one moment, and a session has no field the
- * domain normalizes — so this is what lets the wire-shape assertion tell an entity
- * rebuilt from a row apart from the row itself. Derived from the clock rather than
- * written as a literal, so the world stays in the past and the sessions in the future
- * however long this template lives.
- */
-function spelledWithAnOffset(instant: Date): string {
-  return instant.toISOString().replace('Z', '+00:00');
-}
-
-/**
  * A fresh world: a verified actor holding one session, a second user holding one of
  * their own, and an account that registered but never proved its address.
  */
@@ -92,11 +78,12 @@ async function makeContext(): Promise<AuthServiceContractContext> {
     pendingSecret,
   );
 
-  const seededSessionCreatedAtAsGiven = spelledWithAnOffset(new Date(now - A_DAY));
+  // Derived from the clock rather than written as literals, so the world stays in the
+  // past and its sessions in the future however long this template lives.
   const actorSessionRow = makeSessionJSON({
     id: 'session-seeded' as SessionId,
     userId: 'user-actor' as UserId,
-    createdAt: seededSessionCreatedAtAsGiven,
+    createdAt: new Date(now - A_DAY).toISOString(),
     lastUsedAt: new Date(now - A_DAY / 2).toISOString(),
     expiresAt: new Date(now + 6 * A_DAY).toISOString(),
     clientAddress: '203.0.113.9',
@@ -136,7 +123,6 @@ async function makeContext(): Promise<AuthServiceContractContext> {
     // built through too — so the comparison is between two entities, not between
     // an entity and the row one of them came from.
     actorSession: Session.fromJSON(actorSessionRow),
-    seededSessionCreatedAtAsGiven,
     otherUserId: 'user-other' as UserId,
     otherUserSessionId: 'session-other' as SessionId,
     pendingEmail: 'hopper@example.com',

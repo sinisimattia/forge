@@ -12,12 +12,12 @@ import type { SessionId } from '../types/SessionId';
  * must not be able to reach, and an account that has registered but never
  * proven its address.
  *
- * Several members are described as being in a form the domain has to change.
- * Those are not decoration: they are what stops the suite comparing a value
- * against a function of itself, which would pass for an implementation that
- * never built an entity at all. The suite asserts each of those promises before
- * relying on it, so a world that got one wrong fails loudly rather than quietly
- * proving nothing.
+ * Members described as being in a form the domain has to change are not
+ * decoration: they are what stops the suite comparing a value against a function
+ * of itself, which would pass for an implementation that never built an entity at
+ * all. The suite asserts each of those promises before relying on it, so a world
+ * that got one wrong fails loudly rather than quietly proving nothing — with one
+ * exception, which says so on its own doc.
  */
 export interface AuthServiceContractContext {
   /** The implementation under test, holding exactly the world described below. */
@@ -46,18 +46,6 @@ export interface AuthServiceContractContext {
    * test that reads the actor's sessions expects to find it.
    */
   actorSession: Session;
-  /**
-   * The instant the world **stored** `actorSession.createdAt` as, in a form
-   * that is not the one {@link Session} emits.
-   *
-   * ISO-8601 has more than one spelling of the same instant, and that is what
-   * gives the wire-shape assertion its teeth here: a session has no field the
-   * domain normalizes, so an implementation that hands back its stored row
-   * instead of rebuilding the entity from it would otherwise be indetectable.
-   * Seed a canonical spelling and this test proves nothing.
-   */
-  seededSessionCreatedAtAsGiven: string;
-
   /** A second user, who holds a session of their own. */
   otherUserId: UserId;
   /** That second user's session. The actor must not be able to see or end it. */
@@ -69,7 +57,16 @@ export interface AuthServiceContractContext {
   pendingSecret: string;
   /** A valid, unconsumed verification token for `pendingEmail`. */
   pendingVerification: string;
-  /** A verification token for `pendingEmail` whose lifetime has run out. */
+  /**
+   * A verification token for `pendingEmail` whose lifetime has run out.
+   *
+   * The one promise on this interface the suite cannot check before leaning on
+   * it. Every other obligation here fails loudly when a host gets it wrong;
+   * this one cannot, because `ExpiredTokenError` is deliberately what an
+   * *unknown* token raises too — so a host that supplied a value nobody ever
+   * issued passes the test it was meant to fail. Said out loud rather than left
+   * implicit, because the exception is the interesting part.
+   */
   expiredVerification: string;
 
   /** An address no account in this world answers to. */
