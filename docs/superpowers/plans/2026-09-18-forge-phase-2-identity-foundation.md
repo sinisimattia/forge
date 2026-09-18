@@ -193,9 +193,9 @@ Every import in Tasks 2–16 goes through this mechanism. It was probed empirica
 
 ### What the probe established
 
-Five places enumerate core's subpaths today, not four: `libs/core/package.json` `exports`, `libs/core/tsconfig.json` `paths` (core's own tests import through the public specifier), `apps/backend/tsconfig.json` `paths`, `apps/backend/jest.config.ts` `moduleNameMapper`, and `apps/webapp/vitest.config.ts` `resolve.alias`. Phase 2 adds ~24 subpaths, so hand-enumeration means ~120 lines kept in sync by hand.
+**Six** places enumerate core's subpaths today, not four: `libs/core/package.json` `exports`, `libs/core/tsconfig.json` `paths` and `libs/core/jest.config.js` `moduleNameMapper` (core's own tests import through the public specifier), `apps/backend/tsconfig.json` `paths`, `apps/backend/jest.config.ts` `moduleNameMapper`, and `apps/webapp/vitest.config.ts` `resolve.alias`. Phase 2 adds ~24 subpaths, so hand-enumeration means ~144 lines kept in sync by hand.
 
-**Four of the five become one wildcard line each. `exports` stays hand-enumerated, deliberately.**
+**Five of the six become one wildcard line each. `exports` stays hand-enumerated, deliberately.**
 
 The reason is the opposite of what it looks like. A wildcard `"./*"` in `exports` works — but it makes *every* subpath resolve from day one through the workspace symlink into `libs/core/dist`. A forgotten jest or vitest mapping then resolves silently to compiled output instead of source, and a suite can run green against a stale build. With `exports` enumerated, a new domain whose mapping you forgot fails loudly with `Cannot find module` until you add both. The probe demonstrated both halves of this: with mappings deleted and a deliberately stale `dist` in place, jest and vitest both read the stale compiled code and only went red because the assertion had been written to detect the swap. In ordinary code the assertion matches the old behaviour and the suite passes.
 
@@ -209,15 +209,18 @@ So: pay the enumeration tax in exactly one file, where it buys a loud failure. T
 
 **L1 — `webapp:typecheck` fails on a clean checkout.** `nx.json` gives `dependsOn: ["^build"]` to `build` alone. `typecheck`, `test`, `lint` and `purity` have none. Backend typecheck, backend jest and webapp vitest all resolve to *source*, so they survive a missing `libs/core/dist`. Nuxt's typecheck does not: it resolves through `exports` and needs `dist/**/*.d.ts`. With core's `dist` deleted, `npx nuxt typecheck` exits 2. Phase 1 never saw this because the webapp imported nothing from core. It also means webapp typecheck reads possibly-stale `.d.ts`, which `dependsOn` fixes as a side effect.
 
-**L2 — adding backend core `paths` silently changes the backend's build output layout, breaking three shipped commands.** Pointing `paths` at core source pulls that source into the backend's own compile; tsc's inferred common root shifts from `apps/backend/src` to the workspace root, and `nest build` emits `dist/apps/backend/src/main.js` instead of `dist/main.js`. This is not wildcard-specific — the enumerated form does it too. Three things break the moment Task 4's first import lands:
+**L2 — the backend's build output layout moves the first time a core import lands, breaking three shipped commands.** Pointing `paths` at core source lets that source into the backend's own compile; tsc's inferred common root then shifts from `apps/backend/src` to the workspace root, and `nest build` emits `dist/apps/backend/src/main.js` instead of `dist/main.js`. Not wildcard-specific — the enumerated form does it too.
+
+> **Corrected during execution, from evidence.** This section originally said the `paths` *entry* causes the shift and prescribed rewriting the three commands to the drifted paths. That is wrong in a way that matters: the shift is caused by an **actual core import**, not by the mapping's presence. The template ships the mapping from this task but has no backend core import until Task 4, so rewriting the commands here would have made `npm run start:prod` fail with `MODULE_NOT_FOUND` for Tasks 1–3 — red-lining the generated project's own docker CI job and Forge's `FORGE_E2E` tier in the meantime. The implementer verified both states and fixed it properly instead: pin `"rootDir": "../.."` in `template/apps/backend/tsconfig.json`, which makes the emitted layout **identical with and without a core import**. The three commands then move once, here, and stay correct forever.
 
 | File | Line | Now | Must become |
 |---|---|---|---|
+| `template/apps/backend/tsconfig.json` | `compilerOptions` | (no `rootDir`) | `"rootDir": "../.."` — pins the layout so it cannot drift |
 | `template/apps/backend/package.json` | `"start:prod"` | `node dist/main` | `node dist/apps/backend/src/main` |
 | `template/apps/backend/package.json` | `"migration:run:prod"` | `-d dist/db/data-source.js` | `-d dist/apps/backend/src/db/data-source.js` |
 | `template/apps/backend/Dockerfile` | prod stage `CMD` | `["node", "dist/main"]` | `["node", "dist/apps/backend/src/main"]` |
 
-The source project already carries this correction (`node dist/apps/backend/src/main`); the template does not, because it never had a core import to trigger it. Nothing fails at typecheck or test time — it fails when the production image starts, which is the worst place to find it.
+The source project already carries the drifted command form (`node dist/apps/backend/src/main`); the template does not, because it never had a core import to trigger it. Nothing fails at typecheck or test time — it fails when the production image starts, which is the worst place to find it.
 
 A consequence worth stating plainly, because it will confuse someone later: **the backend never consumes core's `dist` at all.** Not for types (its `moduleResolution: "node"` ignores `exports` entirely) and not at runtime (paths inline the source into its own output). `libs/core/package.json` `exports` exists for the webapp's bundler resolution and for external consumers.
 
@@ -230,7 +233,7 @@ A consequence worth stating plainly, because it will confuse someone later: **th
 - Modify: `template/apps/webapp/vitest.config.ts` (array alias form)
 - Modify: `template/libs/core/tsconfig.json` (wildcard self-`paths`)
 - Modify: `template/libs/core/jest.config.js` (wildcard self-`moduleNameMapper`)
-- Modify: `template/libs/core/package.json` (`exports` — add `./shared/policies` now; every later task adds its own)
+- `template/libs/core/package.json` is **not** touched here — Task 2 adds `./shared/policies` when it creates that folder, and every later task adds its own subpaths. This task establishes the mechanism, not its first use.
 
 **Interfaces:**
 - Consumes: nothing.
