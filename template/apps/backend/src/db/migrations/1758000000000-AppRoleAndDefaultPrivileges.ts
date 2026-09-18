@@ -35,8 +35,14 @@ async function exec(
     // $1 is the template itself, so the bound values start at $2.
     return `$${bound.length + 1}::text`;
   });
+  // `format($1::text, )` is a syntax error, so a template with no placeholders
+  // gets the one-argument form. `format()` with one argument is not a no-op —
+  // it still collapses `%%` to `%` — so this stays a `format()` call rather
+  // than running the template directly.
   const rendered: { sql: string }[] = await queryRunner.query(
-    `SELECT format($1::text, ${placeholders.join(', ')}) AS sql`,
+    placeholders.length === 0
+      ? 'SELECT format($1::text) AS sql'
+      : `SELECT format($1::text, ${placeholders.join(', ')}) AS sql`,
     [template, ...bound],
   );
   await queryRunner.query(rendered[0].sql);
@@ -95,19 +101,39 @@ export class AppRoleAndDefaultPrivileges1758000000000 implements MigrationInterf
     // unguarded second run fails with `role "…" already exists`, and a
     // migration that has to be re-run against a database where the role was
     // provisioned by hand is an ordinary situation, not a fault.
-    await exec(
-      queryRunner,
-      `DO $do$
-       BEGIN
-         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = %L) THEN
-           EXECUTE format('CREATE ROLE %%I LOGIN PASSWORD %%L', %L, %L);
-         END IF;
-       END
-       $do$`,
-      role,
-      role,
-      password,
+    //
+    // The guard is in TypeScript, and `CREATE ROLE` is its own single
+    // statement, so that the password reaches SQL through `format('%L')` with
+    // nothing wrapped around it. This was a `DO $do$ … $do$` block whose body
+    // carried the rendered `%L` literal, and that is broken: Postgres ends a
+    // dollar-quoted string at its tag no matter what quoting is inside it, so
+    // `%L` escaping does not survive the outer quoting at all. A password
+    // containing `$do$` produced `ERROR: unterminated quoted string`, pointing
+    // at a line with nothing wrong with it, and the tail of the password was
+    // left sitting outside any string — under a client that splits statements
+    // itself, it ran. Demonstrated with `x$do$; DROP TABLE canary; SELECT $do$`
+    // as the password: the canary table was dropped. Choosing a more obscure
+    // tag would only move the same goalposts.
+    //
+    // A bind parameter is fine on *this* statement, unlike the one below:
+    // `SELECT … WHERE rolname = $1` is an ordinary query, and it is utility
+    // statements like `CREATE ROLE` that reject parameters.
+    //
+    // Between the check and the create there is a race, and it is the same race
+    // the `DO` block had: `pg_roles` is read from the transaction's snapshot and
+    // `CREATE ROLE` takes no predicate lock, so two migration runs starting at
+    // once can both find the role absent. TypeORM takes no advisory lock around
+    // migrations — checked, `MigrationExecutor` only opens a transaction — so
+    // nothing above prevents it either. The loser gets `role "…" already
+    // exists` and its whole migration rolls back, which is a loud, correct
+    // failure for "two people migrated the same database at the same moment".
+    const existing: unknown[] = await queryRunner.query(
+      'SELECT 1 FROM pg_roles WHERE rolname = $1',
+      [role],
     );
+    if (existing.length === 0) {
+      await exec(queryRunner, 'CREATE ROLE %I LOGIN PASSWORD %L', role, password);
+    }
 
     // Both are no-ops on a stock database, where PUBLIC already holds CONNECT
     // on every database and USAGE on schema `public` — and both stop being

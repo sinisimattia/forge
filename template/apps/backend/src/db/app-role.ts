@@ -27,8 +27,12 @@
  * somewhere deep in a Postgres syntax error.
  *
  * Hyphens are allowed because they are required: the generator's own project
- * names are `/^[a-z][a-z0-9-]*$/` (`tools/create/args.mjs`), so a project called
- * `my-app` has an application role called `my-app_app`. The 63-character ceiling
+ * names are `/^[a-z][a-z0-9-]*$/` (`tools/create/args.mjs`) and the compose
+ * files name the application role after the project with an `-app` suffix — so
+ * a project called `blog` has the role `blog-app`, and one called `my-app` has
+ * `my-app-app`.
+ * A rule without the hyphen — which is what this task was first given — rejects
+ * every role name the template produces. The 63-character ceiling
  * is Postgres's own identifier limit — the generator puts no length cap on a
  * project name, and a longer one would be silently truncated by the server,
  * producing a role whose name is not the name anything else was configured with.
@@ -76,9 +80,19 @@ export function requireAppRoleName(): string {
  * read it — which is the failure ADR-0008 exists to prevent, arriving through
  * the database instead of through a third-party account.
  *
- * Not validated beyond being present: `format('%L')` escapes any literal
- * correctly (a quote, a backslash, a newline), and a rule about what a password
- * may contain would only narrow the set of good ones.
+ * Not validated beyond being present, and that is safe only because of how the
+ * one statement carrying it is built. `format('%L')` escapes any literal
+ * correctly — a quote, a backslash, a newline — but only for the statement it
+ * renders; it cannot escape anything *around* that statement. The `CREATE ROLE`
+ * in `AppRoleAndDefaultPrivileges1758000000000` is therefore executed on its
+ * own, with no enclosing dollar-quoted block, because a `$do$ … $do$` wrapper
+ * ends at its tag regardless of the quoting inside it and a password containing
+ * that tag broke out of it. **If a later migration ever puts a password back
+ * inside a `DO` block or any other quoted wrapper, `%L` stops being enough and
+ * this paragraph stops being true.**
+ *
+ * Given that, a rule about what a password may contain would only narrow the
+ * set of good ones.
  *
  * @returns the configured password
  * @throws Error when `APP_DB_PASSWORD` is unset

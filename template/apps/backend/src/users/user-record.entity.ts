@@ -45,9 +45,23 @@ export class UserRecord {
    *
    * Unlike an id's brand, this is a statement about the column's own contents —
    * the set of values it may hold is a domain fact, and a reader of this class
-   * wants it next to the column type. It is not enforced by the database: a
-   * `CHECK` or a Postgres `enum` would make every new member of an enum a
-   * migration, and `AuditAction` in particular grows every phase.
+   * wants it next to the column type.
+   *
+   * **The database does not enforce it, and for this column that is a judgment
+   * call rather than an obvious one.** `UserStatus` and `PlatformRole` are two
+   * small, closed sets; a `CHECK` on them would cost nothing today and would
+   * catch a typo no compiler can. It is not here because every enum column in
+   * this schema is treated the same way, and the columns that make the rule are
+   * the ones whose sets grow — see `AuditEntryRecord.action`. What that
+   * uniformity costs is exactly the typo: a row written by anything other than
+   * this application, a repair script or a restore, can put a value in here
+   * that no `UserStatus` member matches, and nothing will refuse it.
+   *
+   * The reason it is uniformity rather than a per-column judgment: this is a
+   * project template, so the enums are *other people's* to extend, and a
+   * `CHECK` makes each member they add a schema migration in their project.
+   * That is friction aimed at the wrong party. A generated project that wants
+   * the constraint should add it — for these two columns it is a good idea.
    */
   @Column({ name: 'status', type: 'text' })
   status!: UserStatus;

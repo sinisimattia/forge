@@ -18,8 +18,8 @@ import { requireAppRoleName } from '../app-role';
  * them — so revoking it would be a statement that does nothing, and the shorter
  * list is the one whose every line can be shown to matter.
  *
- * Neither is this the whole of it. Two things this `REVOKE` does *not* stop,
- * both closed elsewhere and both worth knowing about before someone reopens
+ * Neither is this the whole of it. Three things this `REVOKE` does *not* stop,
+ * all closed elsewhere and all worth knowing about before someone reopens
  * them:
  *
  * - A foreign key's referential action runs with the *table owner's*
@@ -27,7 +27,22 @@ import { requireAppRoleName } from '../app-role';
  *   NULL` pointing at this table would let the application delete or rewrite an
  *   audit row through a statement aimed at another table entirely. Verified.
  *   `audit_entries` therefore carries no foreign key — see
- *   `IdentityFoundation1758000001000`.
+ *   `IdentityFoundation1758000001000` — and that holds however the key is
+ *   written: inside the `CREATE TABLE`, by a later `ALTER TABLE … ADD
+ *   CONSTRAINT`, or by a `@ManyToOne` on `AuditEntryRecord` that
+ *   `migration:generate` then emits for you.
+ * - **A later migration that re-creates this table gets the privileges back.**
+ *   `ALTER DEFAULT PRIVILEGES` is standing configuration, not a one-time act:
+ *   everything the owner creates in `public` from now on carries `arwd` for the
+ *   application role. Verified — drop and re-create `audit_entries` as the
+ *   owner and `relacl` reads `"…-app"=arwd/owner` again, with `UPDATE` and
+ *   `DELETE` working. This `REVOKE` applies to the table that existed when it
+ *   ran and to no other. Anything that rebuilds `audit_entries` — a column type
+ *   change done the create-copy-swap way, a restore, a squashed migration — has
+ *   to re-run this revoke, and nothing in the database will remind it to.
+ *   `__tests__/migration-sql.spec.ts` asserts that exactly one migration
+ *   creates the table and only that migration's `down()` drops it, so a second
+ *   one cannot arrive unnoticed.
  * - Nothing here restricts the *owner*. Migrations, `psql` as the superuser and
  *   a backup restore can all still change these rows. The guarantee is
  *   deliberately about the application: it is the thing that is exposed, runs
