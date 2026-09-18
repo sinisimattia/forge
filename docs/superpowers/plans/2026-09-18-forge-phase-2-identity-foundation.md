@@ -78,6 +78,12 @@ Every task's requirements implicitly include this section.
   a payload it cannot make an entry of" is true of three entities and false of the fourth, whose own
   task had just decided it validates nothing. A rationale carried across reads as considered,
   because it was — elsewhere. For every sentence you inherit, ask whether it is true *of this thing*.
+  The operative check is one question, not a habit of mind: **what breaks if I delete this?** Asked
+  of the line and of the comment. Twice in that task the answer was "nothing", and it would have
+  been reached without having to notice that one was reasoning by analogy — which is the part
+  nobody can be relied on to notice. The implementer's own words after the second round: "a
+  justification arrives already feeling like a conclusion — the reasoning was done elsewhere and I
+  inherit the confidence with the words."
 - **A claim about evidence is not evidence.** Phase 1 caught four separate cases of inaccurate evidence in otherwise-correct work — a RED log pasted from a different test, a fixture claimed to fire that could not have. If you did not run it, say "NOT VERIFIED". Candid self-retraction is the behaviour being rewarded here.
 - **`grep` in this session is a shim, not the system grep — verify signals with `/usr/bin/grep`.**
   `type grep` reports a shell function backed by ugrep, and the two disagree on real patterns:
