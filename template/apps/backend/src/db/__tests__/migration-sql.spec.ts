@@ -18,6 +18,32 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  * assertion here exists because removing one line from a migration would make
  * D13 quietly stop being true, and a schema migration is exactly the kind of
  * file somebody edits months later without knowing which line was load-bearing.
+ *
+ * ## What these guards do not catch
+ *
+ * A textual guard over SQL embedded in TypeScript cannot be made complete, and
+ * saying which shapes get past these ones is more useful than implying none do.
+ * A review attacked them with twelve variants; three got through, and they are
+ * named here rather than patched, because a guard that grows a special case per
+ * adversarial variant gets harder to read without getting meaningfully harder
+ * to defeat:
+ *
+ * - **`IF EXISTS` / `IF NOT EXISTS`.** `DROP TABLE IF EXISTS audit_entries`
+ *   and `CREATE TABLE IF NOT EXISTS audit_entries` are invisible to
+ *   `audit_entries is created once and never rebuilt`, and that spelling is the
+ *   ordinary way somebody writes a rebuild by hand.
+ * - **SQL hoisted into a variable.** `sqlStatements` reads a literal at the
+ *   call; `const sql = '…'; await queryRunner.query(sql)` yields nothing, so
+ *   every "no statement does X" assertion passes over it.
+ * - **A statement composed to look like something else**, e.g. a foreign key
+ *   following a leading `COMMENT ON …;` inside one `query()` call, schema-
+ *   qualified as `public.audit_entries`. Adversarial rather than accidental.
+ *
+ * None of these is a way to weaken the database. They are ways to weaken this
+ * file, and what stands behind it is D13: Task 19 runs the real statement
+ * against the real Postgres, and its fault injections include the foreign-key
+ * bypass. If a change to the audit table cannot be made obvious in the text,
+ * that is a reason to be suspicious of the change, not of the test.
  */
 
 const MIGRATIONS_DIR = join(__dirname, '..', 'migrations');
@@ -53,8 +79,15 @@ const allMigrations: readonly (readonly [string, string])[] = readdirSync(MIGRAT
  *
  * This reads the two shapes this backend's migrations use — a literal passed to
  * `queryRunner.query(...)`, and a `format()` template passed to a migration's
- * local `exec(queryRunner, ...)`. A third shape would be invisible to it, which
- * is what `yields the SQL of every migration` below exists to catch.
+ * local `exec(queryRunner, ...)`. A third shape is invisible to it — see "What
+ * these guards do not catch" at the top of this file.
+ *
+ * `yields the SQL of every migration` below is a weaker guard than that gap
+ * needs, and it is worth being exact about which: it fires when a migration
+ * yields *no* statements at all, so it catches the extractor being broken or a
+ * whole migration written in a shape it cannot read. It does not fire on a
+ * single unreadable statement inside a migration whose other statements read
+ * fine, which is exactly what hoisting one query into a `const` produces.
  */
 function sqlStatements(source: string): string[] {
   const call = /(?:queryRunner\.query|exec)\(\s*(?:queryRunner\s*,\s*)?(?:`([^`]*)`|'((?:[^'\\]|\\.)*)')/g;
@@ -288,8 +321,9 @@ describe('audit_entries is never given a foreign key', () => {
     // `COMMENT ON` is excluded, and only `COMMENT ON`: the column comment this
     // schema ships says "Deliberately not a foreign key", and a `COMMENT ON`
     // statement cannot create a constraint, so nothing is given up by skipping
-    // it. Everything else — `CREATE TABLE`, `ALTER TABLE`, anything a later
-    // migration invents — is held to the rule.
+    // it. The exclusion is by the statement's *leading* keyword, so a statement
+    // that opens `COMMENT ON` and then goes on to do something else is skipped
+    // whole — the sibling assertion below is what covers that.
     const notComments = allStatements().filter(([, st]) => !/^\s*COMMENT ON\b/i.test(st));
     // The exclusion must not empty the haystack. Without this line the
     // assertion below passes for the wrong reason the moment anything upstream
@@ -305,7 +339,9 @@ describe('audit_entries is never given a foreign key', () => {
     // append-only, so every structural change to it is something a reviewer has
     // to see rather than something a migration can slip in. `ALTER TABLE
     // audit_entries ADD CONSTRAINT … FOREIGN KEY` is caught by the assertion
-    // above; this one catches the forms nobody has thought of yet.
+    // above as well; this one is what covers a statement that assertion skips,
+    // and vice versa — this regex is blind to `ALTER TABLE public.audit_entries`,
+    // which the assertion above catches. Neither is complete on its own.
     expect(statementsMatching(/ALTER TABLE\s+(?:ONLY\s+)?audit_entries\b/i)).toEqual([]);
   });
 
@@ -359,6 +395,12 @@ describe('audit_entries is created once and never rebuilt', () => {
   // re-creates this table hands UPDATE and DELETE straight back, silently.
   // Verified at a real Postgres. The REVOKE applies to the table that existed
   // when it ran and to no other.
+  //
+  // `CREATE TABLE audit_entries` and `DROP TABLE audit_entries` are matched as
+  // written, so the `IF NOT EXISTS` / `IF EXISTS` spelling of a rebuild is not
+  // caught — see "What these guards do not catch" at the top of this file, and
+  // the warning in `AuditAppendOnly`'s TSDoc, which is where somebody about to
+  // rebuild the table is actually reading.
 
   const creators = allMigrations.filter(
     ([, source]) => sqlStatements(source).some((s) => /CREATE TABLE audit_entries\b/.test(s)),
@@ -422,11 +464,12 @@ describe('the application role configuration', () => {
     'accepts the role name %p',
     (role) => {
       // The compose files name this role after the project with an `-app`
-      // suffix, so a hyphen is in it whenever the project name has one — and
-      // `my-app-app` is exactly what this project's own compose files carry.
-      // A validation rule that rejected it would fail every generated project
-      // on its first migration, and the rule originally proposed for this task,
-      // which allowed no hyphen, did.
+      // suffix, so a hyphen is in it whenever the project name has one: a
+      // project called `my-app` gets `my-app-app`, one called `blog` gets
+      // `blog-app`. A validation rule that rejected the first would fail every
+      // generated project whose name has a hyphen, on its first migration —
+      // and the rule originally proposed for this task, which allowed no
+      // hyphen, did.
       process.env.APP_DB_ROLE = role;
       expect(requireAppRoleName()).toBe(role);
     },

@@ -41,8 +41,15 @@ import { requireAppRoleName } from '../app-role';
  *   change done the create-copy-swap way, a restore, a squashed migration — has
  *   to re-run this revoke, and nothing in the database will remind it to.
  *   `__tests__/migration-sql.spec.ts` asserts that exactly one migration
- *   creates the table and only that migration's `down()` drops it, so a second
- *   one cannot arrive unnoticed.
+ *   creates the table and only that migration's `down()` drops it, which
+ *   catches an ordinary rebuild — **but it matches on the text `CREATE TABLE
+ *   audit_entries`, so a rebuild spelled `CREATE TABLE IF NOT EXISTS
+ *   audit_entries` (with `DROP TABLE IF EXISTS` beside it) goes straight past
+ *   it, and that spelling is a perfectly normal way to write one.** If you are
+ *   reading this bullet because you are about to rebuild this table: the test
+ *   is not what will stop you, so re-run this migration's `up()` afterwards, or
+ *   the application gets `UPDATE` and `DELETE` on the audit log back and
+ *   nothing anywhere will say so.
  * - Nothing here restricts the *owner*. Migrations, `psql` as the superuser and
  *   a backup restore can all still change these rows. The guarantee is
  *   deliberately about the application: it is the thing that is exposed, runs
