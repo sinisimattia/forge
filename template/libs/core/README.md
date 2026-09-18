@@ -26,7 +26,12 @@ ways a user can prove who they are as rows rather than columns on a user
 which models being signed in as a `Session` and the result of an attempt to sign in as a
 discriminated `AuthenticationOutcome` — never a boolean and never a credential, so that adding
 a way for an attempt to end is a compile error at every consumer rather than a silent
-fall-through. Each domain gets its own
+fall-through, and the `audit/` domain, whose contract offers `record` and `query` and nothing
+else — an interface that cannot express a change is one no caller can be talked into making,
+and the other half of that guarantee is a privilege on the table rather than anything in
+TypeScript. Its entry carries an explicit, nullable `organizationId` before any organization
+exists, because this is the one table the application is not permitted to backfill
+([ADR-0007](../../docs/adrs/0007-tenancy-is-explicit-never-ambient.md)). Each domain gets its own
 folder under `src/` with up to seven subfolders — `entities/`, `contracts/`, `enums/`, `errors/`,
 `types/`, `testing/`, `policies/` — one file per exported symbol, named exactly after the symbol.
 A domain that has no rule needing a standalone function simply has no `policies/` folder.

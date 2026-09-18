@@ -4,6 +4,26 @@
   "private": true,
   "type": "commonjs",
   "exports": {
+    "./audit/contracts": {
+      "types": "./dist/audit/contracts/index.d.ts",
+      "default": "./dist/audit/contracts/index.js"
+    },
+    "./audit/entities": {
+      "types": "./dist/audit/entities/index.d.ts",
+      "default": "./dist/audit/entities/index.js"
+    },
+    "./audit/enums": {
+      "types": "./dist/audit/enums/index.d.ts",
+      "default": "./dist/audit/enums/index.js"
+    },
+    "./audit/testing": {
+      "types": "./dist/audit/testing/index.d.ts",
+      "default": "./dist/audit/testing/index.js"
+    },
+    "./audit/types": {
+      "types": "./dist/audit/types/index.d.ts",
+      "default": "./dist/audit/types/index.js"
+    },
     "./auth/contracts": {
       "types": "./dist/auth/contracts/index.d.ts",
       "default": "./dist/auth/contracts/index.js"
