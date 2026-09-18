@@ -20,7 +20,7 @@ If this file and a shared/ADR/RFC document disagree, the document wins.
 ## File layout — per-domain folders
 
 `libs/core/src/` is organized **per domain** (e.g. `articles/`), plus one cross-domain
-`shared/` folder. Each domain folder has exactly six subfolders:
+`shared/` folder. Each domain folder has exactly seven subfolders:
 
 | Folder | Contents | Never contains |
 |---|---|---|
@@ -30,11 +30,17 @@ If this file and a shared/ADR/RFC document disagree, the document wins.
 | `errors/` | Domain error classes, each `extends DomainError` (e.g. `ArticleTitleRequiredError.ts`) | the base `DomainError` itself (that lives in `shared/errors/`) |
 | `types/` | **Pure** interfaces/type-aliases only: JSON wire shapes, value types, create-input/result types (e.g. `ArticleJSON.ts`, `CreateArticleInput.ts`) | enums, classes, errors — anything with runtime behavior |
 | `testing/` | Exported conformance suites + fixtures (e.g. `runIArticleServiceContract.ts`, `article-fixtures.ts`) | — |
+| `policies/` | **Pure functions** over entities, enums and types — the only place in core a standalone function may live (e.g. `normalizeEmail.ts`, `assertNever.ts`, later `can.ts`) | classes, interfaces, state, anything with a dependency |
+
+A domain rule that is not a method on an entity — because it spans entities, or because it must
+be callable without constructing one — has nowhere else to live, and hiding it as a static
+method on a class with no instances is worse.
 
 `shared/` holds cross-domain primitives, split the same way where applicable:
 - `shared/errors/` — the base `DomainError` class that all domain errors extend.
 - `shared/testing/` — generic, runner-agnostic conformance-harness types (e.g. `ConformanceExpect`, `ConformanceRunner`).
 - `shared/types/` — generic, cross-domain pure types (e.g. `Brand`).
+- `shared/policies/` — generic, cross-domain pure functions (e.g. `normalizeEmail`, `assertNever`).
 
 **One file per symbol.** Every exported class/interface/type/enum lives in its own file,
 named exactly after the symbol in PascalCase (e.g. `Article.ts`, `IArticleService.ts`,
@@ -43,8 +49,9 @@ named exactly after the symbol in PascalCase (e.g. `Article.ts`, `IArticleServic
 
 **Subpath exports only.** Consumers import via per-domain, per-folder subpaths —
 `__FORGE_SCOPE__/core/<domain>/entities`, `/<domain>/contracts`, `/<domain>/enums`, `/<domain>/errors`,
-`/<domain>/types`, `/<domain>/testing`, `/shared/errors`, `/shared/testing`, `/shared/types` —
-declared in `package.json` `exports`. There is no bare `__FORGE_SCOPE__/core` export.
+`/<domain>/types`, `/<domain>/testing`, `/<domain>/policies`, `/shared/errors`, `/shared/testing`,
+`/shared/types`, `/shared/policies` — declared in `package.json` `exports`. There is no bare
+`__FORGE_SCOPE__/core` export.
 
 **Errors throw specific subclasses.** A domain invariant violation throws the specific
 `DomainError` subclass from that domain's `errors/` folder — **never** the base `DomainError`
