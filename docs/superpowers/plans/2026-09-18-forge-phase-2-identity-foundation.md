@@ -2098,6 +2098,7 @@ The endpoints that make an account real, and the two discriminating tests that p
 - Create: `template/apps/backend/src/identities/identities.service.ts`
 - Create: `template/apps/backend/src/audit/{audit.module.ts,audit.service.ts}`
 - Modify: `template/apps/backend/src/app.module.ts` (register the global guard), `template/apps/backend/src/main.ts` (cookie parsing)
+- Modify: `template/compose.prod.yaml` — **this task is the first consumer of Task 10's mail configuration, and prod compose carries neither variable.** `PUBLIC_WEBAPP_URL` and `MAIL_OUTBOX_DIR` are absent from `compose.prod.yaml` entirely (confirmed in two generated projects by Task 10's review). The moment this task calls `getOrThrow` on `PUBLIC_WEBAPP_URL`, the production stack fails to boot. Add both, and give `PUBLIC_WEBAPP_URL` no default — a wrong value there is a password-reset link pointing at somebody else's domain, which is precisely the attack Task 10's comment describes.
 - Modify: `template/apps/backend/package.json` (`@nestjs/jwt`, `passport`, `passport-jwt`, `@nestjs/passport`, `cookie-parser`, `supertest` + types as dev)
 - Test: `template/apps/backend/src/auth/__tests__/{auth.service.spec.ts,refresh-rotation.spec.ts,global-guard.spec.ts}`
 
@@ -2840,6 +2841,8 @@ It already solves three problems you must not reintroduce:
 - **Diagnostics on failure** — `ps` and `logs` are attached, so a failure is diagnosable rather than a bare timeout.
 
 Keep all three. Add the new environment variables (`APP_DB_ROLE`, `APP_DB_PASSWORD`, `MIGRATION_DATABASE_URL`, `MAIL_OUTBOX_DIR`, `PUBLIC_WEBAPP_URL`) to the run.
+
+**`MAIL_OUTBOX_DIR`'s resolution inside the container is unverified and this task owns proving it.** Task 10 reasoned about where `FileMailer` writes relative to the dev container's working directory and the `.:/app` bind mount, but never started compose to check — it is recorded as NOT VERIFIED in that task's report and again in its review. This walk is the first thing that actually reads a message out of that directory from the host, so if the reasoning is wrong, it fails here. Read the outbox from the host side, not through `docker compose exec`, or the bind mount is never exercised.
 
 - [ ] **Step 2: Walk the identity flow**
 
