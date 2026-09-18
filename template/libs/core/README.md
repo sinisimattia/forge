@@ -139,11 +139,16 @@ An implementation that crosses a serialization boundary receives its data as pla
 3. Add the `I<Name>Service` contract under `contracts/`, speaking in entities, narrowing inputs
    with `Omit`/`Pick`, plus any create-input/result types under `types/`.
 4. Add a `run<IName>Contract` suite + fixtures under `testing/`.
-5. Wire the new subpaths (`./<domain>/entities`, `/contracts`, `/enums`, `/errors`, `/types`,
-   `/testing`) into **all four** resolution points: `libs/core/package.json` `exports`,
-   `libs/core/tsconfig.json` `paths`, `libs/core/jest.config.js` `moduleNameMapper`, and each
-   consuming app's own `tsconfig.json` `paths` (the app resolves `__FORGE_SCOPE__/core/*` at
-   compile time via its own path mapping, not core's). Then `rm -rf dist && npx nx build core
+5. Declare the new subpaths (`./<domain>/entities`, `/contracts`, `/enums`, `/errors`, `/types`,
+   `/testing`) in `libs/core/package.json` `exports` — and **nowhere else**. Every other
+   resolution point (`libs/core/tsconfig.json` `paths`, `libs/core/jest.config.js`
+   `moduleNameMapper`, `apps/backend/tsconfig.json` `paths`, `apps/backend/jest.config.ts`
+   `moduleNameMapper`, `apps/webapp/vitest.config.ts` `resolve.alias`) is a `__FORGE_SCOPE__/core/*`
+   wildcard that picks up a new subpath with no edit. Those five resolve to **source**, so a
+   wildcard there cannot hide anything. `exports` is hand-enumerated on purpose: it is the only
+   map that resolves into `dist/`, and enumerating it makes a subpath you forgot to declare fail
+   loudly (`Missing "./<domain>/<folder>" specifier in "__FORGE_SCOPE__/core" package`) instead of
+   silently serving stale compiled output. Then `rm -rf dist && npx nx build core
    --skip-nx-cache` (NX can otherwise serve a stale `dist`).
 6. Add unit tests under `libs/core/tests/<domain>/...` (mirroring the `src/` layout), importing the
    code under test via its `__FORGE_SCOPE__/core/<domain>/*` subpath.
@@ -152,9 +157,9 @@ An implementation that crosses a serialization boundary receives its data as pla
      between its storage entities and the domain entities (a hybrid pattern: contract methods
      return domain entities; keep storage-typed helpers for internal callers). A transport-backed
      implementation calls the remote API and rehydrates responses via `fromJSON`.
-   - Wire the new `__FORGE_SCOPE__/core/<domain>/*` subpaths into that app's module-resolution
-     config (see step 5's fourth resolution point), and re-export the domain's enums from
-     wherever that app centralizes its enum definitions.
+   - No module-resolution wiring is needed in the consuming app — its
+     `__FORGE_SCOPE__/core/*` mapping is already a wildcard (see step 5). Re-export the domain's
+     enums from wherever that app centralizes its enum definitions.
    - Drive `run<IName>Contract` from the app's own test runner — see _Conformance tests, by
      example_ above for the shape. A transport-backed implementation's stub must faithfully
      reproduce the **real** API behavior (status codes, response shapes) — verify against the

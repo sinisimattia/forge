@@ -8,7 +8,7 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main",
+    "start:prod": "node dist/apps/backend/src/main",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "cross-env NODE_ENV=test jest",
@@ -18,7 +18,7 @@
     "typeorm": "TS_NODE_PROJECT=tsconfig.json ts-node -r tsconfig-paths/register $(node -e \"process.stdout.write(require.resolve('typeorm/cli'))\")",
     "migration:generate": "npm run typeorm -- migration:generate -d src/db/data-source.ts",
     "migration:run": "npm run typeorm -- migration:run -d src/db/data-source.ts",
-    "migration:run:prod": "node $(node -e \"process.stdout.write(require.resolve('typeorm/cli'))\") migration:run -d dist/db/data-source.js",
+    "migration:run:prod": "node $(node -e \"process.stdout.write(require.resolve('typeorm/cli'))\") migration:run -d dist/apps/backend/src/db/data-source.js",
     "migration:revert": "npm run typeorm -- migration:revert -d src/db/data-source.ts"
   },
   "dependencies": {

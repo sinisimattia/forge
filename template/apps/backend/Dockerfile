@@ -38,4 +38,4 @@ COPY --from=prod-deps /app/apps/backend/package.json ./apps/backend/package.json
 COPY --from=build /app/apps/backend/dist ./apps/backend/dist
 WORKDIR /app/apps/backend
 EXPOSE 3000
-CMD ["node", "dist/main"]
+CMD ["node", "dist/apps/backend/src/main"]

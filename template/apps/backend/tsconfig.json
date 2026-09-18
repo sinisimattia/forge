@@ -9,11 +9,19 @@
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
     "outDir": "./dist",
+    // Pinned to the workspace root so the emitted layout is the SAME whether or not
+    // backend source currently imports `__FORGE_SCOPE__/core`. Without it, tsc infers the
+    // common source root: `apps/backend/src` while nothing imports core (emitting
+    // `dist/main.js`), but the workspace root as soon as one file does (emitting
+    // `dist/apps/backend/src/main.js`), silently moving the entrypoint that
+    // `start:prod`, `migration:run:prod` and the Dockerfile `CMD` name.
+    "rootDir": "../..",
     "baseUrl": "./",
     "incremental": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "__FORGE_SCOPE__/core/*": ["../../libs/core/src/*/index"]
     }
   },
   "include": ["src/**/*.ts"],

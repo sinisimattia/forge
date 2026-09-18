@@ -13,9 +13,7 @@ module.exports = {
   // Consumers import core via per-domain subpaths; map each to its `src/` barrel
   // so tests exercise source directly (mirrors the published `exports` map).
   moduleNameMapper: {
-    '^__FORGE_SCOPE__/core/shared/errors$': '<rootDir>/src/shared/errors/index.ts',
-    '^__FORGE_SCOPE__/core/shared/testing$': '<rootDir>/src/shared/testing/index.ts',
-    '^__FORGE_SCOPE__/core/shared/types$': '<rootDir>/src/shared/types/index.ts',
+    '^__FORGE_SCOPE__/core/(.*)$': '<rootDir>/src/$1/index.ts',
   },
   // Coverage covers executable domain code only. Barrels re-export; `types/`,
   // `contracts/`, and the type-only testing interfaces (`*ContractDeps`,

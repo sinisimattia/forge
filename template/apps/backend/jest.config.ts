@@ -12,6 +12,10 @@ const config: Config = {
   testEnvironment: 'node',
   passWithNoTests: true,
   moduleNameMapper: {
+    // Resolve core to SOURCE, not to its compiled output: a test that reads
+    // `dist/` passes against whatever was last built, which can be anything.
+    // `rootDir` is `src`, so three levels up is the workspace root.
+    '^__FORGE_SCOPE__/core/(.*)$': '<rootDir>/../../../libs/core/src/$1/index.ts',
     '^@/(.*)$': '<rootDir>/$1',
   },
 };
