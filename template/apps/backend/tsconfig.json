@@ -15,6 +15,12 @@
     // `dist/main.js`), but the workspace root as soon as one file does (emitting
     // `dist/apps/backend/src/main.js`), silently moving the entrypoint that
     // `start:prod`, `migration:run:prod` and the Dockerfile `CMD` name.
+    // Side effect: because the pin covers `libs/`, an imported core file is also EMITTED
+    // under `dist/libs/core/src/**`. Nothing ever loads those copies — `paths` is a
+    // compile-time mapping and tsc leaves the bare `__FORGE_SCOPE__/core/...` specifier in
+    // the emitted `require`, which Node resolves via the workspace symlink into
+    // `libs/core/dist` instead. They are harmless dead weight; the backend is NOT
+    // self-contained, and the prod image must ship `libs/core/dist` (see the Dockerfile).
     "rootDir": "../..",
     "baseUrl": "./",
     "incremental": true,

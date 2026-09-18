@@ -129,6 +129,14 @@ The "no hardcoded user-facing text" philosophy is in
   generated shape) the first time a route needs a real translated response, and
   `en` is currently the only locale — adding one is a new `src/i18n/<lang>/`
   folder, no code changes.
+  - **Mind the compiled layout when you set `loaderOptions.path`.** `nest-cli.json`
+    copies `i18n/**/*` as an asset and it lands at `dist/i18n`, but compiled code
+    lives at `dist/apps/backend/src/**` (the backend's `tsconfig.json` pins `rootDir`
+    to the workspace root — see the comment there). The idiomatic
+    `join(__dirname, '/i18n/')` from the nestjs-i18n docs is therefore wrong by three
+    levels here; from `src/app.module.ts` the built path is
+    `join(__dirname, '../../../i18n/')`. Resolve it from `process.cwd()` or verify it
+    against a production build — this is not visible in `nest start`.
 - **Services stay i18n-agnostic** — they throw the `{ messageKey, args? }`
   payload and never call the i18n service themselves.
 - **Translation happens only at the HTTP boundary**: `HttpExceptionFilter`

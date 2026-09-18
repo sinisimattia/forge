@@ -150,6 +150,13 @@ An implementation that crosses a serialization boundary receives its data as pla
    loudly (`Missing "./<domain>/<folder>" specifier in "__FORGE_SCOPE__/core" package`) instead of
    silently serving stale compiled output. Then `rm -rf dist && npx nx build core
    --skip-nx-cache` (NX can otherwise serve a stale `dist`).
+
+   "Resolve to source" means at **compile and test time**. At **runtime** a consuming app
+   still loads core's `dist`: a path mapping is not a rewrite, so compiled backend code keeps
+   its bare `__FORGE_SCOPE__/core/...` specifier and Node follows the workspace symlink into
+   `libs/core/dist` through `exports`. That is why the backend's production image copies
+   `libs/core/dist`, and why a subpath missing from `exports` breaks the container even
+   though every gate passed.
 6. Add unit tests under `libs/core/tests/<domain>/...` (mirroring the `src/` layout), importing the
    code under test via its `__FORGE_SCOPE__/core/<domain>/*` subpath.
 7. In each consuming app, implement the contract and drive the conformance suite:

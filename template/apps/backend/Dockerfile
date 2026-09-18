@@ -35,6 +35,15 @@ COPY --from=prod-deps /app/package.json /app/package-lock.json /app/.npmrc ./
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=prod-deps /app/apps/backend/node_modules ./apps/backend/node_modules
 COPY --from=prod-deps /app/apps/backend/package.json ./apps/backend/package.json
+# The backend's compiled output still contains bare `require('__FORGE_SCOPE__/core/...')`
+# specifiers — `paths` is a compile-time mapping and tsc never rewrites them. Node resolves
+# those through `node_modules/__FORGE_SCOPE__/core`, which is a workspace symlink to
+# `libs/core`, and then through core's `exports` into `libs/core/dist`. Without these two
+# lines that symlink dangles here and the container dies at startup with MODULE_NOT_FOUND.
+# Core declares no runtime dependencies, so its `package.json` (for `exports`) and its
+# `dist` are all the image needs.
+COPY --from=build /app/libs/core/package.json ./libs/core/package.json
+COPY --from=build /app/libs/core/dist ./libs/core/dist
 COPY --from=build /app/apps/backend/dist ./apps/backend/dist
 WORKDIR /app/apps/backend
 EXPOSE 3000

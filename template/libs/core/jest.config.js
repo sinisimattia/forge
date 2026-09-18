@@ -10,8 +10,11 @@ module.exports = {
   },
   testEnvironment: 'node',
   passWithNoTests: true,
-  // Consumers import core via per-domain subpaths; map each to its `src/` barrel
-  // so tests exercise source directly (mirrors the published `exports` map).
+  // One wildcard maps every `__FORGE_SCOPE__/core/<domain>/<folder>` subpath to its `src/`
+  // barrel, so core's own tests exercise SOURCE and a new domain needs no edit here.
+  // This deliberately does NOT mirror the published `exports` map: `exports` stays
+  // hand-enumerated because it is the only map resolving into `dist/`, where a missing
+  // entry must fail loudly rather than serve a stale build. See README "How to add a domain".
   moduleNameMapper: {
     '^__FORGE_SCOPE__/core/(.*)$': '<rootDir>/src/$1/index.ts',
   },
