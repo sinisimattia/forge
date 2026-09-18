@@ -35,6 +35,28 @@ test('a populated secret is flagged in each shape a real credential takes', () =
   );
 });
 
+// The key list spelled its multi-word names with underscores only, so their camelCase
+// spellings — the conventional casing for backend config in this stack — never matched, and
+// the populated-secret rule missed them entirely. `apiKey` and `privateKey` looked covered
+// only because their *values* are distinctive enough for the stripe-key and private-key rules
+// to catch; give them an ordinary-looking value, as `dbPass` and `accessKey` have, and nothing
+// spoke at all. The separator is now optional, which also picks up the kebab-case spelling
+// that appears in YAML.
+test('a multi-word secret key is flagged in camelCase and kebab-case too', () => {
+  assert.equal(labels("  dbPass: 'correct-horse-battery',", TS), 'populated secret');
+  assert.equal(labels("  accessKey: 'AKIAIOSFODNN7EXAMPLE',", TS), 'populated secret');
+  assert.equal(labels("  apiKey: 'plain-looking-value',", TS), 'populated secret');
+  assert.equal(labels("  privateKey: 'plain-looking-value',", TS), 'populated secret');
+  assert.equal(labels('api-key: plain-looking-value', YAML), 'populated secret');
+  assert.equal(labels('access-key: plain-looking-value', YAML), 'populated secret');
+  // The UPPER_SNAKE spellings these were always meant to cover, unchanged.
+  assert.equal(labels('API_KEY=plain-looking-value', ENV), 'populated secret');
+  assert.equal(labels('DB_PASS: correct-horse-battery', YAML), 'populated secret');
+  // And the single-word keys, which never needed a separator, still behave as they did.
+  assert.equal(labels("  secret: 'x',", TS), 'populated secret');
+  assert.equal(labels('TOKEN=x', ENV), 'populated secret');
+});
+
 test('a key, a private key block and a source-project trace are flagged', () => {
   assert.equal(labels('-----BEGIN RSA PRIVATE KEY-----', ENV), 'private key');
   assert.equal(labels('BEGIN PRIVATE KEY', ENV), 'private key');

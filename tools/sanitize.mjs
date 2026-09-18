@@ -27,13 +27,21 @@ const SELF = path.resolve(fileURLToPath(import.meta.url));
 // populated-secret rules and the self-named-value exemption below, so the two can never
 // drift apart — they were once two identical copies of this list, which is exactly the
 // arrangement in which one gets extended and the other does not.
-
+//
+// Multi-word names tolerate a missing or hyphenated separator (`API_KEY`, `apiKey`,
+// `api-key`). The rules are case-insensitive, so spelling the separator `[_-]?` is what
+// makes the camelCase form match at all — and camelCase is this stack's conventional
+// casing for backend config. Spelled with underscores only, `apiKey`, `accessKey`,
+// `privateKey` and `dbPass` slipped the populated-secret rule entirely; the first two
+// happened to be caught by the stripe-key and private-key rules, but only because of
+// their distinctive *values* — `accessKey: 'AKIAIOSFODNN7EXAMPLE'` and
+// `dbPass: 'correct-horse-battery'` were missed outright.
 //
 // `CREDENTIALS?` was proposed alongside these but is deliberately left out: tested against
 // the real template it false-positives on `apps/backend/src/main.ts`'s
 // `app.enableCors({ ..., credentials: true })` — a NestJS/fetch boolean config flag, not a
 // secret value, and a name that common in this stack's own framework config.
-const SECRET_KEYS = 'SECRET|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY|ACCESS_KEY|DB_PASS';
+const SECRET_KEYS = 'SECRET|PASSWORD|TOKEN|API[_-]?KEY|PRIVATE[_-]?KEY|ACCESS[_-]?KEY|DB[_-]?PASS';
 
 // The populated-secret rule as written for YAML, env and every other non-TypeScript file,
 // where an unquoted value genuinely is a literal: anything non-empty after the separator is
