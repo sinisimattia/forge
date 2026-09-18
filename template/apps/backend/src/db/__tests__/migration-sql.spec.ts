@@ -82,10 +82,10 @@ const allMigrations: readonly (readonly [string, string])[] = readdirSync(MIGRAT
  * local `exec(queryRunner, ...)`. A third shape is invisible to it — see "What
  * these guards do not catch" at the top of this file.
  *
- * `yields the SQL of every migration` below is a weaker guard than that gap
- * needs, and it is worth being exact about which: it fires when a migration
- * yields *no* statements at all, so it catches the extractor being broken or a
- * whole migration written in a shape it cannot read. It does not fire on a
+ * The `yields the SQL of %s` cases below are a weaker guard than that gap
+ * needs, and it is worth being exact about which: each fires when its migration
+ * yields *no* statements at all, so they catch the extractor being broken or a
+ * whole migration written in a shape it cannot read. They do not fire on a
  * single unreadable statement inside a migration whose other statements read
  * fine, which is exactly what hoisting one query into a `const` produces.
  */
