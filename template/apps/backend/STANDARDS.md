@@ -76,8 +76,17 @@ src/<module>/
 - `@HttpCode()` when the status code differs from the NestJS default.
 - Use `ParseUuidParamPipe` (from `src/common/pipes`) on all UUID path params —
   **not** the bare `ParseUUIDPipe` — so malformed-UUID errors are localized.
-- Auth decorators (`@Public()`, guards, etc.) are Phase 2 territory; this
-  skeleton has none, and `health` is intentionally unauthenticated.
+- **Route authentication is default-deny.** Every route requires an authenticated
+  principal: the authentication guard is registered **globally** in `app.module.ts`, and
+  anonymous access is opted into explicitly, per route, with `@Public()`. A new endpoint is
+  authenticated unless it says otherwise, so forgetting the decorator fails closed. The
+  opt-out list is limited to routes that genuinely cannot carry a principal yet — sign-in,
+  registration, email verification, password recovery, and `health`. Registering the guard
+  is half the rule: a missing global registration leaves zero `@Public()` decorators and an
+  entirely unauthenticated API, which looks identical to a clean one.
+- Auth decorators (`@Public()`, guards, etc.) are Phase 2 territory; this skeleton has
+  none and no guard is registered, and `health` is intentionally unauthenticated — the
+  bullet above is the standing rule for when Phase 2 adds them.
 
 ## DTO validation
 
@@ -189,6 +198,15 @@ backend specifics:
   unauthorized, validation failure), plus enum-driven behavior variations.
 - Assert thrown i18n keys, not literal text (see nestjs-i18n above).
 
+**`nx test backend` does not type-check.** `tsconfig.json` extends `tsconfig.base.json`,
+which sets `isolatedModules: true`, and `jest.config.ts` transforms with `ts-jest` — the
+combination is transpile-only, so a spec containing a blatant type error (`const count:
+number = 'not a number'`) compiles away and the suite passes green. Type-level assertions
+are enforced **only** by the `typecheck` target (`tsc --noEmit`), which CI runs as a
+mandatory sibling of `test`; `tsconfig.json`'s `include` covers `src/**/*.ts`, so the specs
+are inside it. A green local `npm test` is evidence about runtime behaviour and nothing
+else. The same property holds in `libs/core` — see its `STANDARDS.md`.
+
 ## Review dimensions
 
 | ID | Check | Signal | Severity | Source |
@@ -200,6 +218,6 @@ backend specifics:
 | B5 | Request payloads are validated DTOs | `grep -rn "@Body()" src/` — each must reference a DTO class | blocking | STANDARDS.md — DTOs |
 | B6 | Errors use the shared exception filter shape | `grep -rn "throw new HttpException" src/` | warning | STANDARDS.md — Error shape |
 | B7 | User-facing strings are translated | `grep -rnE "'[A-Z][a-z]+ [a-z]+" src/ --include='*.service.ts'` | warning | `docs/standards/i18n.md` |
-| B8 | Every route is authenticated unless it explicitly opts out | `grep -rn "@Public()" src/ --include='*.controller.ts'` — every hit must be a route that genuinely needs anonymous access (sign-in, registration, email verification, password recovery, health) | blocking | ADR-0006 — the server enforces on every route |
-| B9 | Secret material never reaches a response | `grep -rni -e hash -e secret -e token src/ --include='*.dto.ts'` — a response DTO carrying any of them is a violation unless it is a single-use credential the caller just asked to be issued | blocking | ADR-0005 — identities carry no secret material |
+| B8 | Every route is authenticated unless it explicitly opts out | `grep -rn "@Public()" src/ --include='*.controller.ts'` — every hit must be a route that genuinely needs anonymous access (sign-in, registration, email verification, password recovery, health) **and** confirm the global authentication guard is registered in `app.module.ts`: with no guard registered there are zero hits and the row reads green while nothing is authenticated | blocking | STANDARDS.md — Route authentication is default-deny |
+| B9 | Secret material never reaches a response | `grep -rni -e hash -e secret -e token src/ --include='*.dto.ts'` — a response DTO carrying any of them is a violation unless it is a single-use credential the caller just asked to be issued. **Covers `*.dto.ts` only**: a secret returned through a controller's inline return type, a directly-serialized entity, or a core wire shape is invisible to it, so read the changed controller's return types too | blocking | ADR-0005 — identities carry no secret material |
 | B10 | A state change worth reconstructing later is audited | **read and judge** — a changed `*.service.ts` method that writes and does not call `IAuditService.record()`. No grep separates a write that matters from one that does not; the reviewer reads the diff. | warning | ADR-0007 — the audit record carries the tenant it happened in |

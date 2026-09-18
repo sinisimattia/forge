@@ -81,10 +81,18 @@ any type-level guarantee, including the exhaustiveness rule above.
 | K2 | No transport vocabulary in prose, including camelCase/PascalCase compounds (URLs exempted, not whole lines) | `npm run purity -w libs/core` exits non-zero | blocking | STANDARDS.md — Framework purity |
 | K3 | Service contracts are `I`-prefixed | `grep -rn "export interface [^I]" src/*/contracts/` | blocking | STANDARDS.md — I-prefix contracts |
 | K4 | Contracts speak in entities, not DTOs | review `src/*/contracts/*.ts` for shapes that are neither an entity, a create-input type, nor a JSON wire shape | blocking | STANDARDS.md — Entities, not DTOs |
-| K5 | TSDoc on every export | `grep -rnB1 "^export " src/ \| grep -v "\*/"` | blocking | STANDARDS.md — TSDoc is definition-of-done |
+| K5 | TSDoc on every export | `grep -rnB1 "^export " src/` — read the `-B1` context line of each hit: one that is not `*/` (the close of a TSDoc block) is a violation. Barrel re-exports in `index.ts` are not. **No pipe on purpose** — a shell pipe cannot survive a markdown table cell (see the note below the table) | blocking | STANDARDS.md — TSDoc is definition-of-done |
 | K6 | One symbol per file, PascalCase filename | file basename matches the exported symbol | warning | STANDARDS.md — File layout |
 | K7 | A rejection reason is modelled for the audit record, never for an untrusted caller | **read and judge** — open `src/*/contracts/*.ts` and `src/*/types/*Outcome.ts`: a rejection reason may be modelled, recorded and audited, but must not appear as a field of a JSON wire shape returned on an authentication path. No grep decides this; the reviewer reads the file. | blocking | ADR-0005 — a rejection reason is recorded, never returned |
-| K8 | Every `switch` over an enum or a discriminated union ends in `assertNever` | `grep -rn "switch (" src/` locates every switch, then **read each hit**: one whose `default` is not `return assertNever(...)` is a violation. The grep is a locator, not a verdict. | blocking | STANDARDS.md — Exhaustive switches |
+| K8 | Every `switch` over an enum or a discriminated union ends in `assertNever` | `grep -rnE "switch *\(" src/` locates every switch, with or without the space before `(`, then **read each hit**: one whose `default` is not `return assertNever(...)` is a violation. The grep is a locator, not a verdict. | blocking | STANDARDS.md — Exhaustive switches |
+
+**No `Signal` in this table contains a pipe.** A markdown table cell cannot carry a bare `|`,
+so a pipe has to ship escaped as `\|` — and that escape is read two different ways: rendered it
+is a pipe, read raw (which is how an agent reads this file) it is a literal backslash-pipe. Under
+`grep -E` a raw `\|` is a literal pipe character and matches nothing; as a *shell* pipe it
+escapes into a literal `|` argument and the command does not pipe at all. Both failures are
+silent. Write alternation as repeated `-e` patterns, which are correct under either reading,
+and state filtering as a criterion the reviewer applies to the hits.
 
 K2 is a text check over prose: it catches accidental transport vocabulary, including camelCase,
 PascalCase and snake_case/kebab-case compounds, with real `http(s)://` links exempted. It does not

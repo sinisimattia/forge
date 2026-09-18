@@ -189,11 +189,19 @@ only locale) is in `docs/standards/i18n.md`. The Nuxt-specific mechanics:
 
 | ID | Check | Signal | Severity | Source |
 |----|-------|--------|----------|--------|
-| W1 | Component sits at the right atomic level | `grep -rnE "from ['\"]~/components/(atoms\|molecules\|organisms\|templates)" app/components/atoms/`; `grep -rnE "from ['\"]~/components/(molecules\|organisms\|templates)" app/components/molecules/`; `grep -rnE "from ['\"]~/components/(organisms\|templates)" app/components/organisms/` — any hit is a layer importing from a level the Atomic Design table forbids it, including a same-level import (atom→atom, molecule→molecule, organism→organism) | blocking | STANDARDS.md — Atomic design |
-| W2 | Components never call fetchers directly | `grep -rnE '\$fetch\(\|useFetch\(\|useAsyncData\(\|from .~?/?fetchers/' app/components/` | blocking | STANDARDS.md — fetcher → composable → component |
+| W1 | Component sits at the right atomic level | `grep -rn -e "~/components/atoms" -e "~/components/molecules" -e "~/components/organisms" -e "~/components/templates" app/components/atoms/`; `grep -rn -e "~/components/molecules" -e "~/components/organisms" -e "~/components/templates" app/components/molecules/`; `grep -rn -e "~/components/organisms" -e "~/components/templates" app/components/organisms/` — any hit is a layer importing from a level the Atomic Design table forbids it, including a same-level import (atom→atom, molecule→molecule, organism→organism) | blocking | STANDARDS.md — Atomic design |
+| W2 | Components never call fetchers directly | `grep -rnE -e '\$fetch\(' -e 'useFetch\(' -e 'useAsyncData\(' -e 'fetchers/' app/components/` | blocking | STANDARDS.md — fetcher → composable → component |
 | W3 | Tailwind tokens only, no arbitrary values | `grep -rnE '\b[a-z][a-z0-9-]*-\[[^]]+\]' app/` | warning | STANDARDS.md — Tailwind tokens |
-| W4 | No `any` or `never` escapes | `grep -rnE '\b(as\|:)\s*(any\|never)\b\|<any>' app/` | blocking | `docs/standards/typing.md` |
+| W4 | No `any` or `never` escapes | `grep -rnE -e '\bas[[:space:]]+any\b' -e '\bas[[:space:]]+never\b' -e ':[[:space:]]*any\b' -e ':[[:space:]]*never\b' -e '<any>' app/` | blocking | `docs/standards/typing.md` |
 | W5 | Every component has a story | a `.vue` under `components/` with no matching `stories/**/*.stories.ts` | warning | STANDARDS.md — Storybook |
-| W6 | UI strings are translated, never inline. **Signal is a broad heuristic — read every hit and judge it; do not treat a match as a violation automatically.** It intentionally over-surfaces (over-surfacing beats missing a real one); it correctly skips `{{ }}` i18n interpolations since `{`/`}` fall outside the scanned run | `grep -rnE '>[^<>{}]*[A-Za-z]{2,}[^<>{}]*<' app/ --include=*.vue` | blocking | `docs/standards/i18n.md` |
-| W7 | SSR pages set title and meta | `grep -rLE "useHead\|useSeoMeta" app/pages/ --include=*.vue` (lists changed pages with neither call) | warning | STANDARDS.md — SEO |
-| W8 | Interactive elements are reachable and labelled | `grep -rn "@click" app/ --include=*.vue` then check the matched tag is not `button`/`a` (a `<button>`/`<a>` hit is not a violation) | blocking | STANDARDS.md — Accessibility |
+| W6 | UI strings are translated, never inline. **Signal is a broad heuristic — read every hit and judge it; do not treat a match as a violation automatically.** It intentionally over-surfaces (over-surfacing beats missing a real one); it correctly skips `{{ }}` i18n interpolations since `{`/`}` fall outside the scanned run | `grep -rnE '>[^<>{}]*[A-Za-z]{2,}[^<>{}]*<' app/ --include='*.vue'` | blocking | `docs/standards/i18n.md` |
+| W7 | SSR pages set title and meta | `grep -rL -e "useHead" -e "useSeoMeta" app/pages/ --include='*.vue'` (lists changed pages with neither call) | warning | STANDARDS.md — SEO |
+| W8 | Interactive elements are reachable and labelled | `grep -rn "@click" app/ --include='*.vue'` then check the matched tag is not `button`/`a` (a `<button>`/`<a>` hit is not a violation) | blocking | STANDARDS.md — Accessibility |
+
+**No `Signal` in this table contains a pipe.** A markdown table cell cannot carry a bare `|`, so
+a pipe ships escaped as `\|` — read raw (which is how an agent reads this file) that is a literal
+backslash-pipe, and under `grep -E` it matches nothing at all. W1, W2, W4 and W7 each shipped
+with one and each was silently broken: W1/W2/W4 matched no violation, and W7 (`-L`) listed every
+page including compliant ones. Write alternation as repeated `-e` patterns, which are correct
+whether the cell is read raw or rendered. Quote every `--include` glob for the same reason:
+unquoted, zsh expands it against the current directory and aborts the command before grep runs.
