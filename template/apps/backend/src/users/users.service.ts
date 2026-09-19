@@ -2,8 +2,9 @@ import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/com
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
-import { can } from '__FORGE_SCOPE__/core/shared/policies';
-import type { PaginatedResult, Principal } from '__FORGE_SCOPE__/core/shared/types';
+import { can } from '__FORGE_SCOPE__/core/authorization/policies';
+import type { Principal } from '__FORGE_SCOPE__/core/authorization/types';
+import type { PaginatedResult } from '__FORGE_SCOPE__/core/shared/types';
 import type { User } from '__FORGE_SCOPE__/core/users/entities';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import { DisplayNameRequiredError, UserNotFoundError } from '__FORGE_SCOPE__/core/users/errors';

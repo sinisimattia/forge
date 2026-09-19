@@ -4,6 +4,14 @@
   "private": true,
   "type": "commonjs",
   "exports": {
+    "./authorization/policies": {
+      "types": "./dist/authorization/policies/index.d.ts",
+      "default": "./dist/authorization/policies/index.js"
+    },
+    "./authorization/types": {
+      "types": "./dist/authorization/types/index.d.ts",
+      "default": "./dist/authorization/types/index.js"
+    },
     "./audit/contracts": {
       "types": "./dist/audit/contracts/index.d.ts",
       "default": "./dist/audit/contracts/index.js"

@@ -521,13 +521,20 @@ describe('AuthService', () => {
 
     it('gives the credential a lifetime much shorter than a verification link', async () => {
       await registerAndVerify('ada@example.test');
-      const before = Date.now();
 
       await auth.requestPasswordReset('ada@example.test');
 
       const row = source.all(PasswordResetTokenRecord)[0];
-      const life = (row.expiresAt as Date).getTime() - before;
-      expect(life).toBeLessThanOrEqual(PASSWORD_RESET_TTL_SECONDS * 1000);
+      // Measured between the row's OWN two instants, not against a clock this
+      // test read. `const before = Date.now()` taken before the call was a
+      // knife edge: the service captures its own `now` afterwards, so the
+      // interval came out as `TTL + delta` and the assertion failed the moment
+      // one millisecond elapsed — reproduced 1 run in 8 under parallel load,
+      // `Expected: <= 3600000 / Received: 3600002`. A flaky assertion about a
+      // security property in a shipped template teaches every generated
+      // project's team to re-run CI until it passes.
+      const life = (row.expiresAt as Date).getTime() - (row.createdAt as Date).getTime();
+      expect(life).toBe(PASSWORD_RESET_TTL_SECONDS * 1000);
       // A literal ceiling as well as the constant, because this credential
       // replaces a password without proving anything else and sits in a mailbox
       // for as long as it stands.

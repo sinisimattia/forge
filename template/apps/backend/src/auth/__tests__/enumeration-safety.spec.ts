@@ -53,12 +53,25 @@ import { FakeDataSource } from './fake-data-source';
  * validation pipe, the exception filter and the translation interceptor are the
  * application's own and not ones this file assembled.
  *
- * That matters more than it looks. A fake service told to resolve identically
- * for both addresses would make every comparison below pass whatever the
- * controller did, because the difference the test exists to detect would never
- * have entered the system. Here the difference is real: one address has an
- * account and the other does not, and the whole stack has to decline to carry
- * it.
+ * That matters more than it looks, though **not** for the reason first given
+ * here. The original argument — that a fake service makes every comparison
+ * below unfailable — was tested and is wrong: a fake modelling
+ * `REJECTED/UNKNOWN_ACCOUNT` against `REJECTED/INVALID_SECRET` catches a
+ * controller that renders the difference, which is what two of the three
+ * injections in this file's history were.
+ *
+ * The real argument is **coverage surface**, and it was measured. The
+ * enumeration decisions that matter do not live in the controller; they live in
+ * the service — the duplicate-registration silence, the dummy derivation spent
+ * on an unknown address, the deleted-account branch. Two faults demonstrate it:
+ * making `AuthService.register` throw for an address already taken, and removing
+ * `requestPasswordReset` altogether, both turn tests in this file red. Under an
+ * arrangement where the service is a fake, **both of those faults are outside
+ * the system under test** — the fake replaces exactly the code that leaks.
+ *
+ * So the difference here is real at the point where it is decided: one address
+ * has an account and the other does not, and the whole stack has to decline to
+ * carry it.
  *
  * ## What this does NOT cover — timing
  *

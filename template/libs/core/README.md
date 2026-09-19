@@ -31,7 +31,13 @@ else — an interface that cannot express a change is one no caller can be talke
 and the other half of that guarantee is a privilege on the table rather than anything in
 TypeScript. Its entry carries an explicit, nullable `organizationId` before any organization
 exists, because this is the one table the application is not permitted to backfill
-([ADR-0007](../../docs/adrs/0007-tenancy-is-explicit-never-ambient.md)). Each domain gets its own
+([ADR-0007](../../docs/adrs/0007-tenancy-is-explicit-never-ambient.md)), and the
+`authorization/` domain, which is one pure function — `can(principal, permission, resource?)`
+([ADR-0006](../../docs/adrs/0006-authorization-is-a-pure-function-in-core.md)). It is a domain
+of its own rather than a member of `shared/` because it needs `PlatformRole` and `UserId`, and
+a `shared/` folder that depends on a domain inverts the direction every other domain relies
+on — and because the webapp imports this one by name to decide what to render, so the subpath
+is part of its interface. Each domain gets its own
 folder under `src/` with up to seven subfolders — `entities/`, `contracts/`, `enums/`, `errors/`,
 `types/`, `testing/`, `policies/` — one file per exported symbol, named exactly after the symbol.
 A domain that has no rule needing a standalone function simply has no `policies/` folder.

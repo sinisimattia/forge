@@ -1,5 +1,5 @@
-import { can } from '__FORGE_SCOPE__/core/shared/policies';
-import type { Permission, Principal } from '__FORGE_SCOPE__/core/shared/types';
+import { can } from '__FORGE_SCOPE__/core/authorization/policies';
+import type { Permission, Principal } from '__FORGE_SCOPE__/core/authorization/types';
 import { PlatformRole } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 

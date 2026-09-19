@@ -169,13 +169,21 @@ package's test runner off CommonJS first. The same note is in `package.json` und
 
 ## Common utilities
 
-| Utility                | Location                    | Purpose                                                  |
-| ----------------------- | ---------------------------- | --------------------------------------------------------- |
-| `HttpExceptionFilter`   | `src/common/filters/`        | Global exception filter → standard error shape           |
-| `I18nResponseInterceptor` | `src/common/interceptors/` | Translates a `messageKey` success payload into `message`  |
-| `I18nValidationPipe`    | Global (`main.ts`)            | Localized class-validator integration                     |
-| `ParseUuidParamPipe`    | `src/common/pipes/`           | Localized UUID param validation                            |
-| `PaginationQueryDto`    | `src/common/types/`           | Shared `page`/`limit` query DTO + paginated response shape |
+The **Location** column is where the class is defined. Where a utility is *registered*
+is a separate question and the answer is the same for the first three: they are `APP_*`
+entries in `GLOBAL_PROVIDERS` in `app.module.ts`, **not** imperative calls in `main.ts`.
+That distinction is the whole reason they are assertable — see `app.setup.ts`'s own
+comment for what it cost when they lived in `bootstrap()`.
+
+| Utility                | Defined in                  | Registered as | Purpose                                                  |
+| ----------------------- | ---------------------------- | --- | --------------------------------------------------------- |
+| `HttpExceptionFilter`   | `src/common/filters/`        | `APP_FILTER` | Global exception filter → standard error shape           |
+| `I18nResponseInterceptor` | `src/common/interceptors/` | `APP_INTERCEPTOR` | Translates a `messageKey` success payload into `message`  |
+| `I18nValidationPipe`    | `nestjs-i18n`                 | `APP_PIPE` | Localized class-validator integration, with `whitelist` + `forbidNonWhitelisted` |
+| `JwtAuthGuard`          | `src/auth/guards/`            | `APP_GUARD` | Closes every route not marked `@Public()` |
+| `PlatformAdminGuard`    | `src/auth/guards/`            | per-route `@UseGuards` | Closes a route to all but a platform administrator, and records every pass |
+| `ParseUuidParamPipe`    | `src/common/pipes/`           | per-param | Localized UUID param validation                            |
+| `PaginationQueryDto`    | `src/common/types/`           | — | `page`/`limit` query DTO + paginated response shape. Endpoints that add filters (`AuditQueryDto`, `ListUsersQueryDto`) declare their own rather than extending it, so every field an endpoint accepts is visible in one place — `forbidNonWhitelisted` makes an undeclared one a 400. |
 
 ---
 

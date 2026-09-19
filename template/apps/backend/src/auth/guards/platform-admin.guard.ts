@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { Request } from 'express';
 import { Repository } from 'typeorm';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
-import { can } from '__FORGE_SCOPE__/core/shared/policies';
+import { can } from '__FORGE_SCOPE__/core/authorization/policies';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { AuditService } from '../../audit/audit.service';
 import { UserRecord } from '../../users/user-record.entity';

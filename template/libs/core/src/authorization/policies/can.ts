@@ -1,11 +1,20 @@
+import { assertNever } from '../../shared/policies/assertNever';
 import { PlatformRole } from '../../users/enums/PlatformRole';
-import type { OwnedResource } from '../types/Principal';
 import type { Permission } from '../types/Permission';
-import type { Principal } from '../types/Principal';
-import { assertNever } from './assertNever';
+import type { OwnedResource, Principal } from '../types/Principal';
 
 /**
  * The one access decision in this project (ADR-0006).
+ *
+ * It is its own domain rather than a member of `shared/`, and that placement is
+ * deliberate. It needs `PlatformRole` and `UserId`, so putting it under
+ * `shared/` made `shared/` — the folder every other domain depends on — depend
+ * on a domain in turn. No cycle resulted, because every edge in both directions
+ * is a deep path rather than a barrel, but nothing enforced that and an
+ * inversion in a folder named `shared` is the kind of thing the next person
+ * copies. It is also the module a second consumer imports by name: the webapp
+ * calls this same function to decide what to render, so the subpath it imports
+ * is worth being `authorization` rather than `shared/policies`.
  *
  * Pure: no lookup, no state, no clock, no persistence. Given the same principal
  * and the same resource it returns the same answer, which is what makes it

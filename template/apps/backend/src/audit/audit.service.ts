@@ -5,7 +5,7 @@ import type { IAuditService } from '__FORGE_SCOPE__/core/audit/contracts';
 import { AuditEntry } from '__FORGE_SCOPE__/core/audit/entities';
 import type { AuditQuery, RecordAuditEntryInput } from '__FORGE_SCOPE__/core/audit/types';
 import type { AuditEntryId } from '__FORGE_SCOPE__/core/audit/types';
-import { can } from '__FORGE_SCOPE__/core/shared/policies';
+import { can } from '__FORGE_SCOPE__/core/authorization/policies';
 import type { PaginatedResult } from '__FORGE_SCOPE__/core/shared/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { UserRecord } from '../users/user-record.entity';
