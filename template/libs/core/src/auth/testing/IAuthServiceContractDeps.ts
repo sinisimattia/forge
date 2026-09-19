@@ -44,6 +44,21 @@ export interface AuthServiceContractContext {
    * returns is checked against the world the host promised, never against
    * itself — and it must be usable at the moment the suite runs, since every
    * test that reads the actor's sessions expects to find it.
+   *
+   * ## Its client context must be the one the world ASKED FOR
+   *
+   * `clientAddress` and `clientLabel` are the two fields a host is most likely
+   * to fill in by reading its own store, and doing so is what makes the
+   * wire-shape comparison stop working. An implementation that never persisted
+   * the client at all then has `null` on the left and `null` on the right, and
+   * the two agree — while a person looking at their own session list is shown
+   * nulls where another implementation shows values. That is not a hypothetical:
+   * it was injected as a fault and the whole suite stayed green.
+   *
+   * So these two fields carry what the world supplied when it opened the
+   * session, in the same spirit as {@link actorEmailAsGiven} — a value the
+   * implementation gets no vote on. The rest of the session is whatever the
+   * host's store says, because only the store knows it.
    */
   actorSession: Session;
   /** A second user, who holds a session of their own. */

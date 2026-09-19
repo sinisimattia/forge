@@ -212,11 +212,33 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
         );
 
         // Named rather than written inline, because it is the right-hand side of an
-        // assertion below and not scene-setting. Nothing else in either suite pins
-        // this: the wire-shape test compares against a session the *world* seeded, so
-        // an implementation that dropped the client context on the floor would satisfy
-        // every other assertion here and still show a person their own session list
-        // with nulls where another implementation shows values.
+        // assertion below and not scene-setting.
+        //
+        // ## What this assertion does and does not pin, corrected after measurement
+        //
+        // It used to say "Nothing else in either suite pins this", implying that the
+        // two comparisons below are what stop an implementation dropping the client
+        // context. **They are not, and a host that believes they are will write a
+        // driver that cannot fail.** The two lines below read the session the
+        // implementation just *returned*, and an implementation is free to build that
+        // session out of the very arguments it was handed rather than out of whatever
+        // it stored — which is the ordinary, efficient thing to do, and which makes
+        // these two comparisons a value against itself.
+        //
+        // Measured, not reasoned: against an implementation whose write dropped the
+        // client onto the floor and whose return value was built from its arguments,
+        // this whole suite passed, every test green.
+        //
+        // What catches that fault is the **wire-shape** test, which reads the session
+        // back out through `listSessions` — and only if the host promises the client
+        // it *asked for* rather than the client it reads back out of its own store. A
+        // host that reads both sides from the same place has two values that move
+        // together, and they agree on `null` as happily as on an address.
+        //
+        // So the obligation this comment exists to state is on the host, not on these
+        // two lines: **promise the client context the world supplied.** See
+        // `AuthServiceContractContext.actorSession`, which says the same thing where a
+        // driver author is reading.
         const client: ClientContext = { address: '198.51.100.7', label: 'a client' };
         const outcome = await service.authenticate(
           attempt(actorEmailAsGiven, actorSecret, client),
