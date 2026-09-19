@@ -179,11 +179,9 @@ export class AuthHttpService implements IAuthService {
   public async authenticate(attempt: AuthenticationAttempt): Promise<AuthenticationOutcome> {
     let body: AuthResponseBody;
     try {
-      body = await postLogin(
-        this.client,
-        { email: attempt.email, secret: attempt.secret },
-        attempt.client,
-      );
+      // `attempt.client` is deliberately not sent. See `postLogin`: the server
+      // observes what it can tell about the client, and this side cannot.
+      body = await postLogin(this.client, { email: attempt.email, secret: attempt.secret });
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         return {
@@ -191,14 +189,17 @@ export class AuthHttpService implements IAuthService {
           // **The server refuses to say which reason applied, and that is its
           // design**: an answer that distinguished "no such account" from "wrong
           // secret" would let anybody test an address for existence one attempt
-          // at a time. The union obliges this side to name one anyway, so it
-          // names the one the contract says is decided first when several apply.
+          // at a time. So this side does not know, and says so.
           //
-          // Nothing in this application may branch on it. It is not knowledge
-          // this side has; it is a placeholder the type system requires, and the
-          // audit record that does carry the real reason is written on the other
-          // side, from what that side actually found.
-          reason: AuthenticationRejectionReason.INVALID_SECRET,
+          // It used to answer `INVALID_SECRET` — the first of the precedence
+          // order — because the union had no way to express ignorance. That
+          // value was always a lie, and a lie in a field the type calls
+          // knowledge: a screen switching on it would tell somebody whose
+          // account had been blocked that their password was wrong. `UNDISCLOSED`
+          // exists so the type can say the true thing, and so that a consumer
+          // that does branch has a member it must handle rather than a plausible
+          // one it will not think to question.
+          reason: AuthenticationRejectionReason.UNDISCLOSED,
         };
       }
       throw domainErrorFor(error, attempt.email);

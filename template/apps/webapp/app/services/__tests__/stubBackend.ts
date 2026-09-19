@@ -39,16 +39,19 @@ import type { ApiClient, ApiErrorBody, ApiErrorCode, ApiRequest, SessionResponse
  * given those answers, these services build the entities and raise the errors
  * the contracts name.
  *
- * ## One thing it models that the real wire cannot carry
+ * ## What it observes about a client, and why nothing here asserts it
  *
- * `ApiRequest.client` — what the implementation can tell about the client an
- * attempt came from. A browser can tell nothing and a real transport drops it;
- * this stub reads it, because a stub stands in for the network as well as for
- * the server. **So the shared suite's assertion that a client context reaches
- * the session is, on this side, a statement about this file.** It is written
- * down rather than quietly relied on: the same assertion against the real pair
- * is the backend's conformance run, where the client context is observed rather
- * than supplied.
+ * A request carries no description of its client and this stub invents none: a
+ * session it opens has `null` for both fields. That is what a browser really
+ * produces, because the address is decided by the network and the label by the
+ * user agent, and both are observed on the serving side. The property "what the
+ * implementation could tell about the client reaches the store" is asserted in
+ * `runIAuthServiceSecurityContract`, driven by the implementation that can
+ * actually observe one.
+ *
+ * What a driver seeds through `putSession` is a different thing and is carried
+ * faithfully: the world may hold a session with a client context, and the shared
+ * suite's wire-shape test requires it to come back unchanged.
  *
  * ## Why the world is seeded as JSON and promised from the same literals
  *
@@ -61,14 +64,27 @@ import type { ApiClient, ApiErrorBody, ApiErrorCode, ApiRequest, SessionResponse
  * gap on both sides of every comparison and agree with itself.
  */
 
-/** Nothing is known about the client, which is what most requests here say. */
+/**
+ * Nothing is known about the client, which is what every request here says.
+ *
+ * A stub cannot observe a network address or a user agent, and neither can the
+ * webapp whose transport it stands in for — so a session this stub opens carries
+ * `null` for both, which is what the real pair would record for a client that
+ * told it nothing.
+ */
 const NO_CLIENT: ClientContext = { address: null, label: null };
 
 /** How long a session the stub opens lasts. A week, as the backend's does. */
 const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** How long an access credential lasts, in seconds, as the backend reports it. */
-const ACCESS_LIFETIME_SECONDS = 900;
+/**
+ * How long an access credential lasts, in seconds, as the backend reports it.
+ *
+ * Exported because a test that asserts what came out of the DEC-3 seam needs a
+ * right-hand side that is not the service's own answer, and this world is where
+ * the number comes from.
+ */
+export const STUB_ACCESS_LIFETIME_SECONDS = 900;
 
 /** What the backend's filter puts in `error` for the statuses this stub answers. */
 const REASON_PHRASE: Record<number, string> = {
@@ -113,6 +129,17 @@ export interface StubBackend {
   putIdentity: (seed: AuthIdentityJSON) => void;
   /** Issues a verification credential, valid until `expiresAt`. */
   putVerification: (userId: UserId, credential: string, expiresAt: Date) => void;
+  /**
+   * Every access credential this world has issued, oldest first.
+   *
+   * It exists for one test and could not be written without it: the DEC-3 seam
+   * hands a caller the credential that arrived beside an outcome, and "the right
+   * credential" has to be checked against what the **world** issued rather than
+   * against what the service says it got. Comparing the service's answer with
+   * itself would pass for a service that invented a value, or handed back the
+   * previous one.
+   */
+  issuedCredentials: () => readonly string[];
 }
 
 /** The reason phrase the backend's filter derives from a status. */
@@ -383,11 +410,11 @@ export function stubBackend(): StubBackend {
       if (stored === undefined || stored.secret !== attempt.secret || !usable(stored)) {
         refuseCredentials();
       }
-      const opened = beginSession(stored.json.id, request.client ?? NO_CLIENT);
+      const opened = beginSession(stored.json.id, NO_CLIENT);
       return {
         user: stored.json,
         accessToken: opened.credential,
-        expiresIn: ACCESS_LIFETIME_SECONDS,
+        expiresIn: STUB_ACCESS_LIFETIME_SECONDS,
       };
     }
 
@@ -428,11 +455,11 @@ export function stubBackend(): StubBackend {
       // the caller this request is serving, which is what the transport can do
       // and the domain cannot.
       revokeAllOf(userId);
-      const opened = beginSession(userId, request.client ?? NO_CLIENT);
+      const opened = beginSession(userId, NO_CLIENT);
       return {
         user: stored.json,
         accessToken: opened.credential,
-        expiresIn: ACCESS_LIFETIME_SECONDS,
+        expiresIn: STUB_ACCESS_LIFETIME_SECONDS,
       };
     }
 
@@ -641,6 +668,10 @@ export function stubBackend(): StubBackend {
 
     putVerification(userId: UserId, credential: string, expiresAt: Date): void {
       verifications.set(credential, { userId, expiresAt, consumedAt: null });
+    },
+
+    issuedCredentials(): readonly string[] {
+      return [...credentials.keys()];
     },
   };
 }

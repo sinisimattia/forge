@@ -155,6 +155,24 @@ const DOMAIN_ERRORS: {
   { type: LastIdentityRemovalError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict', code: 'LAST_IDENTITY_REMOVAL' },
 ];
 
+/**
+ * Every code this API can emit, sorted, as a value.
+ *
+ * It exists so that the copy of this vocabulary the webapp has to keep
+ * (`apps/webapp/app/types/api.ts`) can be pinned against a literal list on each
+ * side. The two apps share no package a wire code could live in — it is
+ * transport vocabulary, so `libs/core` may not hold it (ADR-0008) — and nothing
+ * else would notice the copies drifting: the webapp's own conformance stub emits
+ * the strings the webapp switches on, so a rename there keeps the webapp
+ * internally consistent and makes it externally wrong, silently.
+ *
+ * Derived from the table rather than written out again, so that a row added
+ * without a matching literal in this module's spec turns that spec red.
+ */
+export const DOMAIN_ERROR_CODES: readonly string[] = DOMAIN_ERRORS
+  .map((entry) => entry.code)
+  .sort((left, right) => left.localeCompare(right));
+
 /** Generic fallback translation key for framework-originated HTTP statuses. */
 const HTTP_STATUS_FALLBACK_KEY: Record<number, I18nKey> = {
   [HttpStatus.BAD_REQUEST]: 'errors.http.bad_request',

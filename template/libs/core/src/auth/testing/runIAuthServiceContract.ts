@@ -46,17 +46,20 @@ function registration(email: string, displayName: string, secret: string): Regis
 /**
  * One attempt, assembled from shorthand.
  *
+ * **Every attempt in this suite says nothing about its client, and there is no
+ * parameter for saying otherwise.** What an implementation can tell about the
+ * client of a request is something only an implementation that *sees* the request
+ * can know, so it is asserted in {@link runIAuthServiceSecurityContract} and not
+ * here — the same split `reason` already had, and for the same reason. A
+ * parameter left here for a value no test in this file supplies would also be a
+ * branch no run takes, which this package's coverage gate does not admit.
+ *
  * @param email - the address as a person would have typed it
  * @param secret - what they offered as proof
- * @param client - what could be told about where they offered it from
  * @returns the attempt to hand the service
  */
-function attempt(
-  email: string,
-  secret: string,
-  client: ClientContext = UNKNOWN_CLIENT,
-): AuthenticationAttempt {
-  return { email, secret, client };
+function attempt(email: string, secret: string): AuthenticationAttempt {
+  return { email, secret, client: UNKNOWN_CLIENT };
 }
 
 /**
@@ -211,38 +214,35 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
           'the world must seed the actor from an address the domain has to normalize',
         );
 
-        // Named rather than written inline, because it is the right-hand side of an
-        // assertion below and not scene-setting.
+        // ## No client context is offered here, and its absence is the design
         //
-        // ## What this assertion does and does not pin, corrected after measurement
+        // This test used to pass a `ClientContext` and then assert that it came back
+        // on the session. **That assertion was moved to
+        // {@link runIAuthServiceSecurityContract}, where it belongs**, and the move
+        // is the same split `reason` already had: both are values only an
+        // implementation that *observes the request* can know.
         //
-        // It used to say "Nothing else in either suite pins this", implying that the
-        // two comparisons below are what stop an implementation dropping the client
-        // context. **They are not, and a host that believes they are will write a
-        // driver that cannot fail.** The two lines below read the session the
-        // implementation just *returned*, and an implementation is free to build that
-        // session out of the very arguments it was handed rather than out of whatever
-        // it stored — which is the ordinary, efficient thing to do, and which makes
-        // these two comparisons a value against itself.
+        // An implementation reached over a network cannot know either. The address is
+        // decided by the network and the label by the user agent; both are seen on the
+        // server's side, and a client that asserted them would be asserting something
+        // it cannot prove — which is why the API that serves this contract refuses a
+        // client-supplied one outright. Asking every implementation to make a
+        // caller-supplied client context reach the session therefore asked one of them
+        // to pretend, and a contract whose suite can only be satisfied by pretending
+        // has stopped being a contract. That is the same sentence `IAuthService` uses
+        // about renewal, and it is the same remedy.
         //
-        // Measured, not reasoned: against an implementation whose write dropped the
-        // client onto the floor and whose return value was built from its arguments,
-        // this whole suite passed, every test green.
-        //
-        // What catches that fault is the **wire-shape** test, which reads the session
-        // back out through `listSessions` — and only if the host promises the client
-        // it *asked for* rather than the client it reads back out of its own store. A
-        // host that reads both sides from the same place has two values that move
-        // together, and they agree on `null` as happily as on an address.
-        //
-        // So the obligation this comment exists to state is on the host, not on these
-        // two lines: **promise the client context the world supplied.** See
-        // `AuthServiceContractContext.actorSession`, which says the same thing where a
-        // driver author is reading.
-        const client: ClientContext = { address: '198.51.100.7', label: 'a client' };
-        const outcome = await service.authenticate(
-          attempt(actorEmailAsGiven, actorSecret, client),
-        );
+        // Two things were true before the move and stay true. The two comparisons this
+        // test made were never what caught a dropped client: they read the session the
+        // implementation had just *returned*, which an implementation is free to build
+        // out of the arguments it was handed — measured, and a whole suite stayed green
+        // against exactly that fault. And what does catch it is the **wire-shape** test
+        // below, which reads the session back out through `listSessions`, and only if
+        // the host promises the client it *asked for* rather than the client it reads
+        // back out of its own store. So the obligation that comment existed to state is
+        // on the host and is unchanged: **promise the client context the world
+        // supplied.** See `AuthServiceContractContext.actorSession`.
+        const outcome = await service.authenticate(attempt(actorEmailAsGiven, actorSecret));
         expect.equal(
           outcome.status,
           AuthenticationStatus.AUTHENTICATED,
@@ -280,16 +280,6 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
         expect.ok(
           authenticated.session.isActive(new Date()),
           'a session issued now must be usable now',
-        );
-        expect.equal(
-          authenticated.session.clientAddress,
-          client.address,
-          'what the caller could tell about the client must reach the session',
-        );
-        expect.equal(
-          authenticated.session.clientLabel,
-          client.label,
-          'what the caller could tell about the client must reach the session',
         );
       });
 

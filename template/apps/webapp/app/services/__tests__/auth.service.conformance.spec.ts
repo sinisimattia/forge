@@ -32,15 +32,17 @@ import { stubBackend } from './stubBackend';
  * breaks the symmetry, and it was confirmed by injection rather than assumed:
  * with the stub's `putSession` dropping `clientLabel`, the wire-shape test fails.
  *
- * ## One assertion in this suite is a statement about the stub
+ * ## What this suite no longer asks of this side
  *
- * `authenticate` asserts that the `ClientContext` the caller passed reaches the
- * session. A browser cannot make that true: the network decides the address and
- * the user agent decides the label, both are observed on the far side, and the
- * backend whitelists its login body so a client that tried to send either is
- * refused. `ApiRequest.client` therefore exists for this stub and a real
- * transport drops it. The assertion is honoured here and is **not** evidence
- * about production; `stubBackend.ts` says so where a reader will find it.
+ * It used to assert that the `ClientContext` a caller passed to `authenticate`
+ * came back on the session. A browser cannot make that true — the network
+ * decides the address, the user agent decides the label, and the backend
+ * whitelists its login body so a client that tried to send either is refused —
+ * so the assertion was true of a stub and false of the shipped webapp. It now
+ * lives in `runIAuthServiceSecurityContract`, driven by the implementation that
+ * observes the request. What remains here is the wire-shape test, which asks
+ * only that a client context the **world** holds survives the crossing, and that
+ * this driver can promise honestly because it seeds it.
  */
 
 /** The actor's address as the world is given it: a form the domain has to change. */

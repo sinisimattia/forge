@@ -85,6 +85,7 @@ webapp/
 │   ├── types/
 │   │   ├── ui.ts               # the library's own closed unions (IconName)
 │   │   ├── api.ts              # the wire's own vocabulary (ApiClient, the error envelope)
+│   │   ├── __tests__/          # the wire vocabulary pinned against the backend's own list
 │   │   └── index.ts            # the `~/types` barrel components import from
 │   ├── locales/
 │   │   └── en.json             # i18n strings (single file today)

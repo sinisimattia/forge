@@ -38,6 +38,27 @@
  * is what is written to the audit record: two implementations that disagreed
  * would produce two different histories of the same event, and a reader of one
  * could not compare it with the other.
+ *
+ * ## `UNDISCLOSED` is outside that order, and is the only member a caller may see
+ *
+ * Every member above it is a fact the implementation *found*. An implementation
+ * that reaches its accounts over a network finds none of them: the server it
+ * asks refuses to say which applied — that refusal being the whole of the
+ * enumeration property — so all five collapse into one answer on the way back.
+ *
+ * Such an implementation still has to produce a `reason`, because the union has
+ * one. Before this member existed it produced `INVALID_SECRET`, the first of the
+ * order, and **that value was always a lie**: it was written into a type that
+ * says it is knowledge, so a consumer switching on it would show "wrong
+ * password" to somebody whose account an administrator had blocked. A value that
+ * is always false is worse than an absent one for exactly that reason.
+ *
+ * So `UNDISCLOSED` means "this implementation was not told", and it is never the
+ * result of any judgement. It takes no place in the precedence order — nothing
+ * applies it and nothing compares against it — and an implementation that owns
+ * its own store must never return it, which
+ * {@link runIAuthServiceSecurityContract} pins by naming the exact member every
+ * refusal it can construct must carry.
  */
 export enum AuthenticationRejectionReason {
   /** No account answers to that address. */
@@ -50,4 +71,12 @@ export enum AuthenticationRejectionReason {
   ACCOUNT_SUSPENDED = 'ACCOUNT_SUSPENDED',
   /** The account was soft-deleted and is not to be resurrected by signing in. */
   ACCOUNT_DELETED = 'ACCOUNT_DELETED',
+  /**
+   * The implementation was not told why, and cannot find out.
+   *
+   * Only an implementation reached over a network answers this, and it answers
+   * nothing else. Nothing may branch on it as though it named a state: it names
+   * the absence of one. See this enum's own note.
+   */
+  UNDISCLOSED = 'UNDISCLOSED',
 }

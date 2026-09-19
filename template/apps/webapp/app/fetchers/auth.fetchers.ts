@@ -1,4 +1,4 @@
-import type { ClientContext, SessionId } from '__FORGE_SCOPE__/core/auth/types';
+import type { SessionId } from '__FORGE_SCOPE__/core/auth/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import type { ApiClient, AuthResponseBody, SessionResponseBody } from '~/types';
 
@@ -55,22 +55,20 @@ export async function postResendVerification(client: ApiClient, email: string): 
 /**
  * Attempts authentication. Rejects with an `ApiError` for a failed attempt.
  *
- * `observed` is passed to the transport and **not** put in the body. The body is
- * whitelisted server-side, so an extra field there is a `400`; and the two things
- * a client context describes are the two things a client may not assert about
- * itself. See `ApiRequest.client` for the whole of that, including what it means
- * for the conformance suite.
+ * The body is the address and the secret and nothing else. In particular it
+ * carries no description of the client: the server whitelists this body so an
+ * extra field is a `400`, and the two things a client context describes — the
+ * network address and the user agent — are the two things a client may not
+ * assert about itself. The server observes them.
  */
 export async function postLogin(
   client: ApiClient,
   attempt: { email: string; secret: string },
-  observed: ClientContext,
 ): Promise<AuthResponseBody> {
   return client<AuthResponseBody>({
     method: 'POST',
     path: '/auth/login',
     body: attempt,
-    client: observed,
     withCookie: true,
   });
 }

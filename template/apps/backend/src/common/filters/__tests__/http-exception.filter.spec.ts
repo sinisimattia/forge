@@ -7,7 +7,7 @@ import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policie
 import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/types';
 import { WeakPasswordError } from '__FORGE_SCOPE__/core/identities/errors';
 import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
-import { HttpExceptionFilter } from '../http-exception.filter';
+import { DOMAIN_ERROR_CODES, HttpExceptionFilter } from '../http-exception.filter';
 
 /**
  * Every member of `PasswordPolicyViolation`, kept honest by the compiler.
@@ -280,6 +280,47 @@ describe('HttpExceptionFilter', () => {
       // nothing. A caller sees a refusal it does not understand, which is what
       // this is.
       expect(body()).not.toHaveProperty('code');
+    });
+  });
+
+  /**
+   * The other half of a cross-check, and the only thing that can see the webapp's
+   * copy of this vocabulary drift away from it.
+   *
+   * `apps/webapp/app/types/__tests__/api-error-code.spec.ts` pins the same eleven
+   * names against the webapp's own list. The two apps share no package a wire
+   * error code could live in — it is transport vocabulary, so `libs/core` may not
+   * hold it (ADR-0008) — so the vocabulary is written twice, and a literal on
+   * each side is what sends whoever renames one to the other.
+   *
+   * Measured before this existed: renaming `TOKEN_CONSUMED` in all three webapp
+   * files that named it left the whole webapp suite green while this backend went
+   * on emitting `TOKEN_CONSUMED`, so `verifyEmail` would have stopped raising
+   * `ConsumedTokenError` in production with nothing to say so.
+   */
+  describe('the wire vocabulary this API emits', () => {
+    // Written out rather than computed from the table: a computed expectation
+    // would move with the value it is checking and could never fail.
+    it('is exactly the list the webapp expects', () => {
+      expect(DOMAIN_ERROR_CODES).toEqual([
+        'DISPLAY_NAME_REQUIRED',
+        'EMAIL_ALREADY_REGISTERED',
+        'IDENTITY_ALREADY_LINKED',
+        'IDENTITY_NOT_FOUND',
+        'INVALID_CREDENTIALS',
+        'LAST_IDENTITY_REMOVAL',
+        'SESSION_NOT_FOUND',
+        'TOKEN_CONSUMED',
+        'TOKEN_EXPIRED',
+        'USER_NOT_FOUND',
+        'WEAK_PASSWORD',
+      ]);
+    });
+
+    // A code named twice would let two different refusals answer alike, which is
+    // the one thing `code` exists to stop.
+    it('names each code once', () => {
+      expect(new Set(DOMAIN_ERROR_CODES).size).toBe(DOMAIN_ERROR_CODES.length);
     });
   });
 

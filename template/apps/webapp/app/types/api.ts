@@ -1,4 +1,4 @@
-import type { ClientContext, SessionJSON } from '__FORGE_SCOPE__/core/auth/types';
+import type { SessionJSON } from '__FORGE_SCOPE__/core/auth/types';
 import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/types';
 import type { UserId, UserJSON } from '__FORGE_SCOPE__/core/users/types';
 
@@ -31,25 +31,39 @@ export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
  * `401`, which means "your credential is not accepted" for the guard and "the
  * secret you offered is not yours" for a password change.
  *
- * **This union is a second copy of the backend's table** (`DOMAIN_ERRORS` in
+ * **This list is a second copy of the backend's table** (`DOMAIN_ERROR_CODES` in
  * `apps/backend/src/common/filters/http-exception.filter.ts`), and there is
  * nowhere shared to put it: it is transport vocabulary, so it may not live in
  * core, and the two apps share nothing else. A code the backend emits and this
- * union does not name arrives here as `undefined` and falls through to the
+ * list does not name arrives here as `undefined` and falls through to the
  * envelope's status, which is the safe direction to be wrong in.
+ *
+ * **Nothing else can catch the two copies drifting apart**, which is why it is a
+ * value rather than a bare union and why a test pins it to a literal list. The
+ * stub the conformance suites run against emits the very strings these services
+ * switch on, so the webapp stays internally consistent while becoming externally
+ * wrong: renaming `TOKEN_CONSUMED` here and in both files that use it left the
+ * whole webapp suite green while the backend went on emitting the old name. The
+ * literal list in `types/__tests__/api-error-code.spec.ts` — and its twin on the
+ * backend — is what turns that red, in one place or the other, so that whoever
+ * renames one is sent to the other.
  */
-export type ApiErrorCode
-  = | 'INVALID_CREDENTIALS'
-    | 'TOKEN_CONSUMED'
-    | 'TOKEN_EXPIRED'
-    | 'SESSION_NOT_FOUND'
-    | 'WEAK_PASSWORD'
-    | 'USER_NOT_FOUND'
-    | 'IDENTITY_NOT_FOUND'
-    | 'EMAIL_ALREADY_REGISTERED'
-    | 'IDENTITY_ALREADY_LINKED'
-    | 'LAST_IDENTITY_REMOVAL'
-    | 'DISPLAY_NAME_REQUIRED';
+export const API_ERROR_CODES = [
+  'DISPLAY_NAME_REQUIRED',
+  'EMAIL_ALREADY_REGISTERED',
+  'IDENTITY_ALREADY_LINKED',
+  'IDENTITY_NOT_FOUND',
+  'INVALID_CREDENTIALS',
+  'LAST_IDENTITY_REMOVAL',
+  'SESSION_NOT_FOUND',
+  'TOKEN_CONSUMED',
+  'TOKEN_EXPIRED',
+  'USER_NOT_FOUND',
+  'WEAK_PASSWORD',
+] as const;
+
+/** One of the names {@link API_ERROR_CODES} lists. */
+export type ApiErrorCode = typeof API_ERROR_CODES[number];
 
 /** One field-level complaint about a request body. */
 export interface ApiErrorDetail {
@@ -133,25 +147,6 @@ export interface ApiRequest {
    * had any chance to store it.
    */
   readonly credential?: string;
-  /**
-   * What the implementation as a whole can tell about the client this request
-   * comes from.
-   *
-   * **A browser can tell nothing, and `createApiClient` therefore ignores it.**
-   * The network decides the address and the user agent decides the label, and
-   * both are observed on the server's side of the wire — deliberately, because a
-   * value the client chose is a value an attacker chose, and the backend's login
-   * endpoint whitelists its body so an extra field is refused outright.
-   *
-   * It is carried because `IAuthService.authenticate` takes a `ClientContext`
-   * and because a transport that stands in for the network as well as for the
-   * server — the conformance stub — is the only thing that can act on one. Read
-   * `ApiClient` implementations accordingly: a real one drops this, and the
-   * shared suite's assertion that a client context reaches the session is
-   * therefore a statement about the stub, not about production. That gap is real
-   * and is not this file's to close; see `services/__tests__/stubBackend.ts`.
-   */
-  readonly client?: ClientContext;
   /**
    * Whether the browser's renewal cookie travels with this request.
    *

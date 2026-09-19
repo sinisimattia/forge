@@ -253,6 +253,56 @@ export function runIAuthServiceSecurityContract(
           'everything a caller could see must be identical for the two cases',
         );
       });
+
+      /*
+       * This assertion used to live in the shared suite, and moving it here is
+       * the same split `reason` has.
+       *
+       * What an implementation can tell about the client an attempt came from is
+       * something only an implementation that **sees the request** can know: the
+       * address is decided by the network and the label by the user agent, and
+       * both are observed on the serving side. An implementation reached over a
+       * network cannot supply either — a client that asserted its own address
+       * would be asserting what it cannot prove, which is why an API serving this
+       * contract refuses a client-supplied one. Asking every implementation to
+       * make a caller-supplied client context reach the session therefore asked
+       * one of them to pretend, and it did: the assertion passed against a
+       * transport stub and was false of the same code in production.
+       *
+       * It is read back through `listSessions` rather than off the outcome, and
+       * that is the whole of why it can fail. An implementation is free to build
+       * the session it *returns* out of the arguments it was handed — the
+       * ordinary, efficient thing to do — so an assertion on the returned session
+       * compares a value with itself. Reading it back asks the store.
+       */
+      it('records what it could tell about the client, and shows it to the owner', async () => {
+        const { service, actorId, actorEmail, actorSecret } = await makeContext();
+        // A literal, and the right-hand side of the two comparisons below: what
+        // the world asked for, which the implementation gets no vote on.
+        const client: ClientContext = { address: '198.51.100.7', label: 'a client' };
+        const outcome = await service.authenticate(attempt(actorEmail, actorSecret, client));
+        expect.equal(
+          outcome.status,
+          AuthenticationStatus.AUTHENTICATED,
+          'the actor\'s own secret must authenticate them',
+        );
+        const opened = (outcome as AuthenticatedOutcome).session;
+
+        const listed = await service.listSessions(actorId);
+        const stored = listed.filter((held) => held.id === opened.id)[0];
+        expect.ok(stored, 'the session just opened must appear in the actor\'s own list');
+
+        expect.equal(
+          stored.clientAddress,
+          client.address,
+          'what the implementation could tell about the client must reach the store',
+        );
+        expect.equal(
+          stored.clientLabel,
+          client.label,
+          'what the implementation could tell about the client must reach the store',
+        );
+      });
     });
 
     describe('resetPassword', () => {

@@ -30,10 +30,30 @@ import { FakeDataSource, recordingAudit } from '../../common/testing';
 /**
  * # D7 — a known address and an unknown one are indistinguishable
  *
- * Three endpoints take an address from somebody who has proven nothing:
- * signing in, asking for a recovery link, and registering. Each of them knows
- * something a stranger would like to learn — whether that address has an
- * account here — and each of them must answer without carrying it.
+ * **Four** endpoints take an address from somebody who has proven nothing:
+ * signing in, asking for a recovery link, registering, and asking for
+ * verification to be sent again. Each of them knows something a stranger would
+ * like to learn — whether that address has an account here — and each of them
+ * must answer without carrying it.
+ *
+ * **This file exercises the first three.** It said "three" for a phase after the
+ * fourth was added, which is the kind of sentence that quietly becomes a
+ * coverage claim nobody checks, so where the fourth is held is written down
+ * rather than left to be assumed:
+ *
+ * - `AuthService.resendVerification` answers alike for an unknown address, an
+ *   address already proven, and one whose account has been closed — asserted in
+ *   `auth.service.spec.ts`, and again by core's shared conformance suite
+ *   (`no enumeration oracle › resends verification for an address nothing
+ *   answers to`). Injecting a `UserNotFoundError` for an unknown address turns
+ *   both red.
+ * - `AuthController.resendVerification` does not branch — asserted in
+ *   `auth.controller.spec.ts` (`answers a known and an unknown address
+ *   identically`), against a stubbed service, which is what that test claims.
+ *
+ * What no test covers for the fourth is the shape this file is built to check:
+ * the **whole** response, headers included, compared between the two cases. If
+ * this file grows a fourth endpoint, that is the gap it closes.
  *
  * ## Why every assertion here compares two responses instead of checking one
  *
