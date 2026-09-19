@@ -78,8 +78,15 @@ export const PLATFORM_ADMIN_PASS = 'auth:platformAdminPass';
  * is not one. The asymmetry is stated rather than hidden — unlike every other
  * entry in this backend, this one is written *after* the operation it describes
  * has committed, so the 500 says "this action happened and could not be
- * recorded" and not "this action did not happen". Retrying is safe: the four
- * administrative routes are a read, a read, and two idempotent writes.
+ * recorded" and not "this action did not happen".
+ *
+ * Retrying is safe for every route this guard protects today, because each is
+ * either a read or an idempotent write — setting a status or a platform role to
+ * a value it may already hold. That is a property of the current routes and not
+ * a rule the code enforces: whoever adds a non-idempotent administrative route
+ * is the person who has to decide what a failed audit write should do to it.
+ * Stated as a condition rather than a count, because a count of them was wrong
+ * here within one round of being written.
  */
 @Injectable()
 export class PlatformAdminOverrideInterceptor implements NestInterceptor {

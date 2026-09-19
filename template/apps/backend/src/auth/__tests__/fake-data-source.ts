@@ -55,11 +55,48 @@ type EntityClass = { name: string };
  *   UPDATE` under `READ COMMITTED`: the waiter does not fail, it waits, and
  *   then sees what the winner committed.
  *
- * What it does **not** model is everything else a database does — no SQL, no
- * constraints, no isolation beyond the row lock. It is not evidence that
- * Postgres behaves this way; the task report records a separate run against a
- * real Postgres 16 for that. It is evidence that *this implementation asks for
- * the lock*, which is the half a unit test can own.
+ * What it does **not** model is everything else a database does. It is not
+ * evidence that Postgres behaves any particular way; the task report records a
+ * separate run against a real Postgres 16 for that. It is evidence that *this
+ * implementation asks for the lock*, which is the half a unit test can own.
+ *
+ * ## Properties this double CANNOT express
+ *
+ * Written out rather than left to be discovered, because the failure mode of an
+ * undocumented limit is a test that passes for a reason its author never
+ * intended — and a property asserted only here is a property nothing checks.
+ * Anything in this list needs a real database (Task 19 stands one up); do not
+ * reach for this fake to prove it.
+ *
+ * 1. **Isolation.** A concurrent reader sees this transaction's uncommitted
+ *    writes — a dirty read, which no isolation level permits. "A reader never
+ *    sees a half-done change" is unfalsifiable here.
+ * 2. **Blocking.** Two writers to one row both proceed; Postgres makes the
+ *    second wait. The rollback declines to overwrite a later writer (see
+ *    `update`), which gets the outcome right and the mechanism wrong.
+ * 3. **Audit immutability.** This fake will happily `update` and `delete` an
+ *    `audit_entries` row. The revoked `UPDATE`/`DELETE` privilege is a grant in
+ *    a migration, and it is the premise several comments in this backend lean on
+ *    — including `changePasswordAndReissue`'s. **Nothing in this suite asserts
+ *    it.** It is the most load-bearing item on this list.
+ * 4. **Unique constraints.** None, anywhere. Duplicate registration under a race
+ *    and one-password-identity-per-user cannot fail here; `register`'s
+ *    `23505` branch is reached only by a test that throws the error itself.
+ * 5. **Schema and column checking.** A property with no column behind it is
+ *    stored and read back. Entity-versus-migration drift is invisible.
+ * 6. **`ILIKE` semantics.** `%` is modelled; `_` is a single-character wildcard
+ *    in SQL and a literal here. `UsersService.listUsers` passes a caller's text
+ *    straight into `ILIKE '%…%'`, so a search containing `_` or `%` behaves
+ *    differently in production than in every test on this fake.
+ * 7. **`NOT NULL`, foreign keys, cascades and column defaults.** All absent. A
+ *    row referencing a user that does not exist is fine here.
+ * 8. **Tie ordering.** `sortRows` is a stable JS sort, so two audit entries
+ *    sharing an instant page deterministically here while Postgres gives no
+ *    order for a tie without a tie-break key. `AuditService.query` supplies one
+ *    (`id DESC`); a future query that forgets to would look correct here.
+ * 9. **`delete` inside a transaction.** `FakeEntityManager` has none, so such a
+ *    delete is a compile error rather than an unjournalled write. Deliberate,
+ *    and the one limit on this list that fails loudly.
  */
 export class FakeDataSource {
   private readonly tables = new Map<string, Row[]>();
@@ -233,8 +270,22 @@ export class FakeDataSource {
    *
    * @param journal - see {@link FakeDataSource.insert}. The undo restores the
    *   previous value of exactly the keys this patch touched, on exactly the rows
-   *   it matched — not the whole row, so a field another transaction changed in
-   *   the meantime is left alone.
+   *   it matched, **and only where the current value is still the one this
+   *   transaction wrote**.
+   *
+   *   That last condition is not fussiness. Without it a losing transaction's
+   *   undo writes its own pre-transaction value over a key a *later* transaction
+   *   has since set — so rolling back one transaction silently discards
+   *   another's committed write. The journal was added to fix the whole-table
+   *   form of exactly that bug and reproduced it at key granularity until this
+   *   check was added; the doc here used to claim "a field another transaction
+   *   changed is left alone", which was true only of a DIFFERENT key.
+   *
+   *   What this still is not: blocking. Postgres under READ COMMITTED makes the
+   *   second writer wait for the first to finish; this fake lets both through
+   *   and then declines to undo over the winner. The outcome for the shipped
+   *   assertions is the same and the mechanism is not — see
+   *   {@link FakeDataSource} for the full list of what this double cannot say.
    */
   public update(
     entity: EntityClass,
@@ -247,7 +298,13 @@ export class FakeDataSource {
       if (!matches(row, criteria)) continue;
       const before: Row = {};
       for (const key of Object.keys(patch)) before[key] = row[key];
-      journal?.push(() => Object.assign(row, before));
+      const written: Row = { ...patch };
+      journal?.push(() => {
+        for (const key of Object.keys(written)) {
+          // Only where nothing has overwritten what this transaction wrote.
+          if (row[key] === written[key]) row[key] = before[key];
+        }
+      });
       Object.assign(row, patch);
       changed += 1;
     }

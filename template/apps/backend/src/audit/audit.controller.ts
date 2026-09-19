@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import { IsDate, IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
@@ -6,7 +6,8 @@ import type { AuditEntryJSON } from '__FORGE_SCOPE__/core/audit/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import type { PaginatedResponse } from '../common/types';
 import { CurrentUser } from '../auth/decorators';
-import { PlatformAdminGuard } from '../auth/guards';
+import type { Request } from 'express';
+import { PLATFORM_ADMIN_PASS, PlatformAdminGuard, type PlatformAdminPass } from '../auth/guards';
 import type { AuthenticatedActor } from '../auth/strategies';
 import { AuditService } from './audit.service';
 
@@ -124,6 +125,7 @@ export class AuditController {
   public async list(
     @CurrentUser() actor: AuthenticatedActor,
     @Query() query: AuditQueryDto,
+    @Req() request: Request & { [PLATFORM_ADMIN_PASS]?: PlatformAdminPass },
   ): Promise<PaginatedResponse<AuditEntryJSON> & { meta: { asOf: string } }> {
     const page = await this.audit.query(actor.userId, {
       page: query.page,
@@ -136,12 +138,13 @@ export class AuditController {
       ...(query.action === undefined ? {} : { action: query.action }),
     });
 
+    const bound = AuditController.boundFor(query, page.data, request[PLATFORM_ADMIN_PASS]);
     return {
       data: page.data.map((entry) => entry.toJSON()),
       // Echoed back, as an instant on the wire. It is `meta` and not a header
       // because it is part of the answer: "this is the world these totals were
       // counted in", and a caller that drops it gets a different world next page.
-      meta: { ...page.meta, asOf: AuditController.boundFor(query, page.data).toISOString() },
+      meta: { ...page.meta, asOf: bound.toISOString() },
     };
   }
 
@@ -164,15 +167,38 @@ export class AuditController {
    * exact rather than probabilistic: everything this traversal goes on to record
    * is newer than every row it has already been shown, so all of it is outside.
    *
-   * An empty page has no newest entry, and nothing to page through either, so the
-   * request instant is as good an answer as any and the caller will not use it.
+   * **An empty page has no entry to take one from, and `new Date()` is wrong
+   * there for exactly the reason it is wrong everywhere else** — it is read in
+   * the handler, after the guard stamped this request's own override, so a
+   * caller who filtered their first page down to nothing and then widened it
+   * would be handed a bound that includes the read they just made. That is the
+   * original defect surviving in the one branch nobody asserted, which is why
+   * this branch now has a test of its own.
+   *
+   * What it answers instead is the last instant that certainly precedes anything
+   * this request can have caused: one millisecond before the guard passed. The
+   * millisecond is the column's own resolution, and it costs nothing here —
+   * the page it applies to is empty by definition, so there is no entry in that
+   * millisecond to lose.
+   *
+   * With no pass on the request there is no override to exclude, so the request
+   * instant is exact rather than merely harmless. That is the unguarded case,
+   * which does not arise on this route today and would be somebody's mistake if
+   * it did.
    *
    * @param query - what the caller asked for
    * @param data - the entries this page answered with, newest first
+   * @param pass - the platform-administrative pass this request made, if any
    * @returns the bound to echo
    */
-  private static boundFor(query: AuditQueryDto, data: { occurredAt: Date }[]): Date {
+  private static boundFor(
+    query: AuditQueryDto,
+    data: { occurredAt: Date }[],
+    pass?: PlatformAdminPass,
+  ): Date {
     if (query.asOf !== undefined) return query.asOf;
-    return data.length === 0 ? new Date() : data[0].occurredAt;
+    if (data.length > 0) return data[0].occurredAt;
+    if (pass === undefined) return new Date();
+    return new Date(pass.occurredAt.getTime() - 1);
   }
 }

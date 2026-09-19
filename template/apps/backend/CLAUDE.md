@@ -173,12 +173,14 @@ The **Location** column is where the class is defined. Where a utility is *regis
 is a separate question and the answer is the same for the first three: they are `APP_*`
 entries in `GLOBAL_PROVIDERS` in `app.module.ts`, **not** imperative calls in `main.ts`.
 That distinction is the whole reason they are assertable — see `app.setup.ts`'s own
-comment for what it cost when they lived in `bootstrap()`.
+comment for what it cost when they lived in `bootstrap()`. There are two
+`APP_INTERCEPTOR` entries, not one; `app.module.ts` is the list.
 
 | Utility                | Defined in                  | Registered as | Purpose                                                  |
 | ----------------------- | ---------------------------- | --- | --------------------------------------------------------- |
 | `HttpExceptionFilter`   | `src/common/filters/`        | `APP_FILTER` | Global exception filter → standard error shape           |
 | `I18nResponseInterceptor` | `src/common/interceptors/` | `APP_INTERCEPTOR` | Translates a `messageKey` success payload into `message`  |
+| `PlatformAdminOverrideInterceptor` | `src/auth/guards/` | `APP_INTERCEPTOR` | Writes the `PLATFORM_ADMIN_OVERRIDE` entry `PlatformAdminGuard` marks, **after** the handler — so a read of `/audit` is not inside the page it returns. Does nothing unless that guard marked the request. |
 | `I18nValidationPipe`    | `nestjs-i18n`                 | `APP_PIPE` | Localized class-validator integration, with `whitelist` + `forbidNonWhitelisted` |
 | `JwtAuthGuard`          | `src/auth/guards/`            | `APP_GUARD` | Closes every route not marked `@Public()` |
 | `PlatformAdminGuard`    | `src/auth/guards/`            | per-route `@UseGuards` | Closes a route to all but a platform administrator, and records every pass |

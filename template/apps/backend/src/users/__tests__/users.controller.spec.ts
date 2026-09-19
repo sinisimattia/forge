@@ -40,12 +40,14 @@ import { UsersService } from '../users.service';
  *   route is real and — on `GET /users/:id` — that the id in it names a real
  *   account, which is an enumeration oracle over every account on the
  *   deployment.
- * - That the four administrative routes are guarded **at all**. Deleting
- *   `@UseGuards(PlatformAdminGuard)` from one of them breaks no type and fails
- *   no lint rule; the service's own check keeps refusing, so a test asserting
- *   only "it was refused" stays green. The status is what changes, from 404 to
- *   403, and the table below is driven over every route so that no route can be
- *   forgotten one at a time.
+ * - That every administrative route on this controller is guarded **at all**.
+ *   Deleting `@UseGuards(PlatformAdminGuard)` from one of them breaks no type
+ *   and fails no lint rule; the service's own check keeps refusing, so a test
+ *   asserting only "it was refused" stays green. The status is what changes,
+ *   from 404 to 403, and {@link ADMIN_ROUTES} below drives the assertion over
+ *   each of them so that none can be forgotten one at a time. The table is the
+ *   list — no prose here repeats how many there are, because a count written
+ *   beside a list is a count that goes stale the first time the list grows.
  */
 
 const SIGNING_KEY = 'users-controller-spec-signing-key';

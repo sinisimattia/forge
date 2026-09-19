@@ -14,6 +14,7 @@ import {
   WeakPasswordError,
 } from '__FORGE_SCOPE__/core/identities/errors';
 import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policies';
+import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/types';
 import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
 import {
   EmailAlreadyRegisteredError,
@@ -45,10 +46,32 @@ interface ResponseDetail {
  */
 interface ResponseViolation {
   /** Core's `PasswordPolicyViolation` member. */
-  code: string;
+  code: PasswordPolicyViolation;
   /** The same reason, translated. */
   message: string;
 }
+
+/**
+ * The translation key for every way a password can be refused.
+ *
+ * A `Record` keyed by the union rather than a template string, and the
+ * difference is the whole point: `` `errors.auth.password.${violation}` `` reads
+ * fine and silently emits a raw key as the user-facing message the day the union
+ * grows a member with no translation behind it. This map does not compile
+ * without every member — and the union grew one two rounds ago (`BREACHED`), so
+ * that is a live hazard and not a hypothetical.
+ *
+ * `__tests__/http-exception.filter.spec.ts` carries the other half: that each of
+ * these keys resolves to real prose in `i18n/en/errors.json`, which the compiler
+ * cannot see.
+ */
+const PASSWORD_VIOLATION_KEYS: Record<PasswordPolicyViolation, I18nKey> = {
+  TOO_SHORT: 'errors.auth.password.TOO_SHORT',
+  TOO_LONG: 'errors.auth.password.TOO_LONG',
+  NEEDS_MIXED_CASE: 'errors.auth.password.NEEDS_MIXED_CASE',
+  NEEDS_DIGIT: 'errors.auth.password.NEEDS_DIGIT',
+  BREACHED: 'errors.auth.password.BREACHED',
+};
 
 /**
  * The numbers the password messages interpolate.
@@ -197,7 +220,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       if (exception instanceof WeakPasswordError) {
         violations = exception.violations.map((violation) => ({
           code: violation,
-          message: translate(`errors.auth.password.${violation}` as I18nKey, POLICY_ARGS),
+          message: translate(PASSWORD_VIOLATION_KEYS[violation], POLICY_ARGS),
         }));
         if (violations.length === 1) message = violations[0].message;
       }

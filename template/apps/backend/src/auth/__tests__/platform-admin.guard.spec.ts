@@ -70,6 +70,19 @@ class ProbeController {
   public open(): { reached: true } {
     return { reached: true };
   }
+
+  /**
+   * A guarded route whose handler fails.
+   *
+   * It exists for the interceptor's error path, which nothing else in this
+   * backend reaches: every other guarded handler succeeds. That branch shipped
+   * under a paragraph asserting it was there, and replacing it with a plain
+   * re-raise left all 379 tests green.
+   */
+  @Get('broken')
+  public broken(): never {
+    throw new Error('the handler failed after the guard had already passed');
+  }
 }
 
 describe('PlatformAdminGuard', () => {
@@ -163,6 +176,52 @@ describe('PlatformAdminGuard', () => {
       .expect(404);
 
     expect(overrides()).toHaveLength(0);
+  });
+
+  it('records the pass even when the handler then fails', async () => {
+    // The event recorded is the PASS, which has already happened by the time any
+    // handler runs — a handler that throws does not un-pass it, and an
+    // administrator whose request failed is exactly as interesting to whoever
+    // reads the history afterwards. Recording only on success would make a
+    // failing administrative route the one kind of pass that leaves no trace,
+    // which is the trace somebody looks for first.
+    //
+    // This is the ninth time in this phase that a sentence in a comment was true
+    // and depended on a branch no test exercised. The branch is
+    // `PlatformAdminOverrideInterceptor`'s `catchError`; replacing it with a
+    // plain re-raise left all 379 tests green.
+    await request(app.getHttpServer())
+      .get('/probe/broken')
+      .set('Authorization', bearer(ROOT))
+      .expect(500);
+
+    expect(overrides()).toHaveLength(1);
+    expect(overrides()[0].actorUserId).toBe(ROOT);
+    expect((overrides()[0].metadata as { path: string }).path).toContain('/probe/broken');
+  });
+
+  it('writes exactly one entry for a failing request, not two', async () => {
+    // Both `tap` paths run `write`, which clears the marker before doing
+    // anything precisely so the success path and the error path cannot both
+    // write for one request. Asserted rather than trusted: this table refuses
+    // UPDATE and DELETE, so a duplicate is permanent.
+    await request(app.getHttpServer())
+      .get('/probe/broken')
+      .set('Authorization', bearer(ROOT))
+      .expect(500);
+
+    expect(overrides()).toHaveLength(1);
+  });
+
+  it('still answers the handler\'s own failure, not the interceptor\'s success', async () => {
+    // The original error has to survive being re-raised past the write. An
+    // interceptor that swallowed it would turn a broken administrative route
+    // into a silent 200.
+    const response = await request(app.getHttpServer())
+      .get('/probe/broken')
+      .set('Authorization', bearer(ROOT));
+
+    expect(response.status).toBe(500);
   });
 
   it('refuses an ordinary account, having read its standing from the row', async () => {

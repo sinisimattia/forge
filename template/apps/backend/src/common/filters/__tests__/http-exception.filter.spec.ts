@@ -1,10 +1,29 @@
 import { ArgumentsHost, BadRequestException, HttpStatus, NotFoundException } from '@nestjs/common';
 import { I18nContext, I18nValidationException } from 'nestjs-i18n';
 import { ConsumedTokenError, ExpiredTokenError, SessionNotFoundError } from '__FORGE_SCOPE__/core/auth/errors';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policies';
+import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/types';
 import { WeakPasswordError } from '__FORGE_SCOPE__/core/identities/errors';
 import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
 import { HttpExceptionFilter } from '../http-exception.filter';
+
+/**
+ * Every member of `PasswordPolicyViolation`, kept honest by the compiler.
+ *
+ * A union is a type and has no runtime value to iterate. Declaring the list as a
+ * `Record` over the union rather than a plain array means a member added to core
+ * without being added here is a build failure rather than a member this suite
+ * quietly stops covering.
+ */
+const EVERY_VIOLATION = Object.keys({
+  TOO_SHORT: true,
+  TOO_LONG: true,
+  NEEDS_MIXED_CASE: true,
+  NEEDS_DIGIT: true,
+  BREACHED: true,
+} satisfies Record<PasswordPolicyViolation, true>) as PasswordPolicyViolation[];
 
 describe('HttpExceptionFilter', () => {
   let filter: HttpExceptionFilter;
@@ -144,6 +163,35 @@ describe('HttpExceptionFilter', () => {
       expect(body().violations[0].message).toContain(
         `"minLength":${DEFAULT_PASSWORD_POLICY.minLength}`,
       );
+    });
+
+    it('has real prose for every way a password can be refused', () => {
+      // The compiler pins that every union member has a KEY
+      // (`PASSWORD_VIOLATION_KEYS` is a `Record` over the union and does not
+      // compile without one). Nothing pins that the key resolves, and a key that
+      // resolves to nothing is emitted verbatim as the message a person reads.
+      // The fifth member was added two rounds ago, so this is live.
+      //
+      // Read out of the shipped translation file rather than asserted against
+      // literals: the file is what `I18nModule` loads.
+      const english = JSON.parse(
+        readFileSync(join(__dirname, '..', '..', '..', 'i18n', 'en', 'errors.json'), 'utf8'),
+      ) as { auth: { password: Record<string, string> } };
+
+      for (const violation of EVERY_VIOLATION) {
+        const prose = english.auth.password[violation];
+        expect(typeof prose).toBe('string');
+        expect(prose).not.toBe('');
+      }
+    });
+
+    it('lists every member of the union it claims to cover', () => {
+      // `EVERY_VIOLATION` is derived from a `Record` keyed by the union, so the
+      // compiler refuses a missing member. The count is a second, cheaper guard
+      // against somebody widening the type and the record together while
+      // forgetting the English.
+      expect(EVERY_VIOLATION).toHaveLength(5);
+      expect(new Set(EVERY_VIOLATION).size).toBe(EVERY_VIOLATION.length);
     });
 
     it('promotes the one reason to the message when there is only one', () => {

@@ -45,6 +45,9 @@ const ADA = '11111111-1111-4111-8111-111111111111' as UserId;
 const ROOT = '22222222-2222-4222-8222-222222222222' as UserId;
 const SESSION = '33333333-3333-4333-8333-333333333333' as SessionId;
 
+/** A well-formed actor id no entry names, so a filter on it matches nothing. */
+const GONE = '44444444-4444-4444-8444-444444444444' as UserId;
+
 const EPOCH = new Date('2026-09-18T10:00:00.000Z');
 
 const userRow = (id: string, platformRole: PlatformRole): Record<string, unknown> => ({
@@ -314,6 +317,31 @@ describe('AuditController', () => {
         .expect(200);
 
       expect(again.body.meta.total).toBe(3);
+    });
+
+    it('echoes a usable bound even when the page it answered was empty', async () => {
+      // The branch nobody asserted. An empty page has no entry to take a bound
+      // from, and the obvious answer — "now" — is wrong for exactly the reason it
+      // is wrong everywhere else: it is read after the guard stamped this
+      // request's own override, so a caller who filtered down to nothing and
+      // then widened would be handed a bound that includes the read they just
+      // made. Measured before the fix: the widened page came back holding the
+      // override from the filtered one.
+      const empty = await request(app.getHttpServer())
+        .get(`/audit?actorId=${GONE}`)
+        .set('Authorization', bearer(ROOT))
+        .expect(200);
+      expect(empty.body.data).toEqual([]);
+
+      const widened = await request(app.getHttpServer())
+        .get(`/audit?asOf=${encodeURIComponent(empty.body.meta.asOf)}`)
+        .set('Authorization', bearer(ROOT))
+        .expect(200);
+
+      expect(
+        widened.body.data.map((entry: { action: string }) => entry.action),
+      ).not.toContain(AuditAction.PLATFORM_ADMIN_OVERRIDE);
+      expect(widened.body.meta.total).toBe(3);
     });
 
     it('refuses a bound that is not an instant', async () => {
