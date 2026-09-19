@@ -38,6 +38,7 @@
     "eslint": "^9.39.3",
     "eslint-plugin-storybook": "~9.0.5",
     "happy-dom": "^20.10.6",
+    "sass": "^1.104.1",
     "storybook": "~9.0.5",
     "typescript": "^5.9.3",
     "vitest": "^4.1.9",

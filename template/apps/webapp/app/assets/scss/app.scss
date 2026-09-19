@@ -1,0 +1,6 @@
+// The Tailwind entry point. `nuxt.config.ts` points `tailwindcss.cssPath` here, which is
+// also what makes this the one place the directives are processed — see the note there.
+// A generated project adds its own `@font-face`/font imports and global rules below.
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

@@ -22,6 +22,10 @@ export default defineNuxtConfig({
     public: {
       // Overridden via `NUXT_PUBLIC_API_BASE` (see .env.example / compose.yaml).
       apiBase: 'http://localhost:3000',
+      // The product name rendered as the wordmark by `AppLogo`. It lives in runtimeConfig
+      // rather than in the component so a deployment can override it (`NUXT_PUBLIC_APP_NAME`)
+      // without a rebuild.
+      appName: '__FORGE_TITLE__',
     },
   },
 
@@ -52,14 +56,37 @@ export default defineNuxtConfig({
   },
 
   // Atomic Design layers register without a path prefix (AppButton, not
-  // AtomsAppButton). Only `atoms` exists in this skeleton; Phase 2 adds the
-  // `molecules` / `organisms` / `templates` entries alongside those directories.
+  // AtomsAppButton). All four are registered even though `organisms` currently holds
+  // nothing: Nuxt tolerates an empty directory here, and registering it now means an
+  // organism can be added without also remembering to edit this list.
   components: [
     { path: '~/components/atoms', pathPrefix: false },
+    { path: '~/components/molecules', pathPrefix: false },
+    { path: '~/components/organisms', pathPrefix: false },
+    { path: '~/components/templates', pathPrefix: false },
   ],
 
+  // `app.scss` holds the @tailwind base/components/utilities directives, so it *is* the
+  // Tailwind entry. Declaring it via `cssPath` (rather than `css`) stops the module falling
+  // back to its bundled default — which otherwise processes the @tailwind directives a
+  // second time and logs "Using default Tailwind CSS file".
   tailwindcss: {
-    cssPath: '~/assets/css/main.css',
+    cssPath: '~/assets/scss/app.scss',
+  },
+
+  // Every `<style lang="scss">` block gets the variables and mixins prepended, so a
+  // component can use `$font-family-logo` or `@include truncate` without importing them.
+  // `@use` is not additive the way the old `@import` was: without this, each block would
+  // need its own `@use` line and forgetting one is a build error, not a silent miss.
+  vite: {
+    css: {
+      preprocessorOptions: {
+        scss: {
+          additionalData:
+            '@use "~/assets/scss/variables" as *; @use "~/assets/scss/mixins" as *;',
+        },
+      },
+    },
   },
 
   devServer: {

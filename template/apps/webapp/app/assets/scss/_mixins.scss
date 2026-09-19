@@ -1,0 +1,40 @@
+// Responsive breakpoint mixin
+@mixin breakpoint-up($bp) {
+  @if $bp == sm {
+    @media (min-width: $breakpoint-sm) {
+      @content;
+    }
+  } @else if $bp == md {
+    @media (min-width: $breakpoint-md) {
+      @content;
+    }
+  } @else if $bp == lg {
+    @media (min-width: $breakpoint-lg) {
+      @content;
+    }
+  } @else if $bp == xl {
+    @media (min-width: $breakpoint-xl) {
+      @content;
+    }
+  }
+}
+
+// Truncate text with ellipsis
+@mixin truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// Visually hidden (accessible)
+@mixin sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
