@@ -1,3 +1,4 @@
+import { normalizeEmail } from '../../shared/policies/normalizeEmail';
 import { AuthIdentity } from '../entities/AuthIdentity';
 import { AuthProvider } from '../enums/AuthProvider';
 import { IdentityNotFoundError } from '../errors/IdentityNotFoundError';
@@ -188,8 +189,15 @@ export function runIIdentityServiceContract(deps: IIdentityServiceContractDeps):
         const promised = actorIdentities
           .filter((identity) => identity.provider === AuthProvider.PASSWORD)[0];
         expect.ok(promised, 'the world must hold a password identity for the actor');
+        // A property of the **seed**, which is what a host can get wrong about
+        // it. It used to read `promised.providerAccountId !==
+        // passwordAccountIdAsGiven`, which is a different claim wearing the same
+        // words: `promised` is an entity and `AuthIdentity` normalizes a password
+        // identifier unconditionally, so that comparison held whenever the seed
+        // was non-normal and could never detect the condition it named. See the
+        // same correction, at length, in `runIUserServiceContract`.
         expect.ok(
-          promised.providerAccountId !== passwordAccountIdAsGiven,
+          passwordAccountIdAsGiven !== normalizeEmail(passwordAccountIdAsGiven),
           'the world must seed the password identity in a form the domain has to normalize',
         );
 
@@ -209,6 +217,16 @@ export function runIIdentityServiceContract(deps: IIdentityServiceContractDeps):
         expect.equal(actual.id, expected.id);
         expect.equal(actual.userId, expected.userId);
         expect.equal(actual.provider, expected.provider);
+        // Against the seed put through the domain's rule as well as against the
+        // promised identity. A host that built `actorIdentities` by calling the
+        // service under test makes the second comparison a value against itself
+        // — unfailable, and silently so — and only the first survives that. The
+        // preamble's rule about tautologies applies to this suite too.
+        expect.equal(
+          actual.providerAccountId,
+          normalizeEmail(passwordAccountIdAsGiven),
+          'the emitted account identifier must be the normal form of the one the world was given',
+        );
         expect.equal(actual.providerAccountId, expected.providerAccountId);
         expect.equal(actual.createdAt, expected.createdAt);
         expect.equal(actual.lastUsedAt, expected.lastUsedAt);

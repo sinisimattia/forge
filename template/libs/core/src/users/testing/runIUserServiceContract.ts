@@ -1,3 +1,4 @@
+import { normalizeEmail } from '../../shared/policies/normalizeEmail';
 import { User } from '../entities/User';
 import { PlatformRole } from '../enums/PlatformRole';
 import { UserStatus } from '../enums/UserStatus';
@@ -36,25 +37,57 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
         expect.equal(profile.displayName, actor.displayName);
       });
 
-      // The world was built from an address that is not in normal form, and
-      // `actor` carries the normal form; comparing the two is what an
-      // implementation returning the address it was given fails.
+      // The world was built from an address that is not in normal form, so an
+      // implementation that hands back the address it was given fails here.
       //
-      // Which is true only while the world honours that promise, so the promise
-      // is checked and not assumed. A host that seeded an address already in
-      // normal form would leave this assertion comparing a value to itself —
-      // unfailable, and silently so. Checked here as well as in the wire-shape
-      // test because either test can be run on its own, and each has to say why
-      // it is worth running.
+      // ## Two right-hand sides, and the first one is the load-bearing one
+      //
+      // `normalizeEmail(actorEmailAsGiven)` comes from the address the world
+      // says it was given and from the domain's own rule — from neither the
+      // store, nor the implementation, nor the host's own mapping of a row.
+      // `actor.email` comes from the world. Both are compared, and they catch
+      // different things: the second catches a service that answers about some
+      // other account, the first catches a service that answers about the right
+      // account in the wrong form.
+      //
+      // The first one is here because the second is not enough, and the gap was
+      // real rather than theoretical. A host is free to build the `actor` it
+      // promises by *calling the service it is testing* — nothing here can stop
+      // it, and it is the obvious thing to write. Do that and `profile.email`
+      // and `actor.email` are one value compared with itself: unfailable, and
+      // silently so. The first comparison fails for that host, because
+      // `normalizeEmail` of the seed is not something the implementation gets a
+      // vote on.
+      //
+      // ## The guard, and what it used to be
+      //
+      // It asserts a property of the **seed**: that the address the world says
+      // it was given is one the domain has to change. That is checkable here and
+      // is the whole of what a host can get wrong about it.
+      //
+      // It used to read `actor.email !== actorEmailAsGiven`, which looks like the
+      // same claim and is not. `actor` is an entity, `User` normalizes
+      // unconditionally, so that comparison was true whenever the seed was
+      // non-normal **whatever the store held** — it could never detect the
+      // condition it was written to detect. Worse, an implementation that failed
+      // to normalize anywhere could make it *false*, and it would then report
+      // "the world must seed…" and blame the host for a defect in the service.
+      // A guard that cannot fail for its own reason, and can fail for somebody
+      // else's, is worse than no guard.
       it('returns the address in normal form, not the form the world was given', async () => {
         const { service, actor, actorEmailAsGiven } = await makeContext();
         expect.ok(
-          actor.email !== actorEmailAsGiven,
+          actorEmailAsGiven !== normalizeEmail(actorEmailAsGiven),
           'the world must seed the actor from an address the domain has to normalize',
         );
 
         const profile = await service.getProfile(actor.id, actor.id);
-        expect.equal(profile.email, actor.email);
+        expect.equal(
+          profile.email,
+          normalizeEmail(actorEmailAsGiven),
+          'the address must come back in the normal form of the one the world was given',
+        );
+        expect.equal(profile.email, actor.email, 'and must be the promised user\'s address');
       });
 
       it('rejects an id that does not exist', async () => {
@@ -231,7 +264,7 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
       it('carries every field of the promised user out through the wire shape', async () => {
         const { service, actor, actorEmailAsGiven } = await makeContext();
         expect.ok(
-          actor.email !== actorEmailAsGiven,
+          actorEmailAsGiven !== normalizeEmail(actorEmailAsGiven),
           'the world must seed the actor from an address the domain has to normalize',
         );
 
@@ -240,6 +273,16 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
         const actual = fetched.toJSON();
         const promised = actor.toJSON();
         expect.equal(actual.id, promised.id);
+        // Against the seed put through the domain's rule as well as against the
+        // promised user, for the reason the normalization test above states at
+        // length: a host that built `actor` by calling the service under test
+        // makes the second comparison a value against itself, and only the first
+        // one survives that.
+        expect.equal(
+          actual.email,
+          normalizeEmail(actorEmailAsGiven),
+          'the emitted address must be the normal form of the one the world was given',
+        );
         expect.equal(actual.email, promised.email);
         expect.equal(actual.displayName, promised.displayName);
         expect.equal(actual.status, promised.status);
