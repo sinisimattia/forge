@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { lineFindings, pathFindings } from '../../tools/sanitize.mjs';
+import { lineFindings, pathFindings, DOM_AND_PLATFORM_IDENTIFIERS } from '../../tools/sanitize.mjs';
 
 // The gate's value is entirely in what it refuses, so every case below is stated as a
 // line a real file could contain, and asserted in both directions: the lines that must
@@ -288,6 +288,131 @@ test('a leaked domain name is flagged in the shapes it actually takes', () => {
   assert.equal(labels('EVENT_CREATED = 1', TS), 'source-domain constant');
   assert.equal(labels("import './events.module';", TS), 'source-domain module');
   assert.equal(labels('an rsvp from an organizer', 'a.md'), 'source-domain term');
+});
+
+// FALSE POSITIVES, fixed. `event`, `payment` and `ticket` are how the source domain leaks
+// (eventId, EventCard, RefundPayment), but they are ALSO how the DOM and a couple of platform
+// APIs spell their own, unrelated vocabulary — lexically the same characters, so no regex can
+// tell the two apart. The fix is a closed accept-list of the exact DOM/platform identifiers,
+// checked against the WHOLE identifier a match sits inside. Every one of these names comes
+// straight from the two lists this task was handed: the DOM event-handling calls and their
+// conventional parameter names, the base Event/EventTarget/EventEmitter infrastructure, the
+// Payment Request API, and every specific *Event interface currently reachable from this
+// stack's targets (browser DOM, Vue/Nuxt synthetic events).
+test('DOM event-handling calls are not flagged as a domain leak', () => {
+  assert.equal(flagged('el.addEventListener("click", handler);', TS), false);
+  assert.equal(flagged('el.removeEventListener("click", handler);', TS), false);
+  assert.equal(flagged('el.dispatchEvent(new CustomEvent("open"));', TS), false);
+  assert.equal(flagged('function onEvent(nativeEvent: Event) {}', TS), false);
+  assert.equal(flagged('const eventListener = (e: Event) => {};', TS), false);
+  assert.equal(flagged('const eventName = "click";', TS), false);
+});
+
+test('the base DOM Event type and its infrastructure are not flagged as a domain leak', () => {
+  assert.equal(flagged('function handle(e: Event) {}', TS), false);
+  assert.equal(flagged('const target: EventTarget = el;', TS), false);
+  assert.equal(flagged('let listener: EventListener;', TS), false);
+  assert.equal(flagged('const source = new EventSource(url);', TS), false);
+  assert.equal(flagged('const init: EventInit = { bubbles: true };', TS), false);
+  assert.equal(flagged("import { EventEmitter } from 'node:events';", TS), false);
+});
+
+// The Payment Request API — the browser platform's own "Payment" vocabulary, not the source
+// domain's payment entity.
+test('the Payment Request API is not flagged as a domain leak', () => {
+  assert.equal(flagged('const request: PaymentRequest = new PaymentRequest(m, d);', TS), false);
+  assert.equal(flagged('async function onResponse(r: PaymentResponse) {}', TS), false);
+});
+
+// Every specific *Event interface this stack's targets can produce (browser DOM, Vue/Nuxt
+// synthetic events). One assertion per interface named in this task's false-positive list —
+// each is its own case, not folded into a loop, so a single accept-list typo or omission
+// names the exact interface that regressed rather than an opaque loop failure.
+test('every specific DOM event interface is not flagged as a domain leak', () => {
+  assert.equal(flagged('function on(e: UIEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: CustomEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: KeyboardEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: MouseEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: PointerEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: SubmitEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: InputEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: FocusEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: TouchEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: WheelEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: DragEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: ClipboardEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: ProgressEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: MessageEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: CloseEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: ErrorEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: PopStateEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: HashChangeEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: StorageEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: AnimationEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: TransitionEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: CompositionEvent) {}', TS), false);
+  assert.equal(flagged('function on(e: BeforeUnloadEvent) {}', TS), false);
+});
+
+// DECISION, pinned. UIEvent already survived the two identifier-shape rules before this
+// change — by accident, not by anyone's design: `[a-z](Event...)` needs a lowercase letter
+// immediately before "Event" and finds the uppercase "I" instead, and `\bEvent...` needs a
+// word boundary immediately before "Event" and finds none (word characters on both sides of
+// "UIEvent"). An accidental pass is indistinguishable from a deliberate one until someone
+// writes it down, so UIEvent is listed on the accept-list explicitly — it is the ancestor of
+// every other *Event interface above and belongs there on its own merits, independent of
+// whichever other rule also happens to miss it.
+test('UIEvent surviving is now a deliberate accept-list entry, not an accident of the regex', () => {
+  assert.ok(DOM_AND_PLATFORM_IDENTIFIERS.has('UIEvent'));
+});
+
+// The point of checking the WHOLE identifier, not the substring a rule matched: a domain leak
+// that merely shares a prefix with an accepted DOM identifier must still trip. `EventCard`
+// contains the same "Event" the accept-list's `EventTarget` does; `RefundPayment` contains the
+// same "Payment" `PaymentRequest` does. Only an exact, whole-identifier match is exempt.
+test('a domain leak sharing a prefix with an accepted DOM identifier still trips', () => {
+  assert.equal(labels('export class EventCard {}', TS), 'source-domain type name');
+  assert.equal(labels('export class RefundPayment {}', TS), 'source-domain identifier');
+  assert.equal(labels('export interface TicketTier {}', TS), 'source-domain type name');
+});
+
+// Every identifier this task named as a required catch, each in the shape it would actually
+// leak in. `EventsService` needs its realistic NestJS constructor-injection shape — the bare
+// lowerCamelCase parameter name alone (`eventsService`) does not, on its own, match any
+// identifier-shape rule (no capital letter follows "events", and no capital "Event" appears);
+// it is caught because its declared TYPE (`EventsService`) is right there on the same line, as
+// it always would be in real constructor-injection code. That is unchanged by this task — it
+// is how the rule worked before this fix and is not something the accept-list touches.
+test('every identifier this fix must not let through is still flagged', () => {
+  assert.equal(labels('const eventId = 1;', TS), 'source-domain identifier');
+  assert.equal(labels('let myEvent = load();', TS), 'source-domain identifier');
+  assert.equal(labels('export class EventCard {}', TS), 'source-domain type name');
+  assert.equal(
+    labels('constructor(private readonly eventsService: EventsService) {}', TS),
+    'source-domain type name',
+  );
+  assert.equal(labels('const ticketId = ticket.id;', TS), 'source-domain identifier');
+  assert.equal(labels('export interface TicketTier {}', TS), 'source-domain type name');
+  assert.equal(labels('const paymentIntent = createIntent();', TS), 'source-domain identifier');
+  assert.equal(labels('export class RefundPayment {}', TS), 'source-domain identifier');
+});
+
+// The rules this task does not touch at all — a bare "event"/"Event"/"payment"/"ticket" in
+// ordinary prose, and CORS's own `credentials` config flag — keep behaving exactly as before.
+test('the ordinary English and platform config the rules already tolerated still is', () => {
+  assert.equal(flagged('preventDefault(); onkeydown(); $event;', TS), false);
+  assert.equal(flagged('Eventually the eventual type resolves.', 'a.md'), false);
+  assert.equal(flagged('class="pointer-events-none"', TS), false);
+});
+
+// pathFindings runs the same identifier-shape rules against a file PATH, and the accept-list
+// applies there too: a file legitimately named after a DOM interface must not be flagged, but
+// a file named after the domain leak still must be — even sharing the same "Event" prefix.
+test('the accept-list applies to paths as well as line content', () => {
+  assert.deepEqual(pathFindings('template/apps/webapp/src/composables/EventTarget.ts'), []);
+  assert.deepEqual(pathFindings('template/apps/webapp/src/components/EventCard.vue'), [
+    'source-domain type name',
+  ]);
 });
 
 test('paths are held to the path-only rules as well as the content rules', () => {

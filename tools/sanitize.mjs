@@ -117,6 +117,111 @@ const POPULATED_SECRET_TS = new RegExp(
   'i',
 );
 
+// The identifier-shape rules below (`source-domain identifier`, `source-domain type name`)
+// key off the substrings `event`/`Event`/`payment`/`Payment`/`ticket`/`Ticket`, which is
+// exactly how the DOM and a few platform APIs spell their own, unrelated vocabulary —
+// `addEventListener`, `EventTarget`, `KeyboardEvent`, `PaymentRequest`. Lexically these are
+// the same strings the source domain leaks as (`eventId`, `EventCard`, `RefundPayment`), so no
+// regex can tell them apart — the two look identical to a pattern that only sees characters.
+//
+// The fix is a closed, explicit accept-list of the *exact* identifiers the DOM and platform
+// are known to use, checked against the whole identifier a match sits inside (not the bare
+// substring the regex matched). A cleverer regex was considered and rejected: any pattern
+// that infers "this Event looks like a DOM one" from shape alone (capitalisation, a
+// following capital letter, etc.) is guessing at the same lexical level that caused the
+// collision, so it is exactly as likely to admit a domain leak spelled the same way as it is
+// to reject a real DOM identifier spelled differently — EventCard and EventTarget differ only
+// in which word follows "Event", and no regex distinguishes "a word list I know" from "a word
+// list I don't" without... a list. A list is also the auditable choice: it is a fixed,
+// enumerable set (the DOM does not grow new Event/Payment interfaces by developer whim), and
+// its failure mode is visible — an identifier missing from the list still trips, loudly,
+// rather than silently passing because a regex happened to be clever enough to let it through.
+//
+// Every entry here is checked against the WHOLE identifier a match is found inside (see
+// `identifierAt`), not just the substring the rule's regex captured — otherwise "EventCard"
+// would be accepted for containing the same "Event" prefix as "EventTarget". That whole-word
+// comparison is what keeps this list from widening into the false negatives it exists to avoid.
+//
+// UIEvent is included even though it happens to survive today's rules unaided: `[a-z](Event…)`
+// needs a lowercase letter immediately before "Event" and finds the uppercase "I" instead, and
+// `\bEvent…` needs a word boundary immediately before "Event" and finds none (word characters on
+// both sides). That is a true accident of the two other rules' shapes, not a decision anyone
+// made about UIEvent — indistinguishable, until written down, from a deliberate pass. Listing it
+// here converts the accident into policy: it is a real DOM interface (the ancestor of every
+// other `*Event` type below) and belongs on this list on its own merits, independent of whether
+// some other rule also happens to miss it.
+//
+// A bare "Event" is on this list too, and that is a real, accepted trade — not an oversight.
+// The source domain's own leaked entity is *also* spelled exactly "Event" with nothing before or
+// after it (`class Event`, `interface Event`), and that shape is lexically identical to the DOM's
+// global `Event` type (`e: Event`) with nothing "wrong" written down anywhere: both are just the
+// four characters E-v-e-n-t, standing alone. No accept-list, no cleverer regex, and no rule this
+// gate could write distinguishes them; only human review of the surrounding code can. Every
+// identifier this task specifies as a required catch — eventId, myEvent, EventCard, EventsService,
+// ticketId, TicketTier, paymentIntent, RefundPayment — has something attached to "Event"/
+// "Payment"/"Ticket" and still trips, because the accept-list is checked against the whole word,
+// not the substring. Only the bare, standalone word is affected, and it is affected in both
+// directions equally: this was already true before this change (a bare `Event`/`Payment`/
+// `Ticket` interface declaration passed the gate then too, via `interface Event {}` not
+// matching the digit/case-shaped rules at all — this change does not newly open that gap, it
+// documents it).
+export const DOM_AND_PLATFORM_IDENTIFIERS = new Set([
+  // The base DOM event type and its infrastructure — not a domain entity.
+  'Event', 'EventTarget', 'EventListener', 'EventInit', 'EventSource', 'EventEmitter',
+  'EventListenerOrEventListenerObject', 'EventListenerOptions', 'AddEventListenerOptions',
+  // DOM event-handling calls and the parameter/variable names conventionally used with them.
+  'addEventListener', 'removeEventListener', 'dispatchEvent',
+  'nativeEvent', 'onEvent', 'eventListener', 'eventName',
+  // Every specific DOM/UIEvent-family interface in current use across this stack's targets
+  // (browser DOM, Vue/Nuxt synthetic events). UIEvent is listed for the reason given above:
+  // it happens to survive the other rules unaided, and is listed anyway so that survival is
+  // policy, not accident.
+  'UIEvent', 'CustomEvent', 'KeyboardEvent', 'MouseEvent', 'PointerEvent', 'SubmitEvent',
+  'InputEvent', 'FocusEvent', 'TouchEvent', 'WheelEvent', 'DragEvent', 'ClipboardEvent',
+  'ProgressEvent', 'MessageEvent', 'CloseEvent', 'ErrorEvent', 'PopStateEvent',
+  'HashChangeEvent', 'StorageEvent', 'AnimationEvent', 'TransitionEvent', 'CompositionEvent',
+  'BeforeUnloadEvent',
+  // The Payment Request API — the browser platform's own "Payment" vocabulary.
+  'PaymentRequest', 'PaymentResponse',
+]);
+
+/** The run of identifier characters (letters, digits, `_`, `$`) touching `index` in `text`. */
+function identifierAt(text, index) {
+  let start = index;
+  let end = index;
+  const isIdentChar = (ch) => ch !== undefined && /[A-Za-z0-9_$]/.test(ch);
+  while (isIdentChar(text[start - 1])) start -= 1;
+  while (isIdentChar(text[end])) end += 1;
+  return text.slice(start, end);
+}
+
+/**
+ * Labels whose rule matches identifier-shaped substrings (`event`/`Event`/`payment`/`Payment`/
+ * `ticket`/`Ticket`) that a DOM or platform identifier can share character-for-character with a
+ * leaked domain name. Every match these rules produce is re-checked against
+ * `DOM_AND_PLATFORM_IDENTIFIERS` before it counts — see the accept-list comment above.
+ */
+const IDENTIFIER_SHAPE_LABELS = new Set(['source-domain identifier', 'source-domain type name']);
+
+/**
+ * Whether `pattern` finds a match in `text` whose enclosing identifier is NOT on the DOM/
+ * platform accept-list. A rule with several matches on one line (a domain leak next to a real
+ * DOM identifier) must still trip on the one that is not accepted, so every match is walked —
+ * the first accepted one does not buy amnesty for the rest of the line, the same principle
+ * `stripNonSecrets` applies to the populated-secret rule.
+ */
+function matchesUnacceptedIdentifier(pattern, text) {
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  const global = new RegExp(pattern.source, flags);
+  let match;
+  while ((match = global.exec(text)) !== null) {
+    const identifier = identifierAt(text, match.index);
+    if (!DOM_AND_PLATFORM_IDENTIFIERS.has(identifier)) return true;
+    if (match[0].length === 0) global.lastIndex += 1; // never loop on a zero-width match
+  }
+  return false;
+}
+
 export const RULES = [
   ['source-project trace', /voku/i],
   // Terms with no innocent generic use — always a leak.
@@ -268,6 +373,10 @@ export function lineFindings(line, file = '') {
       if ((isSource ? POPULATED_SECRET_TS : pattern).test(secretProbe)) labels.push(label);
       continue;
     }
+    if (IDENTIFIER_SHAPE_LABELS.has(label)) {
+      if (matchesUnacceptedIdentifier(pattern, line)) labels.push(label);
+      continue;
+    }
     if (pattern.test(line)) labels.push(label);
   }
   return labels;
@@ -283,6 +392,10 @@ export function lineFindings(line, file = '') {
 export function pathFindings(file) {
   const labels = [];
   for (const [label, pattern] of [...RULES, ...PATH_ONLY_RULES]) {
+    if (IDENTIFIER_SHAPE_LABELS.has(label)) {
+      if (matchesUnacceptedIdentifier(pattern, file)) labels.push(label);
+      continue;
+    }
     if (pattern.test(file)) labels.push(label);
   }
   return labels;
