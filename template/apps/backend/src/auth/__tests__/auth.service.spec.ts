@@ -605,6 +605,26 @@ describe('AuthService', () => {
       expect(source.all(PasswordResetTokenRecord)).toEqual([]);
     });
 
+    it('issues nothing for an account that has no password identity', async () => {
+      // A federated-only account is this case by design. There is no password to
+      // recover, so there is nothing to send — and it has to look exactly like
+      // the two "nothing to send" cases that already exist.
+      await registerAndVerify('ada@example.test');
+      source.update(
+        AuthIdentityRecord,
+        { provider: AuthProvider.PASSWORD },
+        { provider: AuthProvider.GOOGLE },
+      );
+      sent.length = 0;
+      recorded.length = 0;
+
+      await expect(auth.requestPasswordReset('ada@example.test')).resolves.toBeUndefined();
+
+      expect(sent).toEqual([]);
+      expect(recorded).toEqual([]);
+      expect(source.all(PasswordResetTokenRecord)).toEqual([]);
+    });
+
     it('gives the credential a lifetime much shorter than a verification link', async () => {
       await registerAndVerify('ada@example.test');
 
@@ -887,6 +907,37 @@ describe('AuthService', () => {
       await expect(auth.resetPassword(credential, PLAINTEXT)).rejects.toBeInstanceOf(
         ConsumedTokenError,
       );
+    });
+
+    it('refuses a credential whose account lost its password identity, as an invalid one', async () => {
+      // Reachable only by unlinking between issue and redeem, which
+      // `requestPasswordReset`'s own refusal cannot cover. What matters is what
+      // it does NOT do: the implementation this replaces consumed the
+      // credential, revoked every session, wrote PASSWORD_RESET_COMPLETED and
+      // stored no password — reporting success for something that did not
+      // happen, into a table that physically refuses UPDATE and DELETE.
+      await registerAndVerify('ada@example.test');
+      await auth.requestPasswordReset('ada@example.test');
+      const credential = credentialFromLastLink();
+      await auth.signIn({ email: 'ada@example.test', secret: PLAINTEXT, client: CLIENT });
+      source.update(
+        AuthIdentityRecord,
+        { provider: AuthProvider.PASSWORD },
+        { provider: AuthProvider.GOOGLE },
+      );
+      recorded.length = 0;
+
+      await expect(auth.resetPassword(credential, OTHER_PLAINTEXT)).rejects.toBeInstanceOf(
+        ExpiredTokenError,
+      );
+
+      // Consumed nothing.
+      expect(source.all(PasswordResetTokenRecord)[0].consumedAt).toBeNull();
+      // Recorded nothing — least reversible of the three, and the reason the
+      // identity is resolved before the credential is spent rather than after.
+      expect(recorded).toEqual([]);
+      // Ended nothing.
+      expect(source.all(SessionRecord).every((row) => row.revokedAt === null)).toBe(true);
     });
 
     it('still lets only one of two simultaneous presentations succeed against a store that ignores the lock', async () => {

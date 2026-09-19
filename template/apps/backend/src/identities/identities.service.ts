@@ -131,6 +131,27 @@ export class IdentitiesService implements IIdentityService {
   }
 
   /**
+   * The password identity belonging to a user, read inside a transaction.
+   *
+   * The same question {@link IdentitiesService.findPasswordIdentityByUser}
+   * answers, asked through a caller's own manager so the answer and whatever the
+   * caller does about it are one atomic fact. `createPasswordIdentity` takes a
+   * manager for the same reason and this is its read-side counterpart.
+   *
+   * @param manager - the transaction to read within
+   * @param userId - the account whose password identity is wanted
+   * @returns the row, or `null` when the account has no password identity
+   */
+  public findPasswordIdentityByUserIn(
+    manager: EntityManager,
+    userId: UserId,
+  ): Promise<AuthIdentityRecord | null> {
+    return manager.findOne(AuthIdentityRecord, {
+      where: { userId, provider: AuthProvider.PASSWORD },
+    });
+  }
+
+  /**
    * Creates the password identity for a new account.
    *
    * @param manager - the transaction the user row was created in, so an identity

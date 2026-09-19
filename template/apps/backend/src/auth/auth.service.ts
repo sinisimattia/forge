@@ -416,6 +416,20 @@ export class AuthService implements IAuthService {
     // mailing its former owner every time somebody types their address in.
     if (user === null || user.deletedAt !== null) return;
 
+    // An account with no password identity gets no recovery credential, because
+    // there is no password to recover. A federated-only account is that case by
+    // design, and issuing for one produced a credential whose redemption could
+    // only ever be a lie: {@link AuthService.resetPassword} would consume it,
+    // end every session, write PASSWORD_RESET_COMPLETED, store nothing, and
+    // report success — into a table that physically refuses UPDATE and DELETE.
+    //
+    // Refusing here rather than detecting there is the cheaper half, and it is
+    // free of every hazard the other half has: this method already answers a
+    // known address and an unknown one identically, so a third "nothing to send"
+    // reason joins two that exist, tells nobody anything, and needs no new error
+    // and no contract change.
+    if ((await this.identities.findPasswordIdentityByUser(user.id as UserId)) === null) return;
+
     const generated = generateOpaqueToken();
     await this.resets.insert({
       userId: user.id,
@@ -444,8 +458,12 @@ export class AuthService implements IAuthService {
    * @param credential - the single-use value delivered to the address
    * @param newSecret - the replacement secret
    * @throws ConsumedTokenError when that credential has already been used
-   * @throws ExpiredTokenError when its lifetime has run out, or nothing answers to it
-   * @throws WeakPasswordError when the replacement does not meet the policy
+   * @throws ExpiredTokenError when its lifetime has run out, when nothing
+   *   answers to it, and when the account it names has no password identity —
+   *   all three are the same answer on purpose, and the third is unreachable
+   *   unless an identity was unlinked between issue and redeem
+   * @throws WeakPasswordError when the replacement does not meet the policy, or
+   *   when the registry reports it as already public
    */
   public async resetPassword(credential: string, newSecret: string): Promise<void> {
     const violations = evaluatePassword(newSecret, DEFAULT_PASSWORD_POLICY);
@@ -455,7 +473,7 @@ export class AuthService implements IAuthService {
     const presentedHash = hashOpaqueToken(credential);
     const now = new Date();
 
-    const userId = await this.dataSource.transaction(async (manager) => {
+    const { userId, identityId } = await this.dataSource.transaction(async (manager) => {
       const row = await manager.findOne(PasswordResetTokenRecord, {
         where: { tokenHash: presentedHash },
         lock: { mode: 'pessimistic_write' },
@@ -463,6 +481,29 @@ export class AuthService implements IAuthService {
       if (row === null) throw new ExpiredTokenError();
       if (row.consumedAt !== null) throw new ConsumedTokenError();
       if (row.expiresAt.getTime() <= now.getTime()) throw new ExpiredTokenError();
+
+      // The identity is resolved BEFORE the credential is consumed, and the
+      // order is the property. `requestPasswordReset` refuses to issue for an
+      // account with no password identity, so reaching this line with none means
+      // the identity was unlinked between issue and redeem — a real window, not
+      // a theoretical one, once a person can unlink.
+      //
+      // Treated exactly as a credential nothing answers to: **consume nothing,
+      // record nothing, and throw what an unknown credential throws.** The
+      // implementation this replaces did the opposite — it consumed the
+      // credential, ended every session, wrote PASSWORD_RESET_COMPLETED and
+      // stored no password, reporting success for something that did not happen.
+      // That entry is the part that cannot be undone: `audit_entries` refuses
+      // UPDATE and DELETE to the role this process connects as, so a false entry
+      // is permanent and the history is the one thing nobody can correct.
+      //
+      // Read through the transaction's own manager, so "there is an identity"
+      // and "the credential is spent" are one atomic fact rather than two.
+      const identity = await this.identities.findPasswordIdentityByUserIn(
+        manager,
+        row.userId as UserId,
+      );
+      if (identity === null) throw new ExpiredTokenError();
 
       // The `affected` count is read for the reason `verifyEmail` gives, and the
       // consequence here is larger: a recovery credential consumed twice is two
@@ -475,11 +516,10 @@ export class AuthService implements IAuthService {
       );
       if (consumed.affected !== 1) throw new ConsumedTokenError();
 
-      return row.userId as UserId;
+      return { userId: row.userId as UserId, identityId: identity.id };
     });
 
-    const identity = await this.identities.findPasswordIdentityByUser(userId);
-    if (identity !== null) await this.identities.replaceSecret(identity.id, newSecret);
+    await this.identities.replaceSecret(identityId, newSecret);
     await this.sessions.revokeAll(userId);
     await this.record(AuditAction.PASSWORD_RESET_COMPLETED, userId, {}, now);
   }
