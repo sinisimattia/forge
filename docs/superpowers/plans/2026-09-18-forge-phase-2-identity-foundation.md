@@ -85,6 +85,24 @@ Every task's requirements implicitly include this section.
   round: "What defeated me both times is that a justification arrives feeling like a conclusion.
   The first came with a pattern, the second with an analogy; in both cases the reasoning had been
   done somewhere else and I inherited the confidence along with the words."
+- **A test that assembles its own copy of the thing under test cannot see the thing that ships.**
+  Task 11's review deleted sixteen pieces of shipped wiring one at a time and **fifteen left all 165
+  tests green** — `cookieParser`, the global exception filter, the global validation pipe, the
+  `AuthModule` import, `@Public()` on health, the cookie's `secure` flag in production,
+  `ignoreExpiration: true`, accepting a credential from `?access_token=`, a `JWT_SECRET` fallback
+  default in two spellings, the controller registration, a 365-day expiry, and a dropped entity.
+  Five of those are silent security regressions that would ship in every generated project forever.
+  The cause is uniform: every behavioural assertion ran through a testing module the spec assembled
+  itself, so no suite ever observed `main.ts`, `app.module.ts`, `auth.module.ts` or the strategy's
+  options. Exactly one deletion fired, and why it fired is the rule: the cookie constant is a
+  **shipped module the spec imports rather than re-declares.** So — **import the artifact, never
+  rebuild it.** Where the artifact is imperative (a `bootstrap()` in `main.ts`), extract its
+  configuration into an exported function that both the entry point and the spec call, rather than
+  restating the configuration in a fixture. Any task that adds wiring owes an assertion that fails
+  when that wiring is deleted, and owes the evidence of having watched it fail. This is the same
+  defect as an unfailable assertion, one level up: there, the entity's invariants made the check
+  impossible to fail; here, the test's own fixture stands in for the application and the application
+  is never examined at all.
 - **A claim about evidence is not evidence.** Phase 1 caught four separate cases of inaccurate evidence in otherwise-correct work — a RED log pasted from a different test, a fixture claimed to fire that could not have. If you did not run it, say "NOT VERIFIED". Candid self-retraction is the behaviour being rewarded here.
 - **`grep` in this session is a shim, not the system grep — verify signals with `/usr/bin/grep`.**
   `type grep` reports a shell function backed by ugrep, and the two disagree on real patterns:
@@ -2219,6 +2237,9 @@ Password recovery, the `/users/me` surface, identity listing and unlinking, and 
 - Create: `template/apps/backend/src/audit/audit.controller.ts`
 - Create: `template/apps/backend/src/auth/guards/{platform-admin.guard.ts,index.ts}` (extend the barrel)
 - Modify: `template/apps/backend/src/auth/{auth.service.ts,auth.controller.ts}` (recovery)
+- Create: the pure authorization policy in `template/libs/core/src/shared/policies/` that **ADR-0006 requires and core does not have.** `shared/policies/` currently contains only `assertNever` and `normalizeEmail`, and nothing anywhere in core implements an authorization decision — so ADR-0006's "authorization is a pure function in core" is implemented nowhere, and Task 11 had to invent a local `PLATFORM_ADMIN` check inside `AuditService.query` because nothing else existed. This task owns platform administration and is the first to see every call site at once, so it adds the function and routes both Task 11's marked check and its own `platform-admin.guard.ts` through it. Core changes need `npm run purity -w libs/core` and `npm run test:coverage -w libs/core`.
+
+> **Seven `IAuthService` methods already exist and have ZERO tests. Treat them as unwritten.** Task 11 declared `AuthService implements IAuthService`, which forced it to implement this task's reset and change methods to satisfy the compiler. They are complete-looking and entirely unverified, which is worse than absent: they will read as done. Task 13 drives the core conformance suites against this class, so untested behaviour here becomes a conformance claim. Write their tests as if the code were not there, and be ready to find it wrong.
 - Test: `template/apps/backend/src/auth/__tests__/enumeration-safety.spec.ts`
 - Test: `template/apps/backend/src/users/__tests__/users.service.spec.ts`
 - Test: `template/apps/backend/src/audit/__tests__/audit.controller.spec.ts`
@@ -2914,6 +2935,16 @@ An end-to-end test that only ever runs green proves nothing about itself. Inject
 5. Add `ALTER TABLE audit_entries ADD CONSTRAINT fk_audit_actor FOREIGN KEY (actor_user_id) REFERENCES users (id) ON DELETE SET NULL` to the schema migration, rebuild, delete the walk's user → the actor on its audit entries must survive. This is the bypass Task 8's review found: referential-integrity actions execute with the **table owner's** privileges, so the revoke does not apply to them, and the direct `UPDATE` in Step 3 still fails while the data is erased anyway. It is the one injection here that the `REVOKE` cannot catch.
 
 This is five full rebuild-and-run cycles and it is the most expensive step in the plan. It is also the only thing that turns a green e2e into evidence. Do not skip it, and do not substitute reasoning for running it.
+
+- [ ] **Step 4b: Boot the PRODUCTION image, because nothing ever has**
+
+`tests/integration/docker.test.mjs` references `compose.yaml` and nothing else — no `compose.prod.yaml`, no `--target prod`. So the production image, which is what a real deployment resembles, is built by no gate and started by nothing, and **two separate prod-only defects were found by hand in this phase alone**: `migration:run:prod` was a silent no-op that would have shipped an empty schema (Task 8), and `nest-cli.json` copied `i18n/**/*` to a path the compiled `app.module.js` does not resolve, so the prod image did not boot at all (Task 11's fix round). Both were invisible to jest and to this e2e, because both run from `src/`. Both were the same underlying cause — a consumer of the `rootDir` layout that commit `b73c95c` moved, and the i18n one was the *fourth*.
+
+Add a smoke check, not a second walk: `docker compose -f compose.prod.yaml -p "$PROJECT-prod" up --build -d`, wait for `backend` to report healthy, assert `GET /health` answers, and tear down with `down -v`. That is one build and it is the only thing that would have caught either defect. It needs every production variable supplied with no default (`POSTGRES_*`, `APP_DB_ROLE`, `APP_DB_PASSWORD`, `JWT_SECRET`, `PUBLIC_WEBAPP_URL`), which is itself worth asserting: a missing one must fail loudly rather than fall back.
+
+This is the most expensive step in the plan after Step 4. Check headroom with `docker run --rm postgres:16-alpine df -h /` before and after — **not** `docker system df`, which does not show the number that matters — and remove the images you build.
+
+**Do the cheap version first.** Task 11's re-reviewer proved the i18n boot failure in both directions without building anything: compile the backend locally and run the *compiled* entry point against a real Postgres. That catches everything arising from the difference between `src/` and `dist/` — asset paths, `__dirname` resolution, a module that only loads under the compiled layout — which is the class both of this phase's prod-only defects belonged to, and it takes seconds rather than a multi-gigabyte build. Use it as the inner loop while you get the step working. The image build is still required at the end, because it is the only thing that exercises the Dockerfile's own `COPY` steps: Task 8 shipped a prod stage that never copied `libs/core/dist`, and only building the image found it.
 
 - [ ] **Step 5: Verify the machine is as you found it**
 
