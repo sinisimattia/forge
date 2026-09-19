@@ -8,6 +8,7 @@
     "test":            { "executor": "nx:run-commands", "options": { "command": "npm run test",            "cwd": "apps/webapp" } },
     "lint":            { "executor": "nx:run-commands", "options": { "command": "npm run lint",            "cwd": "apps/webapp" } },
     "typecheck":       { "executor": "nx:run-commands", "options": { "command": "npm run typecheck",       "cwd": "apps/webapp" } },
+    "layers":          { "executor": "nx:run-commands", "options": { "command": "npm run layers",          "cwd": "apps/webapp" } },
     "serve":           { "executor": "nx:run-commands", "options": { "command": "npm run dev",             "cwd": "apps/webapp" } },
     "storybook":       { "executor": "nx:run-commands", "options": { "command": "npm run storybook",       "cwd": "apps/webapp" } },
     "build-storybook": { "executor": "nx:run-commands", "options": { "command": "npm run build-storybook", "cwd": "apps/webapp" } }

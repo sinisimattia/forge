@@ -2,15 +2,23 @@
 
 ## Project Overview
 
-This package is the **webapp**: a Nuxt 4 / Vue 3 frontend. It ships as a skeleton — one
-atom (`AppButton`), an index page, and Storybook wired up — no auth, no fetchers/composables/
-stores, no business domain. Feature domains (e.g. `articles`, `comments`, `tags`) land here
-once `libs/core` defines their entities and `I*Service` contracts (see `libs/core/CLAUDE.md`);
-that phase also introduces `app/fetchers/`, `app/composables/`, `app/stores/`, and
-`app/services/` (the `I*Service` implementations), none of which exist yet.
+This package is the **webapp**: a Nuxt 4 / Vue 3 frontend. It ships a generic, domain-free
+component library — 32 atoms, 3 molecules and one page template, each with a Storybook story
+— on a named colour palette, plus an index page. There is no auth, there are no
+fetchers/composables/stores, and there is no business domain. Feature domains (e.g.
+`articles`, `comments`, `tags`) land here once `libs/core` defines their entities and
+`I*Service` contracts (see `libs/core/CLAUDE.md`); that phase also introduces
+`app/fetchers/`, `app/composables/`, `app/stores/`, and `app/services/` (the `I*Service`
+implementations), none of which exist yet.
+
+The library is the starting vocabulary, not a finished design system: rename it, restyle it,
+delete what you do not use. What it is **not** is a place for your domain — an `ArticleCard`
+belongs in `organisms/`, never in `atoms/`.
 
 - **Framework:** Nuxt 4 (Vue 3 + Composition API)
-- **Styling:** Tailwind CSS
+- **Styling:** Tailwind CSS on a named palette (`surface`, `primary`, `neutral`, `error`,
+  `success`, `warning`, `info`) that **replaces** the stock colours — `bg-slate-900` emits
+  nothing. SCSS variables/mixins are injected into every `<style lang="scss">` block.
 - **i18n:** `@nuxtjs/i18n`
 - **Component explorer:** Storybook (`@storybook-vue/nuxt`)
 - **Package manager:** npm (workspaces)
@@ -54,35 +62,43 @@ pure function in core), 0007 (tenancy is explicit, never ambient), 0008 (ports, 
 ```
 webapp/
 ├── nuxt.config.ts             # Nuxt configuration
+├── tailwind.config.ts         # the palette — replaces Tailwind's stock colours
+├── scripts/
+│   └── check-atomic-layers.mjs # the W1 gate (`npm run layers`)
 ├── app/
 │   ├── app.vue                 # Root component
 │   ├── pages/
 │   │   └── index.vue           # Placeholder landing page
 │   ├── components/
-│   │   └── atoms/
-│   │       └── AppButton.vue   # The one shipped atom
+│   │   ├── atoms/              # 32 — AppButton, AppInput, AppTable*, AppText, …
+│   │   ├── molecules/          # 3  — AppTabGroup, ConfirmDialog, FormField
+│   │   ├── organisms/          # empty
+│   │   └── templates/          # 1  — AuthTemplate
+│   ├── types/
+│   │   ├── ui.ts               # the library's own closed unions (IconName)
+│   │   └── index.ts            # the `~/types` barrel components import from
 │   ├── locales/
 │   │   └── en.json             # i18n strings (single file today)
-│   ├── assets/css/main.css     # Tailwind entry
-│   └── test/
-│       └── AppButton.spec.ts   # Vitest unit test
-├── stories/
-│   └── atoms/
-│       └── AppButton.stories.ts
+│   ├── assets/scss/            # _variables, _mixins, app.scss (the Tailwind entry)
+│   └── test/                   # Vitest unit tests
+├── stories/                    # atoms/ molecules/ templates/ — one story per component
 └── .storybook/                 # Storybook config
 ```
 
-Not present yet (Phase 2): `app/components/{molecules,organisms,templates}/`,
-`app/fetchers/`, `app/composables/`, `app/stores/`, `app/services/`, `app/middleware/`,
-`app/layouts/`, `app/types/`, auth pages.
+Not present yet: `app/fetchers/`, `app/composables/`, `app/stores/`, `app/services/`,
+`app/middleware/`, `app/layouts/`, auth pages. `app/components/organisms/` exists but is
+empty.
 
 ## What's wired up
 
 - `nuxt.config.ts` — `devServer.port = 3001`; `runtimeConfig.public.apiBase` (from
   `NUXT_PUBLIC_API_BASE`) and `runtimeConfig.apiBaseServer` (from `NUXT_API_BASE_SERVER`,
   used by SSR inside the Docker network); `@nuxtjs/tailwindcss`, `@nuxt/eslint`,
-  `@nuxtjs/i18n` modules; components auto-import from `~/components/atoms` without a path
-  prefix; `typescript.tsConfig.compilerOptions` re-states `noUnusedLocals`/
+  `@nuxtjs/i18n` modules; `runtimeConfig.public.appName` (the wordmark `AppLogo` renders);
+  components auto-import from all four Atomic Design layers without a path prefix
+  (`AppButton`, not `AtomsAppButton`); `vite.css.preprocessorOptions.scss.additionalData`
+  injects the SCSS variables and mixins; `typescript.tsConfig.compilerOptions` re-states
+  `noUnusedLocals`/
   `noUnusedParameters`/`noImplicitReturns`. **This package's TypeScript strictness comes
   from `nuxt.config.ts`, not from `../../tsconfig.base.json`** — Nuxt generates its own
   `.nuxt/tsconfig.*.json` and never extends the monorepo base config (see
@@ -92,8 +108,11 @@ Not present yet (Phase 2): `app/components/{molecules,organisms,templates}/`,
 - `app/app.vue` — `<NuxtLayout><NuxtPage /></NuxtLayout>`, nothing else.
 - `app/pages/index.vue` — renders the translated home title/subtitle via `useI18n` and
   sets the page title via `useHead`.
-- Storybook — one story (`Atoms/AppButton`) with three variants (`Primary`, `Secondary`,
-  `Disabled`); `storybook dev -p 6006` / `storybook build`.
+- Storybook — one story per component, under `Atoms/`, `Molecules/` and `Templates/`;
+  `storybook dev -p 6006` / `storybook build`.
+- `npm run layers` — the Atomic Design layering gate (W1 in `STANDARDS.md`). It runs in CI
+  via `nx affected -t … layers`, and it is a script rather than a grep for a reason the
+  script's own header explains.
 
 ---
 

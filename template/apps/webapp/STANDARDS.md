@@ -47,8 +47,9 @@ edit them from within this package.
   fetcher, or page file, **or** that is imported by more than one module, belongs in
   `app/types/*.ts` (one file per domain) and is re-exported from `app/types/index.ts`.
   Consumers `import type { … } from '~/types'`. **Never `export` a type from outside
-  `app/types/`** — needing to export it is the signal it belongs there. (`app/types/`
-  does not exist yet in this skeleton; create it when the first exported type appears.)
+  `app/types/`** — needing to export it is the signal it belongs there. `app/types/ui.ts`
+  is the reference example: it holds the component library's own closed unions (`IconName`),
+  re-exported from `app/types/index.ts`.
 - **Single-file-local, non-exported types stay co-located** with the one file that uses
   them — component `Props` interfaces (as in `AppButton.vue`) and `defineEmits<…>()`
   signatures, small presentational union aliases, and page/component-local view-models.
@@ -71,9 +72,12 @@ structural layers.
 | Page     | `app/pages/**`                | any component + composables                                                | no UI primitives      | no                   |
 
 "Can this be reused in a completely different context?" If yes, it is likely an atom or
-molecule; if it is tied to a domain concept, it is an organism. Only `atoms/` is populated
-today (`AppButton.vue`); the other levels are created as soon as a second component needs
-them.
+molecule; if it is tied to a domain concept, it is an organism. `atoms/`, `molecules/` and
+`templates/` ship populated with the generic component library; `organisms/` is empty,
+because an organism is by definition tied to *your* domain and there is none yet. That is
+also the shape of the commonest mistake here: a domain component put in `atoms/` because it
+is small. Size is not the criterion, reusability is. W1 enforces the direction of
+dependencies, not the placement — placement is a judgement, and this is the question to ask.
 
 - **HTML-only-in-atoms:** raw HTML UI primitive tags (`button`, `input`, `textarea`,
   `select`, `option`, `a`, `img`, `h1`–`h6`, `p`, `span`, `label`, `form`, `svg`, etc.)
@@ -125,20 +129,45 @@ app/components/**/*.vue · app/pages/**/*.vue   ← call composables only
   calls. Both belong in fetchers, not components.
 - The backend base URL comes from runtime config (`runtimeConfig.public.apiBase`,
   `runtimeConfig.apiBaseServer` for SSR-inside-Docker — see `nuxt.config.ts`).
-- None of `app/fetchers/`, `app/composables/`, or `app/stores/` exist yet in this
-  skeleton — this section documents the standing rule for when Phase 2 adds them.
+- None of `app/fetchers/`, `app/composables/`, or `app/stores/` exist yet — this section
+  documents the standing rule for when they are added.
 
 ## Tailwind
 
-- Always use Tailwind utility classes (subject to the CSS-in-atoms rule above). This
-  skeleton uses Tailwind's default palette and spacing scale — no custom design-token
-  override exists yet.
+- Always use Tailwind utility classes (subject to the CSS-in-atoms rule above).
+- **The colour palette is closed and replaces Tailwind's.** `theme.colors` in
+  `tailwind.config.ts` is an override, not an extension, so the stock scales do not exist
+  here: `bg-slate-900`, `text-gray-500` and `border-zinc-200` are not errors, they simply
+  **emit nothing** and the element renders unstyled. If something looks unpainted, check its
+  class is spelled in this vocabulary first.
+
+  | Token | Scale | Use |
+  |---|---|---|
+  | `surface` / `backdrop` | single value | page and card surfaces; modal backdrops |
+  | `primary` | 50–900 (+`DEFAULT`) | brand actions, focus rings, active states |
+  | `neutral` | 50–900 | text, borders, dividers, disabled states |
+  | `error` / `success` / `warning` / `info` | partial scales (+`DEFAULT`) | status only |
+
+  The status scales are deliberately partial — `error` has no 400/800, `success` no
+  400/500/800/900, and so on. A shade that is not defined emits nothing, exactly like a
+  stock colour. Add the shade to the config rather than reaching for a neighbouring scale.
+  Re-point these hex values and the whole library follows; that indirection is the reason
+  the palette is named rather than literal.
+- **Spacing, radius and fonts keep Tailwind's defaults** and are extended, not replaced —
+  `theme.extend` holds only `minHeight.touch`/`minWidth.touch` (WCAG 2.5.5) and
+  `minHeight.screen-offset` (`AuthTemplate`'s centering region).
+- `safelist` is empty, and that is a measured decision, not an oversight — see the comment
+  in `tailwind.config.ts`. A class assembled from a lookup keyed by a prop is still a
+  literal in a scanned file, so Tailwind finds it. You need a safelist entry only for a name
+  built by concatenation (`` `text-${tone}-600` ``) or named in a file outside `content`.
 - Avoid arbitrary values (`w-[347px]`, `text-[#ff0000]`). If a value is genuinely needed
-  and reused, add it to `tailwind.config.ts` instead: a project-specific color palette
-  goes in `theme.colors`; everything else (spacing, radius, fonts, …) goes in
-  `theme.extend` so Tailwind defaults are not overridden. If this project later adopts a
-  closed custom-token palette (replacing the defaults entirely), update this section to
-  say so and list the tokens.
+  and reused, add it to `tailwind.config.ts` instead: a colour goes in `theme.colors`
+  alongside the scales above; everything else (spacing, radius, fonts, …) goes in
+  `theme.extend` so Tailwind's defaults for those are not overridden.
+- SCSS variables and mixins (`app/assets/scss/_variables.scss`, `_mixins.scss`) are injected
+  into every `<style lang="scss">` block by `nuxt.config.ts`, so `$font-family-logo` and
+  `@include truncate` work with no import. They are for the few things Tailwind does not
+  express; utilities remain the default.
 
 ## i18n mechanics (`@nuxtjs/i18n`)
 
@@ -174,9 +203,17 @@ only locale) is in `docs/standards/i18n.md`. The Nuxt-specific mechanics:
 
 - Interactive behavior belongs on an actual interactive element — a `button`/`a` atom (or
   a native `input`/`select`) — never a `@click` handler on a `div`/`span`. If a click
-  target must be a non-interactive element for layout reasons, it still needs
-  `role`, `tabindex="0"`, and a keyboard (`@keydown.enter`/`@keydown.space`) handler; the
+  target must be a non-interactive element for layout reasons, it still needs an accessible
+  role, `tabindex="0"`, and a keyboard (`@keydown.enter`/`@keydown.space`) handler; the
   simpler fix is almost always to use a button atom instead.
+- **Never override a structural role.** `role="button"` on a `tr`, `td`, `th`, `li`, `dt` or
+  `dd` does not add a role, it *replaces* the implicit one — the element leaves its table,
+  list or definition list as far as assistive technology is concerned, and row/column
+  navigation breaks for the whole structure, not just that element. A clickable table row
+  therefore takes `tabindex="0"` and keyboard handlers and **keeps** its implicit `row` role;
+  `AppTableRow` is the reference example. When a real control is genuinely needed, nest a
+  `button`/`a` inside the cell, or adopt the `grid` pattern for the whole table. The same
+  applies to a clickable `li`: nest the control, never re-role the item.
 - Every control has an accessible name: visible text (as `AppButton`'s `<slot />`
   provides), or an explicit, translated `aria-label` when there is no visible label (e.g.
   an icon-only button).
@@ -189,7 +226,7 @@ only locale) is in `docs/standards/i18n.md`. The Nuxt-specific mechanics:
 
 | ID | Check | Signal | Severity | Source |
 |----|-------|--------|----------|--------|
-| W1 | Component sits at the right atomic level | `grep -rn -e "~/components/atoms" -e "~/components/molecules" -e "~/components/organisms" -e "~/components/templates" app/components/atoms/`; `grep -rn -e "~/components/molecules" -e "~/components/organisms" -e "~/components/templates" app/components/molecules/`; `grep -rn -e "~/components/organisms" -e "~/components/templates" app/components/organisms/` — any hit is a layer importing from a level the Atomic Design table forbids it, including a same-level import (atom→atom, molecule→molecule, organism→organism) | blocking | STANDARDS.md — Atomic design |
+| W1 | Component sits at the right atomic level | `npm run layers -w apps/webapp` (`apps/webapp/scripts/check-atomic-layers.mjs`) — resolves every PascalCase tag each component renders to the layer that defines it, and fails on a same-level or upward dependency. Runs in CI via `nx affected -t … layers`. **Do not replace this with a grep for `~/components/...` import paths** — see the note below | blocking | STANDARDS.md — Atomic design |
 | W2 | Components never call fetchers directly | `grep -rnE -e '\$fetch\(' -e 'useFetch\(' -e 'useAsyncData\(' -e 'fetchers/' app/components/` | blocking | STANDARDS.md — fetcher → composable → component |
 | W3 | Tailwind tokens only, no arbitrary values | `grep -rnE '\b[a-z][a-z0-9-]*-\[[^]]+\]' app/` | warning | STANDARDS.md — Tailwind tokens |
 | W4 | No `any` or `never` escapes | `grep -rnE -e '\bas[[:space:]]+any\b' -e '\bas[[:space:]]+never\b' -e ':[[:space:]]*any\b' -e ':[[:space:]]*never\b' -e '<any>' app/` | blocking | `docs/standards/typing.md` |
@@ -197,6 +234,16 @@ only locale) is in `docs/standards/i18n.md`. The Nuxt-specific mechanics:
 | W6 | UI strings are translated, never inline. **Signal is a broad heuristic — read every hit and judge it; do not treat a match as a violation automatically.** It intentionally over-surfaces (over-surfacing beats missing a real one); it correctly skips `{{ }}` i18n interpolations since `{`/`}` fall outside the scanned run | `grep -rnE '>[^<>{}]*[A-Za-z]{2,}[^<>{}]*<' app/ --include='*.vue'` | blocking | `docs/standards/i18n.md` |
 | W7 | SSR pages set title and meta | `grep -rL -e "useHead" -e "useSeoMeta" app/pages/ --include='*.vue'` (lists changed pages with neither call) | warning | STANDARDS.md — SEO |
 | W8 | Interactive elements are reachable and labelled | `grep -rn "@click" app/ --include='*.vue'` then check the matched tag is not `button`/`a` (a `<button>`/`<a>` hit is not a violation) | blocking | STANDARDS.md — Accessibility |
+
+**W1 is a script, not a grep, and that is deliberate.** It used to search the component
+directories for the literal strings `~/components/atoms`, `~/components/molecules` and so on.
+Under Nuxt auto-imports those strings do not exist: a molecule renders `<AppStack>` with no
+import statement at all, and across the whole shipped library there are two import statements
+in total, neither of them a component. The grep therefore returned nothing on every run and
+read as a pass. It was not clean, it was **inert** — the worst of the three states, because a
+broken signal eventually gets investigated and a green one never does. The replacement checks
+what this stack actually writes: rendered tags, resolved to their defining layer. Anyone
+tempted to "simplify" it back into a one-line grep should read this paragraph first.
 
 **No `Signal` in this table contains a pipe.** A markdown table cell cannot carry a bare `|`, so
 a pipe ships escaped as `\|` — read raw (which is how an agent reads this file) that is a literal

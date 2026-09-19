@@ -10,17 +10,23 @@ export default {
     './app/app.vue',
     './stories/**/*.{ts,tsx}',
   ],
-  // Classes assembled at runtime rather than written out in a template — a lookup keyed by
-  // a prop value (`AppText`'s `color`, `AppHeading`'s tone) produces the string after
-  // Tailwind's content scan has already run, so the utility would otherwise be absent from
-  // the emitted CSS and the element would render unstyled. Anything built by concatenation
-  // belongs here.
-  safelist: [
-    'text-neutral-900',
-    'text-success-600',
-    'text-warning-600',
-    'text-error-600',
-  ],
+  // Empty on purpose, and measured rather than assumed.
+  //
+  // This shipped with four entries (`text-neutral-900`, `text-success-600`,
+  // `text-warning-600`, `text-error-600`) on the theory that a lookup keyed by a prop value —
+  // `AppText`'s `colorClasses`, `AppBadge`'s variants — produces its class too late for the
+  // content scan. It does not. Those strings are ordinary literals sitting in a `.vue` file
+  // that `content` already globs, so Tailwind finds them the same way it finds a class in
+  // markup. Verified by deleting the list and rebuilding: all four are still emitted, along
+  // with `text-info-700`, which was never on the list and works anyway. The list was
+  // decorative, and its one visible effect was to imply those four colours were special.
+  //
+  // A safelist IS needed the moment a class name is genuinely assembled rather than written —
+  // `` `text-${tone}-600` `` — or when the file that names it falls outside `content` above.
+  // Add the concrete class names here when that happens; a class Tailwind does not know emits
+  // nothing at all, with no error, so the failure looks like a CSS bug rather than a missing
+  // utility.
+  safelist: [],
   theme: {
     // `colors` REPLACES Tailwind's default palette rather than extending it: the component
     // library speaks only in these semantic names (`bg-surface`, `text-primary-600`,

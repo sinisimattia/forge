@@ -2,9 +2,10 @@
 
 The **Nuxt 4 / Vue 3** frontend for __FORGE_TITLE__ — Tailwind CSS, i18n, and an Atomic
 Design component structure. It talks to the [backend API](../backend/README.md). Part of
-the [__FORGE_TITLE__ monorepo](../../README.md). Ships as a skeleton: one atom
-(`AppButton`), a placeholder index page, and Storybook — no auth, no fetchers/composables/
-stores yet.
+the [__FORGE_TITLE__ monorepo](../../README.md). Ships a generic, domain-free component
+library — 32 atoms, 3 molecules and one page template, each with a Storybook story — on a
+named colour palette that replaces Tailwind's stock one, plus a placeholder index page. No
+auth, no fetchers/composables/stores yet.
 
 ## Running
 
@@ -40,7 +41,7 @@ Components follow Atomic Design under `app/components/` (`atoms` today; `molecul
 `app/pages/`. Once a domain exists in `__FORGE_SCOPE__/core`, data access is layered
 **fetcher → composable → component** (see `STANDARDS.md`) and `app/services/<domain>.service.ts`
 provides an HTTP service that implements the `__FORGE_SCOPE__/core` `I*Service` contract —
-none of that exists yet in this skeleton.
+none of that exists yet.
 
 ## Conventions & docs
 

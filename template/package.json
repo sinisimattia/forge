@@ -9,7 +9,7 @@
     "test": "nx run-many -t test",
     "lint": "nx run-many -t lint",
     "typecheck": "nx run-many -t typecheck",
-    "affected": "nx affected -t lint test build typecheck purity",
+    "affected": "nx affected -t lint test build typecheck purity layers",
     "dev:up": "docker compose up --build",
     "dev:down": "docker compose down",
     "dev:reset": "docker compose down -v",

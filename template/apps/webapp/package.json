@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
+    "layers": "node ./scripts/check-atomic-layers.mjs",
     "lint:fix": "eslint . --fix",
     "typecheck": "nuxt typecheck",
     "storybook": "storybook dev -p 6006",

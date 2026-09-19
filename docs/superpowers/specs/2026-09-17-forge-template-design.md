@@ -423,7 +423,28 @@ Voku is read-only throughout (N1).
 4. **Sanitization gate before the first content commit** — grep the staged template for `sk_`,
    `pk_live`, `SECRET=`, `PASSWORD=`, `BEGIN .* PRIVATE KEY`, and `voku` (case-insensitive).
    All must return zero hits. This is D5, run as a gate rather than only as a test.
-5. **Verify the constraint:** `git -C ~/Progetti/Voku status --porcelain` empty and
+5. **Sweep by shape, not only by word.** The gate in step 4 and every hand sweep built on it
+   match a *vocabulary* — domain nouns the source project happens to use. A whole class of
+   trace has no vocabulary to match: an example value nobody notices. Task 14 imported a
+   Storybook story whose `to` prop pointed at the source author's personal website — a real
+   hostname, shipped into every generated project. It matched no gate rule, no word list and
+   no domain sweep, and was found only by extracting every URL and reading them. (The domain
+   is deliberately not repeated here: writing it down would put the trace back.) Extract the
+   shapes and read the output:
+
+   ```bash
+   # every URL and email address in what you copied
+   /usr/bin/grep -rnoE 'https?://[^"'"'"' )>`]+|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}' <paths>
+   ```
+
+   Anything that is not a reserved documentation domain (`example.com`, `example.org`,
+   `example.net`, `*.example`, `*.test` and `*.invalid` — RFC 2606/6761), a framework
+   documentation link, `localhost`, or a service the template genuinely depends on is a
+   trace. The same goes for personal names, handles, phone numbers, real postal addresses,
+   internal hostnames and ticket/issue IDs: none of them is a domain *concept*, so no word
+   list will ever contain them. This step is hand-read by design — its output is short.
+
+6. **Verify the constraint:** `git -C ~/Progetti/Voku status --porcelain` empty and
    `rev-parse HEAD` still `fdfdbde`.
 
 ## 13. Changes from v2

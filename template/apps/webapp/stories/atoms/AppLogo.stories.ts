@@ -34,7 +34,11 @@ export const Large: Story = {
 export const Huge: Story = {
   args: {
     size: 'huge',
-    to: 'https://snisni.it',
+    // An absolute destination, to show `to` is not limited to an in-app route. Keep it on
+    // `example.com` (RFC 2606's reserved documentation domain) like every other example in
+    // this library — a real hostname here ships to every generated project and points a
+    // stranger's users at a site nobody in the project controls.
+    to: 'https://example.com',
   },
 };
 
