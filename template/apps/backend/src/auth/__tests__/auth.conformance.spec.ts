@@ -1,5 +1,7 @@
 import { runIAuthServiceContract } from '__FORGE_SCOPE__/core/auth/testing';
+import { Session } from '__FORGE_SCOPE__/core/auth/entities';
 import type { SessionId } from '__FORGE_SCOPE__/core/auth/types';
+import type { IdentityWorld } from '../../common/testing';
 import { adaptJestToConformanceExpect, makeIdentityWorld, HARNESS_CLIENT } from '../../common/testing';
 import { generateOpaqueToken } from '../../common/crypto';
 import { EmailVerificationTokenRecord } from '../entities/email-verification-token-record.entity';
@@ -64,6 +66,52 @@ const TOO_SHORT_PLAINTEXT = 'short';
 /** The actor's address as the world is given it: a form the domain has to change. */
 const ACTOR_EMAIL_AS_GIVEN = '  Ada@Example.COM ';
 
+/**
+ * The session the world **promises**, which is not quite the session the store
+ * holds and not at all the session the service handed back.
+ *
+ * Six of its eight fields — the id, the owner, and the four instants — are read
+ * out of the store, because only the store knows them. The two that describe the
+ * client are taken from {@link HARNESS_CLIENT}: the value this world *asked
+ * for*, in the same spirit as `actorEmailAsGiven` elsewhere in these deps.
+ *
+ * **That distinction was not a judgement call. It was measured.** The first
+ * version of this driver read all eight fields back from the row, and the
+ * client columns were then set to `null` in `SessionService.beginIn` as an
+ * injected fault — the exact fault the suite's `authenticate` test says it
+ * exists to catch ("an implementation that dropped the client context on the
+ * floor ... would still show a person their own session list with nulls"). The
+ * whole suite passed, twenty tests green, for two reasons that compound:
+ *
+ * - `beginIn` returns a `Session` it **constructs from its own arguments**, not
+ *   one it reads back, so every assertion on what `authenticate` returned sees
+ *   the client values whatever the insert did with them.
+ * - the wire-shape test compares `listSessions` against this promised session,
+ *   and with both sides read from the same row the two moved together: `null`
+ *   on the left, `null` on the right, equal.
+ *
+ * Taking the client from what the world asked for breaks that symmetry, and the
+ * wire-shape test now fails on exactly that fault. Nothing else in this backend
+ * reads the persisted `client_address`/`client_label` columns at all.
+ *
+ * @param world - the world holding the store
+ * @param sessionId - the session to describe
+ * @returns the session as the world promises it
+ */
+function promisedSession(world: IdentityWorld, sessionId: SessionId): Session {
+  const stored = world.sessionEntity(sessionId);
+  return new Session({
+    id: stored.id,
+    userId: stored.userId,
+    createdAt: stored.createdAt,
+    lastUsedAt: stored.lastUsedAt,
+    expiresAt: stored.expiresAt,
+    revokedAt: stored.revokedAt,
+    clientAddress: HARNESS_CLIENT.address,
+    clientLabel: HARNESS_CLIENT.label,
+  });
+}
+
 runIAuthServiceContract({
   describe,
   it,
@@ -101,11 +149,7 @@ runIAuthServiceContract({
       actorId,
       actorEmailAsGiven: ACTOR_EMAIL_AS_GIVEN,
       actorSecret: PLAINTEXT,
-      // Read back out of the store rather than taken from what `begin` returned.
-      // The suite compares the service's answer against this entity field by
-      // field, so a value the service itself produced on both sides would be the
-      // round trip the suite's own comment warns about.
-      actorSession: world.sessionEntity(actorCredentials.session.id),
+      actorSession: promisedSession(world, actorCredentials.session.id),
 
       otherUserId,
       otherUserSessionId: otherCredentials.session.id,
