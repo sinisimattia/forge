@@ -33,6 +33,23 @@ export interface AuthFetchOptions {
    * credential, so that refusal costs one wasted renewal. A renewal is a
    * rotation, not a reuse, so it is wasteful and not dangerous — and the retry
    * is refused a second time and stops.
+   *
+   * That case now has a caller (`app/pages/account/security.vue`) and two
+   * consequences worth naming, both observed rather than reasoned about —
+   * `stores/__tests__/auth.account.spec.ts` drives them:
+   *
+   * - the session really is rotated by a mistyped password, so the store has to
+   *   take up the renewed credential or it presents a spent one afterwards. It
+   *   does, because `renew` writes through `accept`; the assertion exists so
+   *   that stays true.
+   * - the wrong secret reaches the backend **twice** for one attempt, because
+   *   the retry re-sends the same body. Anything on that side counting failed
+   *   attempts — a lockout, a rate limit — sees two, and a person is locked out
+   *   after half as many tries as the limit says. Narrowing the retry to
+   *   requests that carry no secret would fix it, and would mean this file
+   *   knowing something about which request it is wrapping, which is the
+   *   property it is written to avoid. It is recorded here rather than traded
+   *   away silently.
    */
   readonly presented: () => string | null;
   /**

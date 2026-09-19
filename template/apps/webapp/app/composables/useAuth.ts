@@ -15,6 +15,15 @@ export interface UseAuth {
   readonly login: (email: string, secret: string) => Promise<AuthenticationOutcome>;
   /** Ends the session on the server, and forgets it here either way. */
   readonly logout: () => Promise<void>;
+  /**
+   * Replaces the actor's own secret, taking up the session that opens.
+   *
+   * On this surface and not in a composable of its own because it rotates the
+   * credential the whole application presents — see the store's own note. A
+   * screen calls it and re-renders; it does not have to know a credential was
+   * replaced underneath it.
+   */
+  readonly changePassword: (currentSecret: string, newSecret: string) => Promise<void>;
 }
 
 /**
@@ -33,6 +42,11 @@ export interface UseAuth {
  * that a component cannot assign to them. Being signed in is not something a
  * component decides.
  *
+ * `adoptTransport`, `authenticatedClient`, `renew` and `initialize` are the four
+ * the narrowing exists for: the first two are how the application is wired
+ * together and the last two are when it asks the backend a question, and a
+ * component has business with none of them.
+ *
  * @returns the signed-in person, whether there is one, and the two verbs
  */
 export function useAuth(): UseAuth {
@@ -43,5 +57,8 @@ export function useAuth(): UseAuth {
     status: computed(() => store.status),
     login: (email: string, secret: string) => store.login(email, secret),
     logout: () => store.logout(),
+    changePassword: (currentSecret: string, newSecret: string) => (
+      store.changePassword(currentSecret, newSecret)
+    ),
   };
 }

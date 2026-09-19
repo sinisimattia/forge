@@ -7,10 +7,134 @@
     "actions": {
       "submit": "Submit",
       "cancel": "Cancel",
-      "confirm": "Confirm"
+      "confirm": "Confirm",
+      "save": "Save"
     },
     "states": {
       "loading": "Loading…"
+    },
+    "nav": {
+      "signIn": "Sign in",
+      "register": "Create account",
+      "signOut": "Sign out",
+      "profile": "Profile",
+      "security": "Password",
+      "sessions": "Where you are signed in",
+      "identities": "Ways to sign in"
+    }
+  },
+  "auth": {
+    "title": "Your account",
+    "fields": {
+      "email": "Email address",
+      "displayName": "Display name",
+      "password": "Password",
+      "currentPassword": "Current password",
+      "newPassword": "New password"
+    },
+    "actions": {
+      "signIn": "Sign in",
+      "register": "Create account",
+      "showPassword": "Show",
+      "hidePassword": "Hide",
+      "resendVerification": "Send it again",
+      "sendResetLink": "Send me a link",
+      "setPassword": "Set password",
+      "backToSignIn": "Back to sign in"
+    },
+    "passwordRules": {
+      "tooShort": "Use at least {minimum} characters.",
+      "tooLong": "Use at most {maximum} characters.",
+      "needsMixedCase": "Use both upper-case and lower-case letters.",
+      "needsDigit": "Include at least one digit.",
+      "breached": "This password has appeared in a known data breach. Choose a different one."
+    },
+    "signIn": {
+      "title": "Sign in",
+      "subtitle": "Welcome back.",
+      "failed": "We could not sign you in. Check the address and the password, then try again.",
+      "forgotPassword": "Forgot your password?",
+      "noAccount": "Create an account"
+    },
+    "register": {
+      "title": "Create account",
+      "subtitle": "It takes a moment.",
+      "failed": "We could not complete that just now. Please try again.",
+      "nameRequired": "Tell us what to call you.",
+      "accepted": "Thanks. If that address had no account, a message is on its way to it with a link to confirm.",
+      "haveAccount": "I already have an account",
+      "resendLink": "Resend the confirmation"
+    },
+    "verifyEmail": {
+      "title": "Confirm your address",
+      "noLink": "Open the link in the message we sent you, or ask for a new one below.",
+      "verified": "Your address is confirmed. You can sign in now.",
+      "alreadyUsed": "That link has already been used. If your address is confirmed, just sign in.",
+      "expired": "That link has expired. Ask for a new one below.",
+      "failed": "We could not confirm your address just now. Please try again.",
+      "resent": "If that address needs confirming, a new message is on its way to it."
+    },
+    "forgotPassword": {
+      "title": "Forgot your password?",
+      "subtitle": "We will send you a link to choose a new one.",
+      "asked": "If that address has an account, a message is on its way to it."
+    },
+    "resetPassword": {
+      "title": "Choose a new password",
+      "subtitle": "Pick something you have not used elsewhere.",
+      "noLink": "Open the link in the message we sent you.",
+      "alreadyUsed": "That link has already been used. Ask for a new one.",
+      "expired": "That link has expired. Ask for a new one.",
+      "failed": "We could not set your password just now. Please try again.",
+      "endsEverySession": "Setting a new password signs you out everywhere, including any device you left signed in.",
+      "done": "Your password is set, and every session has ended. Sign in again to continue."
+    }
+  },
+  "account": {
+    "profile": {
+      "title": "Profile",
+      "saved": "Saved.",
+      "failed": "We could not save that just now. Please try again.",
+      "nameRequired": "Tell us what to call you."
+    },
+    "security": {
+      "title": "Password",
+      "changed": "Your password is changed.",
+      "wrongCurrent": "That is not your current password.",
+      "failed": "We could not change your password just now. Please try again.",
+      "endsOtherSessions": "Changing your password signs you out everywhere else. This device stays signed in."
+    },
+    "sessions": {
+      "title": "Where you are signed in",
+      "subtitle": "Every session open on your account. End any you do not recognise.",
+      "empty": "There is nothing to show.",
+      "failed": "We could not read your sessions just now. Please try again.",
+      "current": "This device",
+      "revoke": "End session",
+      "unknownClient": "Unrecognised client",
+      "unknownAddress": "Unknown",
+      "columnClient": "Client",
+      "columnAddress": "Address",
+      "columnLastUsed": "Last used",
+      "columnExpires": "Ends",
+      "columnActions": "Actions"
+    },
+    "identities": {
+      "title": "Ways to sign in",
+      "subtitle": "Every way you can prove this account is yours. You must keep at least one.",
+      "empty": "There is nothing to show.",
+      "failed": "We could not read this just now. Please try again.",
+      "lastRemaining": "This is your only way to sign in. Add another before removing it.",
+      "unlink": "Remove",
+      "neverUsed": "Never",
+      "columnProvider": "Method",
+      "columnAccount": "Account",
+      "columnLastUsed": "Last used",
+      "columnActions": "Actions",
+      "providerPassword": "Password",
+      "providerGoogle": "Google",
+      "providerGithub": "GitHub",
+      "providerOidc": "Single sign-on"
     }
   }
 }

@@ -92,9 +92,18 @@ describe('useAuth / useCurrentUser', () => {
   });
 
   // The narrower surface is the point of the composable existing at all: a
-  // component has no business renewing a session or replacing the transport.
-  it('offers a component nothing but the two verbs', () => {
+  // component has no business renewing a session, replacing the transport, or
+  // reaching for the transport to build a service of its own.
+  //
+  // `changePassword` joined the list when the account pages landed, and it
+  // belongs on this side of the line for one reason: it rotates the credential
+  // the whole application presents, so only the store can perform it and a
+  // component still has to be able to ask. The list is spelled out rather than
+  // counted so that a member added without thought fails here — which is what it
+  // did when `changePassword` was added.
+  it('offers a component nothing but the three verbs', () => {
     expect(Object.keys(useAuth()).sort()).toEqual([
+      'changePassword',
       'currentUser',
       'isAuthenticated',
       'login',

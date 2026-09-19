@@ -28,7 +28,7 @@ import {
   postResetPassword,
   postVerifyEmail,
 } from '~/fetchers';
-import type { ApiClient, AuthResponseBody, IssuedCredential } from '~/types';
+import type { ApiClient, AuthResponseBody, IssuedCredential, OwnSession } from '~/types';
 
 /**
  * The error the contract names for a refusal that arrived as an envelope.
@@ -260,9 +260,49 @@ export class AuthHttpService implements IAuthService {
     try {
       const listed = await getSessions(this.client, actorId);
       // `isCurrent` is dropped here and not carried onto the entity, because it
-      // is a fact about the request that asked and not about the session. A
-      // screen that needs it asks the store which session it is signed in as.
+      // is a fact about the request that asked and not about the session: the
+      // same session is current for one request and not for the next, so it is
+      // not something `Session` could hold and stay true. A screen that needs it
+      // asks {@link AuthHttpService.listOwnSessions} instead.
+      //
+      // It used to say a screen asks the store which session it is signed in as.
+      // **The store cannot answer that**, and never could: it holds an access
+      // credential, a user and a status, and `POST /auth/refresh` answers with
+      // no session id at all — so after any full page load there is nothing in
+      // this application that knows. That sentence was a claim about a capability
+      // that does not exist, and a screen written to it would have shown no
+      // current session to anybody who had reloaded the page.
       return listed.map((json) => Session.fromJSON(json));
+    } catch (error) {
+      throw domainErrorFor(error, String(actorId));
+    }
+  }
+
+  /**
+   * The actor's own sessions, each with whether this request was made through it.
+   *
+   * **Webapp-only, and on no contract**, for the same reason
+   * {@link AuthHttpService.takeIssuedCredential} is: the response carries one
+   * more fact than the contract's return type can hold, and the fact is a real
+   * one a screen needs. Putting `isCurrent` on `Session` would be putting a
+   * property of the asking request onto the thing asked about, and the backend's
+   * implementation of this same interface — which serves many requests from one
+   * store — could not produce it at all.
+   *
+   * It is a second request-shaped method rather than a flag on
+   * {@link AuthHttpService.listSessions} so that the contract method keeps
+   * exactly the signature the conformance suite drives.
+   *
+   * @param actorId - the user on whose behalf the call is made
+   * @returns every usable session the actor holds, each paired with that flag
+   */
+  public async listOwnSessions(actorId: UserId): Promise<OwnSession[]> {
+    try {
+      const listed = await getSessions(this.client, actorId);
+      return listed.map((json) => ({
+        session: Session.fromJSON(json),
+        isCurrent: json.isCurrent,
+      }));
     } catch (error) {
       throw domainErrorFor(error, String(actorId));
     }

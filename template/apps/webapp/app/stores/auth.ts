@@ -184,6 +184,29 @@ export const useAuthStore = defineStore('auth', () => {
     status.value = 'authenticated';
   }
 
+  /**
+   * Takes up a fresh copy of the signed-in person, and nothing else.
+   *
+   * It exists for one caller — `useProfile`, after a save — and the narrowness is
+   * the point: a save answers with the person's new record, and every screen that
+   * shows a name reads this store, so without this the header keeps the old name
+   * until the next full page load. It replaces **only** the person: not the
+   * credential, not the status, because a profile update is not a session event
+   * and nothing about who is signed in has changed.
+   *
+   * The guard is not defensive noise. `updateProfile` takes an actor and a target
+   * on the contract, so an administrator screen can legitimately answer with
+   * somebody else's record; adopting that here would silently swap who the
+   * application believes is signed in, and every guard downstream would go on
+   * agreeing with it.
+   *
+   * @param person - the record just read back from the server
+   */
+  function adoptProfile(person: UserJSON): void {
+    if (user.value === null || user.value.id !== person.id) return;
+    user.value = person;
+  }
+
   /** Forgets everything, and records that the question has now been answered. */
   function forget(): void {
     accessToken.value = null;
@@ -218,6 +241,60 @@ export const useAuthStore = defineStore('auth', () => {
     }
     accept(outcome.user.toJSON(), issued.accessToken);
     return outcome;
+  }
+
+  /**
+   * The transport everything but renewal goes out on.
+   *
+   * A function and not a value, because {@link adoptTransport} replaces it: a
+   * caller that captured `guarded` at setup time on the server would go on
+   * issuing through the browser's client for the whole of that render, with no
+   * incoming cookie and nothing relaying the outgoing one.
+   *
+   * It exists because the other two services — `UserHttpService`,
+   * `IdentityHttpService` — have to be built on the **same** transport this
+   * store's own service is built on, or they present no credential and never
+   * renew. They are not built here: this store is about who is signed in, and
+   * owning every service in the application would make it the application. The
+   * composables build them, and this is what they build them on.
+   *
+   * @returns the client that presents the current credential and renews once on a 401
+   */
+  function authenticatedClient(): ApiClient {
+    return guarded;
+  }
+
+  /**
+   * Replaces the actor's own secret, and takes up the session that opens.
+   *
+   * **It lives here and not in a composable because of the credential.** The
+   * backend ends every session the user holds — the caller's included — and
+   * opens a fresh one for the request it is serving, so the answer carries a new
+   * access credential exactly as a sign-in does. Whoever calls `changePassword`
+   * must take it, and this store is the only thing that can put it anywhere. A
+   * composable that called the service and forgot would leave the application
+   * presenting a credential the server had just killed, and the symptom would be
+   * "changing my password signs me out", arriving one request later.
+   *
+   * @param currentSecret - the secret held now, as proof it is the same person
+   * @param newSecret - the replacement
+   * @throws Error when there is nobody signed in to change a secret for
+   * @throws Error when the change succeeded but handed over no credential — the
+   * session this browser was using is gone either way, so the state is cleared
+   * before the throw rather than left claiming a session that no longer exists
+   */
+  async function changePassword(currentSecret: string, newSecret: string): Promise<void> {
+    const actor = user.value?.id;
+    if (actor === undefined) throw new Error('Nobody is signed in.');
+    await service.changePassword(actor, currentSecret, newSecret);
+    // **Once**, for the reason `login` gives: `takeIssuedCredential` clears as it
+    // hands over.
+    const issued = service.takeIssuedCredential();
+    if (issued === null) {
+      forget();
+      throw new Error('The password was changed but no access credential was issued.');
+    }
+    accessToken.value = issued.accessToken;
   }
 
   /**
@@ -308,7 +385,10 @@ export const useAuthStore = defineStore('auth', () => {
     status,
     currentUser,
     isAuthenticated,
+    adoptProfile,
     adoptTransport,
+    authenticatedClient,
+    changePassword,
     login,
     logout,
     renew,
