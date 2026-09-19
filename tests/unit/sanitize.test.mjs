@@ -5,7 +5,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { lineFindings, pathFindings, DOM_AND_PLATFORM_IDENTIFIERS } from '../../tools/sanitize.mjs';
+import {
+  lineFindings,
+  pathFindings,
+  DOM_AND_PLATFORM_IDENTIFIERS,
+  isTypeScriptFile,
+} from '../../tools/sanitize.mjs';
 
 // The gate's value is entirely in what it refuses, so every case below is stated as a
 // line a real file could contain, and asserted in both directions: the lines that must
@@ -18,6 +23,7 @@ import { lineFindings, pathFindings, DOM_AND_PLATFORM_IDENTIFIERS } from '../../
 // self-named-value exemption, so the same text means different things in `AuthProvider.ts`
 // and in `compose.yaml`.
 const TS = 'libs/core/src/identities/enums/AuthProvider.ts';
+const VUE = 'apps/webapp/app/pages/reset-password.vue';
 const YAML = 'compose.yaml';
 const ENV = '.env.example';
 
@@ -188,6 +194,48 @@ test('an unquoted value in TypeScript is a reference to a binding, not a credent
   assert.equal(flagged('  const secret = candidateSecret;', TS), false);
   // Quote the very same value and it is a literal again, so it flags.
   assert.equal(labels("  secret: 'candidateSecret',", TS), 'populated secret');
+});
+
+// FALSE POSITIVES, fixed. `isTypeScriptFile` used to be `/\.tsx?$/`, so a `.vue` single-file
+// component's `<script setup lang="ts">` block — which IS TypeScript — was judged by the rule
+// written for YAML and env files, where an unquoted value after a colon or equals genuinely is
+// a literal. Every shape below is a reference or an annotation, not a credential, and each one
+// is the mirror image of a case already pinned above for `.ts`; only the file extension
+// differs. See task-17-report.md §10.1, which named this residual and restructured three
+// files around it instead of the gate being fixed.
+test('a .vue file is judged as TypeScript, not as YAML — the misclassification is fixed', () => {
+  assert.ok(isTypeScriptFile('component.vue'));
+  assert.ok(isTypeScriptFile('Nested/Path/Thing.vue'));
+  // A reference passed straight through, exactly as it would read in the .ts case above.
+  assert.equal(flagged('secret: secretInput.value,', VUE), false);
+  // The `=` of `===`, not an assignment.
+  assert.equal(flagged("route.query.token === 'string' ? route.query.token : ''", VUE), false);
+  // An empty ref — no quoted secret was ever written down.
+  assert.equal(flagged("const secret = ref('');", VUE), false);
+  // A bare type annotation, not a value.
+  assert.equal(flagged('secret: string;', VUE), false);
+  // A multi-word key (camelCase), unquoted — still a reference, not a literal.
+  assert.equal(flagged('const accessKey = computed(() => currentAccessKey.value);', VUE), false);
+  // A real, quoted credential in a .vue script is still caught — the fix does not create a
+  // hole, it removes a false positive that only existed because the file type was misjudged.
+  assert.equal(labels("const secret = 'hunter2';", VUE), 'populated secret');
+  assert.equal(labels("  password: 'hunter2',", VUE), 'populated secret');
+});
+
+// LATENT AND DELIBERATELY UNHANDLED, pinned so it is a decision and not a rediscovery. A .vue
+// *template* binding is quoted by HTML attribute syntax, not by a TypeScript string literal —
+// `:token="tokenRef"` is a reference (the quotes delimit the attribute, not a JS string), but
+// POPULATED_SECRET_TS cannot tell that apart from a genuine quoted literal, because doing so
+// would need to know which part of the file it is looking at (script vs. template), and this
+// gate judges one line at a time with no memory of the file's structure. Nothing in template/
+// or tools/ binds a secret-named prop to a bare reference today, so this trades zero real
+// coverage for the four false positives the fix above removes — but the trade only holds while
+// the shape stays hypothetical, so it is pinned here rather than left to be found by surprise.
+// If this ever needs to pass, it is a `sanitize:allow` case like any other reviewed exemption,
+// not a reason to widen the rule.
+test('a .vue template binding quoted by HTML syntax is a documented, unhandled false positive', () => {
+  assert.equal(labels(':token="tokenRef"', VUE), 'populated secret');
+  assert.equal(labels(':password="candidateSecret"', VUE), 'populated secret');
 });
 
 // RE-ARGUED. `PASSWORD: hunter2` and `token: hunter2` were pinned here as FLAGGING in a `.ts`

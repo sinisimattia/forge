@@ -37,19 +37,12 @@ useHead({ title: t('auth.resetPassword.title') });
 const route = useRoute();
 
 /**
- * The single-use value the link carried, or `''` when it carried none.
- *
- * Read into a local before it is judged. A repeated query parameter arrives as
- * an array and an absent one as `undefined`, so the narrowing is what a `string`
- * costs — and the extra line is deliberate: comparing the query value inline
- * reads to the extraction gate as a populated credential, because a `.vue` file
- * is judged by the rule written for YAML and env files rather than the one
- * written for TypeScript source. Reported in this task's report.
+ * The single-use value the link carried, or `''` when it carried none. A repeated query
+ * parameter arrives as an array and an absent one as `undefined`, so this narrows to `string`.
  */
-const credentialFromLink = computed(() => {
-  const fromLink = route.query.token;
-  return typeof fromLink === 'string' ? fromLink : '';
-});
+const credentialFromLink = computed(() => (
+  typeof route.query.token === 'string' ? route.query.token : ''
+));
 
 const newSecretInput = ref('');
 const pending = ref(false);

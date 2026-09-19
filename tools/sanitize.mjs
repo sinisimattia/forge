@@ -252,7 +252,9 @@ export const RULES = [
   ['source-domain module', /\b(event|payment|ticket|invitation)s?\.(module|service|controller|entity|repository|guard|dto|resolver|interceptor|pipe|strategy|gateway)\b/i],
   ['stripe-style key', /\b(sk_|pk_live)/],
   // The non-TypeScript form of the populated-secret rule; `lineFindings` substitutes
-  // POPULATED_SECRET_TS for this one in `.ts`/`.tsx`. See both definitions above.
+  // POPULATED_SECRET_TS for this one wherever `isTypeScriptFile` says the file's own
+  // rule applies — `.ts`/`.tsx`, and a `.vue` component's script block. See both
+  // definitions above.
   ['populated secret', POPULATED_SECRET],
   ['private key', /BEGIN [A-Z ]*PRIVATE KEY/],
 ];
@@ -341,9 +343,39 @@ export function stripNonSecrets(line) {
   return line.replace(SELF_NAMED_VALUE, ' ');
 }
 
-/** Whether a path is TypeScript source — the only file type the exemption above applies to. */
+/**
+ * Whether a path is TypeScript source — the only file type the exemption above applies to.
+ *
+ * A `.vue` single-file component's `<script setup lang="ts">` block IS TypeScript, and the
+ * argument the quoted-literal rule makes ("TypeScript has no unquoted string literals, so an
+ * unquoted bare word after a colon is a reference to a binding, not a credential") applies to
+ * it verbatim. Judging `.vue` by the non-TypeScript rule instead — as this function did before
+ * this fix — misclassified every `.vue` script line as if it were YAML, and produced exactly
+ * the false-positive class that rule is wrong for: `secret: secretInput.value` (a reference),
+ * `route.query.token === 'string'` (the `=` of `===`), `const secret = ref('')` (an empty
+ * ref) and a bare `secret: string` type annotation all flagged as populated secrets in a
+ * `.vue` file while the identical TypeScript flagged none of them. Recorded in
+ * `.superpowers/sdd/2026-09-18-forge-phase-2-identity-foundation/task-17-report.md` §10.1,
+ * and the reason three files under `apps/webapp` were reshaped around the gate instead of the
+ * gate being fixed.
+ *
+ * LATENT SUB-CLASS, deliberately left unhandled — pinned by a test, not silently accepted.
+ * `.vue` also has a *template* block, where a binding is quoted by HTML attribute syntax, not
+ * by TypeScript string-literal syntax: `:token="tokenRef"` is a reference (the value between
+ * the quotes is a JS expression), but to POPULATED_SECRET_TS it is indistinguishable from a
+ * quoted literal, and it flags. Telling script content apart from template content needs the
+ * file's structure, not just the line's text, and this function — like the rest of this
+ * gate — judges one line at a time with no memory of what came before it; doing otherwise
+ * here would be exactly the kind of restructuring around a corner case this gate's own history
+ * warns against. Nothing in `template/` or `tools/` binds a secret-named prop to a bare quoted
+ * reference today (verified: no `:secret=`/`:token=`/`:password=`/`v-model:secret=` etc. exists
+ * in any `.vue` file), so extending TypeScript treatment to `.vue` trades zero real coverage
+ * for eliminating four measured false positives. If this shape is ever introduced, it will
+ * over-flag (the strict direction this gate always prefers to a miss) and can be marked with
+ * `sanitize:allow` like any other reviewed exemption.
+ */
 export function isTypeScriptFile(file) {
-  return /\.tsx?$/.test(file);
+  return /\.(tsx?|vue)$/.test(file);
 }
 
 /**
@@ -354,13 +386,14 @@ export function isTypeScriptFile(file) {
  *
  * The file is part of the judgement, not decoration: `PASSWORD = 'PASSWORD'` is an enum
  * member in a `.ts` file and a real credential in a compose file, and `secret: candidateSecret`
- * is a reference to a binding in a `.ts` file and a literal value in an env file. TypeScript
+ * is a reference to a binding in a `.ts`/`.vue` file and a literal value in an env file.
+ * TypeScript (and a `.vue` component's TypeScript script block — see `isTypeScriptFile`)
  * therefore gets its own populated-secret pattern (a value must be quoted) as well as the
  * self-named-value strip; `${...}` stripping is unconditional, because it exists *for* YAML.
  * Anything whose type is unknown is judged as a non-source file, which is the strict direction.
  *
  * @param line - one raw line, exactly as read from the file
- * @param file - the path it came from; anything but `.ts`/`.tsx` gets the unexempted rule
+ * @param file - the path it came from; anything but `.ts`/`.tsx`/`.vue` gets the unexempted rule
  * @returns the labels of the rules it matched, possibly empty
  */
 export function lineFindings(line, file = '') {
