@@ -7,7 +7,7 @@ import { User } from '__FORGE_SCOPE__/core/users/entities';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import { DisplayNameRequiredError, UserNotFoundError } from '__FORGE_SCOPE__/core/users/errors';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
-import type { AuditService } from '../../audit/audit.service';
+import { recordingAudit } from '../../auth/__tests__/recording-audit';
 import { FakeDataSource } from '../../auth/__tests__/fake-data-source';
 import { RefreshTokenRecord } from '../../auth/entities/refresh-token-record.entity';
 import { SessionRecord } from '../../auth/entities/session-record.entity';
@@ -69,11 +69,7 @@ describe('UsersService', () => {
     const repo = <T extends ObjectLiteral>(entity: { name: string }): Repository<T> =>
       source.getRepository(entity) as unknown as Repository<T>;
 
-    const audit = {
-      record: async (input: RecordAuditEntryInput) => {
-        recorded.push(input);
-      },
-    } as unknown as AuditService;
+    const audit = recordingAudit(recorded);
 
     // The real session service over the in-memory store, not a spy. Ending
     // sessions is a consequence these tests assert by reading the rows back;

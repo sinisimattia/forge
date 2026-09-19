@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
+import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import type { IIdentityService } from '__FORGE_SCOPE__/core/identities/contracts';
 import { AuthIdentity } from '__FORGE_SCOPE__/core/identities/entities';
@@ -248,14 +249,43 @@ export class IdentitiesService implements IIdentityService {
    */
   public async replaceSecret(identityId: string, secret: string): Promise<void> {
     const stored = await this.hasher.hash(secret);
-    await this.identities.update(
+    await this.identities.update({ id: identityId }, IdentitiesService.storedColumns(stored));
+  }
+
+  /**
+   * Replaces the stored secret inside a transaction somebody else opened.
+   *
+   * The derivation is computed **before** the write and is the expensive part —
+   * tens of milliseconds — so a caller holding a transaction open across it is
+   * holding it for that long. That is the cost of making a password change
+   * atomic with the session it re-issues, and it is worth it: the alternative is
+   * a failure window in which somebody's password has changed and they are
+   * signed out of the account they changed it on.
+   *
+   * @param manager - the caller's transaction
+   * @param identityId - the identity whose secret is being replaced
+   * @param secret - the new password
+   */
+  public async replaceSecretIn(
+    manager: EntityManager,
+    identityId: string,
+    secret: string,
+  ): Promise<void> {
+    const stored = await this.hasher.hash(secret);
+    await manager.update(
+      AuthIdentityRecord,
       { id: identityId },
-      {
-        secretHash: stored.hash,
-        secretAlgorithm: stored.algorithm,
-        secretParams: stored.params,
-      },
+      IdentitiesService.storedColumns(stored),
     );
+  }
+
+  /** The three columns a stored secret occupies, in one place rather than two. */
+  private static storedColumns(stored: StoredSecret): QueryDeepPartialEntity<AuthIdentityRecord> {
+    return {
+      secretHash: stored.hash,
+      secretAlgorithm: stored.algorithm,
+      secretParams: stored.params,
+    };
   }
 
   /** Records that an identity was used successfully. */

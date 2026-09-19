@@ -102,16 +102,42 @@ export class FakeDataSource {
   }
 
   /**
-   * Runs `work` with a manager whose locks are released when it returns.
+   * Runs `work` with a manager whose locks are released when it returns, and
+   * **whose writes are undone if it throws**.
    *
    * Release happens in a `finally`, so a transaction that throws — which the
    * reuse branch does, every time it fires — does not leave the row locked for
    * ever and hang every later test in the file.
+   *
+   * ## Rollback, and why it is a journal rather than a snapshot
+   *
+   * Without rollback a fake cannot express atomicity at all, so "these two
+   * writes happen together or not at all" is a property no test can fail —
+   * which is how `AuthController.changePassword` came to replace a secret and
+   * issue a session in two statements with nothing asserting that a failure
+   * between them could not leave a caller both changed and signed out.
+   *
+   * The obvious implementation is a snapshot of every table before `work` and a
+   * restore on throw, and it is wrong here: this fake runs transactions
+   * concurrently on purpose (see the `honourLocks` constructor parameter), so a
+   * loser restoring a snapshot it took before the winner committed would undo
+   * the winner. A journal undoes only what *this* transaction wrote, in reverse,
+   * which is what a real one does.
+   *
+   * What it does not model: isolation. A concurrent reader sees this
+   * transaction's uncommitted writes, which no real isolation level permits.
+   * That is the same limitation the lock modelling already has and is stated for
+   * the same reason — the fake is evidence about what the implementation *asks
+   * for*, never about what the database does.
    */
   public async transaction<T>(work: (manager: FakeEntityManager) => Promise<T>): Promise<T> {
     const held: (() => void)[] = [];
+    const journal: (() => void)[] = [];
     try {
-      return await work(new FakeEntityManager(this, held));
+      return await work(new FakeEntityManager(this, held, journal));
+    } catch (error) {
+      for (const undo of journal.reverse()) undo();
+      throw error;
     } finally {
       for (const release of held) release();
     }
@@ -181,19 +207,47 @@ export class FakeDataSource {
     return this.all(entity).filter((row) => alternatives.some((one) => matches(row, one)));
   }
 
-  /** Inserts a row, assigning an id, and answers the way TypeORM's `insert` does. */
-  public insert(entity: EntityClass, values: Row): { identifiers: { id: string }[] } {
+  /**
+   * Inserts a row, assigning an id, and answers the way TypeORM's `insert` does.
+   *
+   * @param journal - when a transaction is open, the undo for this write is
+   *   appended to it. Absent outside one, exactly as a statement outside a
+   *   transaction is not rolled back by anything.
+   */
+  public insert(
+    entity: EntityClass,
+    values: Row,
+    journal?: (() => void)[],
+  ): { identifiers: { id: string }[] } {
     const id = `fake-${entity.name}-${this.nextId++}`;
     const row: Row = { ...values, id };
     this.tables.set(entity.name, [...this.all(entity), row]);
+    journal?.push(() => {
+      this.tables.set(entity.name, this.all(entity).filter((held) => held !== row));
+    });
     return { identifiers: [{ id }] };
   }
 
-  /** Applies `patch` to every row matching `criteria`; answers how many it changed. */
-  public update(entity: EntityClass, criteria: Criteria, patch: Row): number {
+  /**
+   * Applies `patch` to every row matching `criteria`; answers how many it changed.
+   *
+   * @param journal - see {@link FakeDataSource.insert}. The undo restores the
+   *   previous value of exactly the keys this patch touched, on exactly the rows
+   *   it matched — not the whole row, so a field another transaction changed in
+   *   the meantime is left alone.
+   */
+  public update(
+    entity: EntityClass,
+    criteria: Criteria,
+    patch: Row,
+    journal?: (() => void)[],
+  ): number {
     let changed = 0;
     for (const row of this.all(entity)) {
       if (!matches(row, criteria)) continue;
+      const before: Row = {};
+      for (const key of Object.keys(patch)) before[key] = row[key];
+      journal?.push(() => Object.assign(row, before));
       Object.assign(row, patch);
       changed += 1;
     }
@@ -236,6 +290,7 @@ export class FakeEntityManager {
   public constructor(
     private readonly source: FakeDataSource,
     private readonly held: (() => void)[],
+    private readonly journal: (() => void)[] = [],
   ) {}
 
   public async findOne(
@@ -271,7 +326,7 @@ export class FakeEntityManager {
     values: Row,
   ): Promise<{ identifiers: { id: string }[] }> {
     await yieldTurn();
-    return this.source.insert(entity, values);
+    return this.source.insert(entity, values, this.journal);
   }
 
   public async update(
@@ -280,7 +335,7 @@ export class FakeEntityManager {
     patch: Row,
   ): Promise<{ affected: number }> {
     await yieldTurn();
-    return { affected: this.source.update(entity, criteria, patch) };
+    return { affected: this.source.update(entity, criteria, patch, this.journal) };
   }
 }
 

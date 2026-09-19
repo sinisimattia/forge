@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import type { IAuthService } from '__FORGE_SCOPE__/core/auth/contracts';
 import { Session } from '__FORGE_SCOPE__/core/auth/entities';
@@ -544,7 +544,76 @@ export class AuthService implements IAuthService {
     currentSecret: string,
     newSecret: string,
   ): Promise<void> {
-    const identity = await this.identities.findPasswordIdentityByUser(actorId);
+    await this.dataSource.transaction(async (manager) => {
+      await this.changePasswordIn(manager, actorId, currentSecret, newSecret);
+    });
+  }
+
+  /**
+   * Replaces the actor's secret **and** opens a fresh session for them, in one
+   * transaction.
+   *
+   * Not on `IAuthService`, and it could not be: the contract is given an actor
+   * and not a request, so it cannot know which session is the caller's and
+   * cannot hand one back. The transport can, and this is where the two halves
+   * meet.
+   *
+   * **Both or neither, and that is the whole reason this method exists.** The
+   * controller used to call `changePassword` and then `SessionService.begin` as
+   * two statements. Everything about that reads correctly and it has a window
+   * two awaits wide in which the password has changed, every session is dead,
+   * and the new one has not been written — leaving somebody signed out of the
+   * account they just changed the password on, with the old password no longer
+   * working. A review found the ordering of those two statements enforced by
+   * nothing; this is the same pair of statements, made indivisible.
+   *
+   * The audit entry is inside the transaction too. An entry that survived a
+   * rollback would be a permanent record of a change that did not happen, in a
+   * table whose role has UPDATE and DELETE revoked — the defect `resetPassword`
+   * shipped once.
+   *
+   * The cost is honest: the transaction is held open across a derivation, which
+   * is tens of milliseconds. That is the price of not having the window.
+   *
+   * @param actorId - the user on whose behalf the call is made
+   * @param currentSecret - the secret they hold now, as proof it is them
+   * @param newSecret - the replacement secret
+   * @param client - what could be told about where the request came from
+   * @returns the credentials for the caller's new session
+   * @throws InvalidCredentialsError when the current secret is not theirs
+   * @throws WeakPasswordError when the replacement does not meet the policy, or
+   *   when the registry reports it as already public
+   */
+  public async changePasswordAndReissue(
+    actorId: UserId,
+    currentSecret: string,
+    newSecret: string,
+    client: ClientContext,
+  ): Promise<IssuedCredentials> {
+    return this.dataSource.transaction(async (manager) => {
+      await this.changePasswordIn(manager, actorId, currentSecret, newSecret);
+      // After, never before. Re-issuing first would have the new session revoked
+      // along with the old ones, and a wrong current secret would leave a
+      // session row behind for an attempt that failed.
+      return this.sessions.beginIn(manager, actorId, client);
+    });
+  }
+
+  /**
+   * The whole of a password change, inside a transaction somebody else opened.
+   *
+   * Every judgement that can refuse comes first and touches nothing: the current
+   * secret is proven, the policy is applied, the registry is asked. Only then
+   * does anything get written, so a refusal has nothing to roll back and the
+   * rollback path carries no weight it does not have to.
+   */
+  private async changePasswordIn(
+    manager: EntityManager,
+    actorId: UserId,
+    currentSecret: string,
+    newSecret: string,
+  ): Promise<void> {
+    const identity = await this.identities.findPasswordIdentityByUserIn(manager, actorId);
     if (identity === null) throw new InvalidCredentialsError();
     if (!(await this.identities.verifySecret(identity, currentSecret))) {
       throw new InvalidCredentialsError();
@@ -555,9 +624,19 @@ export class AuthService implements IAuthService {
     await this.refuseIfPublic(newSecret);
 
     const now = new Date();
-    await this.identities.replaceSecret(identity.id, newSecret);
-    await this.sessions.revokeAll(actorId);
-    await this.record(AuditAction.PASSWORD_CHANGED, actorId, {}, now);
+    await this.identities.replaceSecretIn(manager, identity.id, newSecret);
+    await SessionService.revokeAllIn(manager, actorId);
+    await this.audit.recordIn(manager, {
+      organizationId: null,
+      actorId,
+      action: AuditAction.PASSWORD_CHANGED,
+      resourceType: 'user',
+      resourceId: actorId,
+      metadata: {},
+      clientAddress: null,
+      clientLabel: null,
+      occurredAt: now,
+    });
   }
 
   // ------------------------------------------------------------------- sessions

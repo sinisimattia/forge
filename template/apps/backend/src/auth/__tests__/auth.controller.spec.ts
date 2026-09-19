@@ -17,7 +17,7 @@ import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
 import { AuthController } from '../auth.controller';
 import { AuthService } from '../auth.service';
 import { REFRESH_COOKIE } from '../refresh-cookie';
-import { SESSION_TTL_SECONDS, SessionService } from '../session/session.service';
+import { SESSION_TTL_SECONDS } from '../session/session.service';
 import { RefreshTokenService } from '../session/refresh-token.service';
 import { JwtStrategy } from '../strategies';
 
@@ -124,8 +124,9 @@ describe('AuthController', () => {
       resetPassword: async (...args: unknown[]) => {
         recovery.push({ method: 'resetPassword', args });
       },
-      changePassword: async (...args: unknown[]) => {
-        recovery.push({ method: 'changePassword', args });
+      changePasswordAndReissue: async (...args: unknown[]) => {
+        recovery.push({ method: 'changePasswordAndReissue', args });
+        return { session: SESSION, accessToken: ISSUED_ACCESS, refreshToken: ISSUED_RENEWAL };
       },
     } as unknown as AuthService;
 
@@ -134,16 +135,6 @@ describe('AuthController', () => {
         throw new SessionNotFoundError('(none)');
       },
     } as unknown as RefreshTokenService;
-
-    // The controller re-issues for the caller after a password change, which is
-    // the only thing it uses this for. Every other route here leaves it untouched.
-    const sessions = {
-      begin: async () => ({
-        session: SESSION,
-        accessToken: ISSUED_ACCESS,
-        refreshToken: ISSUED_RENEWAL,
-      }),
-    } as unknown as SessionService;
 
     const moduleRef = await Test.createTestingModule({
       imports: [
@@ -181,7 +172,6 @@ describe('AuthController', () => {
         JwtStrategy,
         { provide: AuthService, useValue: auth },
         { provide: RefreshTokenService, useValue: refresh },
-        { provide: SessionService, useValue: sessions },
       ],
     }).compile();
 
@@ -341,9 +331,15 @@ describe('AuthController', () => {
         .send({ currentSecret: PLAINTEXT, newSecret: OTHER_PLAINTEXT })
         .expect(200);
 
-      expect(recovery[0]).toEqual({
-        method: 'changePassword',
-        args: [ACTOR_ID, PLAINTEXT, OTHER_PLAINTEXT],
+      expect(recovery[0]).toMatchObject({
+        // One call, not two. The change and the re-issue are one transaction in
+        // `AuthService`, so there is no longer an order here to get wrong —
+        // `change-password.spec.ts` drives the real services and owns that
+        // property.
+        method: 'changePasswordAndReissue',
+        // The fourth argument is the client context the controller builds from
+        // the request; `auth.controller.spec.ts` does not own what goes in it.
+        args: [ACTOR_ID, PLAINTEXT, OTHER_PLAINTEXT, expect.any(Object)],
       });
       // The service ends every session, the caller's included. Without the
       // re-issue the caller is signed out by their own password change, which

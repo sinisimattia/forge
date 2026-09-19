@@ -32,7 +32,7 @@ import {
 } from './dto';
 import { REFRESH_COOKIE } from './refresh-cookie';
 import { RefreshTokenService } from './session/refresh-token.service';
-import { ACCESS_TOKEN_TTL_SECONDS, SessionService } from './session/session.service';
+import { ACCESS_TOKEN_TTL_SECONDS } from './session/session.service';
 import type { AuthenticatedActor } from './strategies';
 
 /**
@@ -48,7 +48,6 @@ export class AuthController {
   public constructor(
     private readonly auth: AuthService,
     private readonly refresh: RefreshTokenService,
-    private readonly sessions: SessionService,
   ) {}
 
   /**
@@ -228,16 +227,18 @@ export class AuthController {
   /**
    * Replaces the actor's own secret, proving the current one first.
    *
-   * `AuthService.changePassword` ends **every** session, the caller's included,
+   * `IAuthService.changePassword` ends **every** session, the caller's included,
    * because it is given an actor and not a request and cannot tell which one is
-   * current. The transport can, so it re-issues here: a fresh session and a
-   * fresh pair of credentials for the caller it is serving, and nothing for
-   * anybody else who was signed in as that account.
+   * current. The transport can, so a fresh session is opened for the caller it
+   * is serving and nothing for anybody else who was signed in as that account.
    *
-   * That ordering is the property. Re-issuing *before* the revocation would have
-   * the new session revoked along with the old ones, and the caller would be
-   * signed out by their own password change — which reads as the change having
-   * failed.
+   * **One call, because it is one transaction.** This was two statements — the
+   * change, then the re-issue — and everything about that reads correctly while
+   * leaving a window two awaits wide in which the password has changed, every
+   * session is dead, and the new one has not been written. A review found the
+   * ordering of that pair enforced by nothing at all; `changePasswordAndReissue`
+   * is the same pair made indivisible, so there is no longer an order here to
+   * get wrong or a gap to fail in.
    */
   @Post('change-password')
   @HttpCode(HttpStatus.OK)
@@ -247,9 +248,12 @@ export class AuthController {
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ): Promise<AuthResponseDto> {
-    await this.auth.changePassword(actor.userId, body.currentSecret, body.newSecret);
-
-    const credentials = await this.sessions.begin(actor.userId, AuthController.clientOf(request));
+    const credentials = await this.auth.changePasswordAndReissue(
+      actor.userId,
+      body.currentSecret,
+      body.newSecret,
+      AuthController.clientOf(request),
+    );
     REFRESH_COOKIE.set(response, credentials.refreshToken);
     const user = await this.auth.userOf(actor.userId);
     return {

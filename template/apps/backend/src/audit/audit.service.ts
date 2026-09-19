@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, IsNull, LessThanOrEqual, Repository } from 'typeorm';
+import { EntityManager, FindOptionsWhere, IsNull, LessThanOrEqual, Repository } from 'typeorm';
+import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import type { IAuditService } from '__FORGE_SCOPE__/core/audit/contracts';
 import { AuditEntry } from '__FORGE_SCOPE__/core/audit/entities';
 import type { AuditQuery, RecordAuditEntryInput } from '__FORGE_SCOPE__/core/audit/types';
@@ -43,19 +44,46 @@ export class AuditService implements IAuditService {
    * the sign-in that provoked it.
    */
   public async record(input: RecordAuditEntryInput): Promise<void> {
-    await this.entries.save(
-      this.entries.create({
-        organizationId: input.organizationId,
-        actorUserId: input.actorId,
-        action: input.action,
-        resourceType: input.resourceType,
-        resourceId: input.resourceId,
-        metadata: { ...input.metadata },
-        clientAddress: input.clientAddress,
-        clientLabel: input.clientLabel,
-        occurredAt: input.occurredAt,
-      }),
-    );
+    await this.entries.insert(AuditService.toRow(input));
+  }
+
+  /**
+   * Writes one entry inside a transaction somebody else opened.
+   *
+   * It exists so that an entry and the thing it describes commit together. An
+   * entry written outside its operation's transaction survives that operation
+   * being rolled back, and the result is a permanent record of something that
+   * did not happen — permanent because `audit_entries` refuses UPDATE and DELETE
+   * to the role this process connects as, so nothing can correct it afterwards.
+   * That exact defect shipped once, in `resetPassword`.
+   *
+   * @param manager - the caller's transaction
+   * @param input - the entry to record, less the identifier the store assigns
+   */
+  public async recordIn(manager: EntityManager, input: RecordAuditEntryInput): Promise<void> {
+    await manager.insert(AuditEntryRecord, AuditService.toRow(input));
+  }
+
+  /** Input to row, in one place rather than two. */
+  private static toRow(input: RecordAuditEntryInput): QueryDeepPartialEntity<AuditEntryRecord> {
+    const row: Partial<AuditEntryRecord> = {
+      organizationId: input.organizationId,
+      actorUserId: input.actorId,
+      action: input.action,
+      resourceType: input.resourceType,
+      resourceId: input.resourceId,
+      // Copied rather than referenced, so a caller that goes on mutating the
+      // object it passed cannot change what was recorded.
+      metadata: { ...input.metadata },
+      clientAddress: input.clientAddress,
+      clientLabel: input.clientLabel,
+      occurredAt: input.occurredAt,
+    };
+    // TypeORM's deep-partial type cannot express a `jsonb` column declared as an
+    // open record: it wants every value to be a deep-partial of its own type,
+    // and `unknown` is not one. The cast is confined to this line, which is the
+    // only place in this backend where an audit row is built.
+    return row as QueryDeepPartialEntity<AuditEntryRecord>;
   }
 
   /**

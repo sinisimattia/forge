@@ -9,6 +9,7 @@ import type { Response } from 'supertest';
 import type { RecordAuditEntryInput } from '__FORGE_SCOPE__/core/audit/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
 import { AuditService } from '../../audit/audit.service';
+import { recordingAudit } from './recording-audit';
 import { AuthIdentityRecord } from '../../identities/auth-identity-record.entity';
 import { NoOpBreachedPasswordRegistry } from '../../identities/breached-passwords';
 import { Argon2PasswordHasher } from '../../identities/hashing';
@@ -140,11 +141,7 @@ describe('D7: a known address and an unknown one are indistinguishable', () => {
         sent.push(message);
       },
     };
-    const audit = {
-      record: async (input: RecordAuditEntryInput) => {
-        recorded.push(input);
-      },
-    } as unknown as AuditService;
+    const audit = recordingAudit(recorded);
 
     const repo = <T extends ObjectLiteral>(entity: { name: string }): Repository<T> =>
       source.getRepository(entity) as unknown as Repository<T>;

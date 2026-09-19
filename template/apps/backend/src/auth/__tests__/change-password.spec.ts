@@ -8,8 +8,8 @@ import type { DataSource, ObjectLiteral, Repository } from 'typeorm';
 import request from 'supertest';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policies';
-import type { RecordAuditEntryInput } from '__FORGE_SCOPE__/core/audit/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
+import { AuditEntryRecord } from '../../audit/audit-entry-record.entity';
 import { AuditService } from '../../audit/audit.service';
 import { AuthIdentityRecord } from '../../identities/auth-identity-record.entity';
 import { NoOpBreachedPasswordRegistry } from '../../identities/breached-passwords';
@@ -91,11 +91,9 @@ describe('POST /auth/change-password', () => {
   let app: INestApplication;
   let source: FakeDataSource;
   let auth: AuthService;
-  let recorded: RecordAuditEntryInput[];
 
   beforeEach(async () => {
     source = new FakeDataSource();
-    recorded = [];
     const sent: OutboundMessage[] = [];
 
     const mailer: IMailer = {
@@ -103,14 +101,18 @@ describe('POST /auth/change-password', () => {
         sent.push(message);
       },
     };
-    const audit = {
-      record: async (input: RecordAuditEntryInput) => {
-        recorded.push(input);
-      },
-    } as unknown as AuditService;
-
     const repo = <T extends ObjectLiteral>(entity: { name: string }): Repository<T> =>
       source.getRepository(entity) as unknown as Repository<T>;
+
+    // The REAL audit service over the in-memory store, not a recording stub.
+    // These tests assert that an entry was NOT written when a transaction rolled
+    // back, and a stub has no rollback to model — it would record the entry and
+    // keep it, so the assertion would fail against correct code and pass against
+    // nothing.
+    const audit = new AuditService(
+      repo<AuditEntryRecord>(AuditEntryRecord),
+      repo<UserRecord>(UserRecord),
+    );
 
     const identities = new IdentitiesService(
       repo<AuthIdentityRecord>(AuthIdentityRecord),
@@ -195,6 +197,28 @@ describe('POST /auth/change-password', () => {
       refresh: credentials.refreshToken,
       sessionId: String(credentials.session.id),
     };
+  };
+
+  /**
+   * Makes the store refuse to write a session row, and hands back the original
+   * so a test can put it back.
+   *
+   * The session insert is the LAST write of the change-password transaction, and
+   * therefore the only place the two-statement version this replaced could fail
+   * *after* committing the change. Failing anywhere earlier would roll back for
+   * free and prove nothing.
+   */
+  const refuseSessionInserts = (): typeof source.insert => {
+    const real = source.insert.bind(source);
+    source.insert = ((
+      entity: { name: string },
+      values: Record<string, unknown>,
+      journal?: (() => void)[],
+    ) => {
+      if (entity.name === 'SessionRecord') throw new Error('the store refused the session');
+      return real(entity, values, journal);
+    }) as typeof source.insert;
+    return real;
   };
 
   /** Every session row that is still usable. */
@@ -294,7 +318,6 @@ describe('POST /auth/change-password', () => {
 
     it('records the change', async () => {
       const first = await signIn();
-      recorded.length = 0;
 
       await request(app.getHttpServer())
         .post('/auth/change-password')
@@ -302,7 +325,99 @@ describe('POST /auth/change-password', () => {
         .send({ currentSecret: PLAINTEXT, newSecret: REPLACEMENT })
         .expect(200);
 
-      expect(recorded.map((entry) => entry.action)).toContain(AuditAction.PASSWORD_CHANGED);
+      // Read off the store's rows rather than a recording stub, so that this and
+      // its negative counterpart below — "records nothing about a change that
+      // did not happen" — are measured the same way and one cannot pass while
+      // the other is measuring something else.
+      expect(
+        source.all(AuditEntryRecord).filter((row) => row.action === AuditAction.PASSWORD_CHANGED),
+      ).toHaveLength(1);
+    });
+  });
+
+  describe('when the re-issue itself fails', () => {
+    it('leaves the caller neither changed nor signed out', async () => {
+      // THE ATOMICITY PROPERTY. This was two statements — change, then re-issue
+      // — and everything about that reads correctly while leaving a window two
+      // awaits wide in which the password has changed, every session is dead,
+      // and the new one has not been written. The person is then signed out of
+      // the account they just changed the password on, with the old password no
+      // longer working: they cannot get back in with either.
+      //
+      // The failure is injected at the session insert, which is the last write
+      // of the transaction and therefore the only place the old two-statement
+      // version could fail *after* committing the change.
+      const first = await signIn();
+      const realInsert = refuseSessionInserts();
+
+      await request(app.getHttpServer())
+        .post('/auth/change-password')
+        .set('Authorization', `Bearer ${first.access}`)
+        .send({ currentSecret: PLAINTEXT, newSecret: REPLACEMENT })
+        .expect(500);
+
+      source.insert = realInsert;
+
+      // Not signed out: the session they came in on is still usable. Asserted
+      // FIRST, because `authenticate` opens a session on success and would
+      // otherwise be the second one this counts.
+      expect(usable()).toHaveLength(1);
+      expect(String(usable()[0].id)).toBe(first.sessionId);
+
+      // Not changed: the password they still hold is the one that works.
+      await expect(
+        auth.authenticate({
+          email: 'ada@example.test',
+          secret: PLAINTEXT,
+          client: { address: null, label: null },
+        }),
+      ).resolves.toMatchObject({ status: 'AUTHENTICATED' });
+      await expect(
+        auth.authenticate({
+          email: 'ada@example.test',
+          secret: REPLACEMENT,
+          client: { address: null, label: null },
+        }),
+      ).resolves.toMatchObject({ status: 'REJECTED' });
+    });
+
+    it('records nothing about a change that did not happen', async () => {
+      // The least reversible half. `audit_entries` refuses UPDATE and DELETE to
+      // the role this process connects as, so a PASSWORD_CHANGED entry written
+      // outside the transaction would be a permanent record of something that
+      // was rolled back — the defect `resetPassword` shipped once, in the one
+      // table nobody can correct.
+      const first = await signIn();
+      const realInsert = refuseSessionInserts();
+
+      await request(app.getHttpServer())
+        .post('/auth/change-password')
+        .set('Authorization', `Bearer ${first.access}`)
+        .send({ currentSecret: PLAINTEXT, newSecret: REPLACEMENT })
+        .expect(500);
+
+      source.insert = realInsert;
+
+      // Read off the store's own rows, not the recording stub: the stub cannot
+      // roll back, and rolling back is the property.
+      expect(
+        source.all(AuditEntryRecord).filter((row) => row.action === AuditAction.PASSWORD_CHANGED),
+      ).toEqual([]);
+    });
+
+    it('sets no renewal cookie', async () => {
+      const first = await signIn();
+      const realInsert = refuseSessionInserts();
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/change-password')
+        .set('Authorization', `Bearer ${first.access}`)
+        .send({ currentSecret: PLAINTEXT, newSecret: REPLACEMENT })
+        .expect(500);
+
+      source.insert = realInsert;
+
+      expect(response.headers['set-cookie']).toBeUndefined();
     });
   });
 

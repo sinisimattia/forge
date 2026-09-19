@@ -16,7 +16,7 @@ import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
 import { WeakPasswordError } from '__FORGE_SCOPE__/core/identities/errors';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
-import type { AuditService } from '../../audit/audit.service';
+import { recordingAudit } from './recording-audit';
 import { hashOpaqueToken } from '../../common/crypto';
 import { AuthIdentityRecord } from '../../identities/auth-identity-record.entity';
 import { NoOpBreachedPasswordRegistry } from '../../identities/breached-passwords';
@@ -117,11 +117,7 @@ describe('AuthService', () => {
         sent.push(message);
       },
     };
-    const audit = {
-      record: async (input: RecordAuditEntryInput) => {
-        recorded.push(input);
-      },
-    } as unknown as AuditService;
+    const audit = recordingAudit(recorded);
 
     // The fake stores plain rows, so it is handed over as the repository type the
     // service asks for. The cast is confined to this one helper rather than

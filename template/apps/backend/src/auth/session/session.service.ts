@@ -92,10 +92,33 @@ export class SessionService {
    * @returns the session and the two credentials that stand for it
    */
   public async begin(userId: UserId, client: ClientContext): Promise<IssuedCredentials> {
+    return this.dataSource.transaction((manager) => this.beginIn(manager, userId, client));
+  }
+
+  /**
+   * Begins a session inside a transaction somebody else opened.
+   *
+   * The variant that exists so a caller can make beginning a session atomic with
+   * something *else* — changing a password and re-issuing for the caller has to
+   * be both or neither, or a failure in between leaves somebody whose password
+   * changed and who is signed out of the account they changed it on. See
+   * `AuthService.changePasswordAndReissue`, which is the reason this is
+   * separable at all.
+   *
+   * @param manager - the caller's transaction
+   * @param userId - the account signing in
+   * @param client - what could be told about where the attempt came from
+   * @returns the session and the two credentials that stand for it
+   */
+  public async beginIn(
+    manager: EntityManager,
+    userId: UserId,
+    client: ClientContext,
+  ): Promise<IssuedCredentials> {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000);
 
-    const { session, refreshToken } = await this.dataSource.transaction(async (manager) => {
+    const { session, refreshToken } = await (async () => {
       const inserted = await manager.insert(SessionRecord, {
         userId,
         createdAt: now,
@@ -121,7 +144,7 @@ export class SessionService {
         }),
         refreshToken: issued.token,
       };
-    });
+    })();
 
     return { session, accessToken: this.mintAccessToken(userId, session.id), refreshToken };
   }
@@ -245,14 +268,24 @@ export class SessionService {
    * @returns how many sessions were ended
    */
   public async revokeAll(actorId: UserId): Promise<number> {
+    return this.dataSource.transaction((manager) => SessionService.revokeAllIn(manager, actorId));
+  }
+
+  /**
+   * Ends every session the actor holds, inside a transaction somebody else
+   * opened. See {@link SessionService.beginIn} for why the pair exists.
+   *
+   * @param manager - the caller's transaction
+   * @param actorId - the user on whose behalf the call is made
+   * @returns how many sessions were ended
+   */
+  public static async revokeAllIn(manager: EntityManager, actorId: UserId): Promise<number> {
     const now = new Date();
-    return this.dataSource.transaction(async (manager) => {
-      const rows = await manager.find(SessionRecord, {
-        where: { userId: actorId, revokedAt: IsNull() },
-      });
-      for (const row of rows) await SessionService.endSession(manager, row.id, now);
-      return rows.length;
+    const rows = await manager.find(SessionRecord, {
+      where: { userId: actorId, revokedAt: IsNull() },
     });
+    for (const row of rows) await SessionService.endSession(manager, row.id, now);
+    return rows.length;
   }
 
   /** Deletes credentials whose session ended long ago. Not on any request path. */

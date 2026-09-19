@@ -15,6 +15,7 @@ import type { AuthIdentityId } from '__FORGE_SCOPE__/core/identities/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
 import { AuditService } from '../../audit/audit.service';
+import { recordingAudit } from '../../auth/__tests__/recording-audit';
 import { FakeDataSource } from '../../auth/__tests__/fake-data-source';
 import { JwtStrategy } from '../../auth/strategies';
 import { AuthIdentityRecord } from '../auth-identity-record.entity';
@@ -96,11 +97,7 @@ describe('IdentitiesController', () => {
     const repo = <T extends ObjectLiteral>(entity: { name: string }): Repository<T> =>
       source.getRepository(entity) as unknown as Repository<T>;
 
-    const audit = {
-      record: async (input: RecordAuditEntryInput) => {
-        recorded.push(input);
-      },
-    } as unknown as AuditService;
+    const audit = recordingAudit(recorded);
 
     identityRepo = repo<AuthIdentityRecord>(AuthIdentityRecord);
     const identities = new IdentitiesService(
