@@ -61,13 +61,27 @@ export interface AuthFetchOptions {
  * A renewal that answers `false` rethrows the **original** refusal rather than
  * inventing one, so a caller sees the `401` the server actually sent.
  *
- * Renewal itself must not be issued through this client. It cannot be: a
- * `401` from `POST /auth/refresh` would ask the store to renew in order to
- * renew, and the store's in-flight promise would then be waiting on itself. The
- * store issues renewal on the bare `inner` for that reason, which is also why
- * this file names no path — spelling `/auth/refresh` here to special-case it
- * would put a path outside `fetchers/`, where the whole application can then
- * stop believing that `fetchers/` is the only place one appears.
+ * **Renewal itself must not be issued through this client, and nothing about
+ * this file prevents it.** This paragraph used to say it could not happen. It
+ * can: `guarded` and `transport` are both `ApiClient`, so swapping one for the
+ * other on `stores/auth.ts`'s `postRefresh` line typechecks, and — measured —
+ * left the whole suite green. What then happens is that a `401` from
+ * `POST /auth/refresh` asks the store to renew in order to renew: the credential
+ * presented is non-null, so `createAuthFetch` calls `renew()`, `renew()` hands
+ * back the in-flight promise, and that promise **is this one**. It awaits itself
+ * and never settles, so `initialize()` never resolves and both route middleware
+ * wait forever — a page that never renders, on the session state DEC-3 produces
+ * most often.
+ *
+ * What enforces it is a test and not a sentence:
+ * `stores/__tests__/auth.spec.ts` → *answers, rather than waiting on itself, when
+ * a signed-in session has been ended*. It signs in, has the world end the
+ * session, and requires the renewal to resolve `false`. Under the swap it never
+ * resolves and the runner's timeout turns it red.
+ *
+ * This file still names no path: spelling `/auth/refresh` here to special-case it
+ * would put a path outside `fetchers/`, where the whole application can then stop
+ * believing that `fetchers/` is the only place one appears.
  *
  * @param options - the transport to wrap and the renewal to call
  * @returns a client with the same signature, which callers cannot tell apart

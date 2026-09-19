@@ -71,9 +71,10 @@ const NO_CLIENT: ClientContext = { address: null, label: null };
  * different address, the renewal cookie has to be copied out of the incoming
  * request by hand, and the `Set-Cookie` that comes back has to be copied onto
  * the outgoing response. None of that is true in a browser, and all of it has to
- * be true for the whole of one render. Its other caller is the store's own spec,
- * which drives **this** store — the shipped actions, not a re-declaration of
- * them in a fixture — against a model of the backend.
+ * be true for the whole of one render. Its other callers are the specs — the
+ * store's, the two middleware specs' shared harness, and the composables' —
+ * which drive **this** store, the shipped actions rather than a re-declaration
+ * of them in a fixture, against a model of the backend.
  */
 export const useAuthStore = defineStore('auth', () => {
   /**
@@ -85,8 +86,20 @@ export const useAuthStore = defineStore('auth', () => {
    * anything asks for data — which doubles the rate at which the renewal cookie
    * rotates and with it the chance of two tabs racing into the backend's reuse
    * detection. The cost is that an authenticated HTML response contains a
-   * short-lived bearer credential, which is why the server plugin marks those
-   * responses `private, no-store`.
+   * short-lived bearer credential.
+   *
+   * `private, no-store` on an authenticated response (see
+   * `plugins/auth-init.server.ts`, and the assertion that fails without it) is
+   * the mitigation, and it is a partial one — said plainly, because a mitigation
+   * comment that reads as complete is its own defect. It closes shared and
+   * intermediary caches, which is the serious path. It does **not** close a
+   * response body captured by request logging or an APM agent, a page saved to
+   * disk, the browser's back-forward cache, or a DOM-capturing error reporter —
+   * exactly the artifact-persistence class "in memory, nowhere else" exists to
+   * avoid, so the payload is a deliberate partial exception to this store's own
+   * rule rather than a case it covers. It does not worsen XSS: script that can
+   * read the payload can read the hydrated store and call the renewal endpoint
+   * anyway.
    */
   const accessToken = ref<string | null>(null);
 
@@ -261,6 +274,9 @@ export const useAuthStore = defineStore('auth', () => {
   /** One renewal, which answers rather than throws. */
   async function attemptRenewal(): Promise<boolean> {
     try {
+      // `transport` and **not** `guarded`. See `createAuthFetch`'s own comment for
+      // what the other one does, and `auth.spec.ts`'s "answers, rather than
+      // waiting on itself" for what stops it coming back.
       const body = await postRefresh(transport);
       accept(body.user, body.accessToken);
       return true;

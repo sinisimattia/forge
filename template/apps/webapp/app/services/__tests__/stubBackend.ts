@@ -156,6 +156,26 @@ export interface StubBackend {
    * number of requests, and nothing on the store's own surface reports it.
    */
   refreshRequests: () => number;
+  /**
+   * Ends every session the user holds, without going through an endpoint.
+   *
+   * It models what happens *elsewhere*: the person signs out on another device,
+   * an administrator revokes them, or reuse detection has already fired. There is
+   * no request a client can make that produces this, which is why it is a driver
+   * door rather than a route — and it is the only way to reach the one production
+   * state the store's renewal path could not otherwise be tested in, a signed-in
+   * store whose renewal cookie no longer buys anything.
+   */
+  endSessionsOf: (userId: UserId) => void;
+  /**
+   * Puts a value back in the browser's hand as its renewal cookie.
+   *
+   * The only way to present a **spent** credential deliberately. In the world it
+   * happens two ways — two requests raced each other, or somebody else took a
+   * copy — and neither is reproducible on demand, which is exactly why reuse
+   * detection is the part of renewal that never gets tested.
+   */
+  presentRenewalCookie: (value: string | null) => void;
 }
 
 /** The reason phrase the backend's filter derives from a status. */
@@ -315,13 +335,41 @@ export function stubBackend(): StubBackend {
     return { session, credential };
   };
 
+  /**
+   * Ends one session, and spends every renewal credential still live inside it.
+   *
+   * **One session, which is the backend's scope and was not always this file's.**
+   * `RefreshTokenService.rotate` answers reuse with
+   * `SessionService.endSession(manager, row.sessionId, now)` — that session's row
+   * revoked, and that session's unspent renewal credentials marked used — and
+   * `apps/backend/src/auth/__tests__/refresh-rotation.spec.ts` (D8) pins exactly
+   * that. This stub used to end **every session the user held**, which is a
+   * different and stronger security property: it said that a reused credential
+   * signs you out of every device. Nothing read the difference, so nothing caught
+   * it, which is how the `INVALID_CREDENTIALS` divergence survived too.
+   * `stubBackend.refresh.spec.ts` is the cross-check that now has to be changed
+   * before this can drift again.
+   */
+  const endSession = (sessionId: SessionId): void => {
+    const now = new Date();
+    const session = sessions.get(sessionId);
+    if (session !== undefined && session.revokedAt === null) {
+      sessions.set(sessionId, { ...session, revokedAt: now.toISOString() });
+    }
+    // Only the ones not already spent, as the backend's sweep is: overwriting
+    // `spentAt` on a credential legitimately exchanged earlier would rewrite when
+    // that happened, and the chain of instants is what an incident is read from.
+    for (const [value, held] of renewals) {
+      if (held.sessionId === sessionId && held.spentAt === null) {
+        renewals.set(value, { ...held, spentAt: now });
+      }
+    }
+  };
+
   /** Ends every session the user holds, as recovery and a password change do. */
   const revokeAllOf = (userId: UserId): void => {
-    const now = new Date().toISOString();
     for (const [id, session] of sessions) {
-      if (session.userId === userId && session.revokedAt === null) {
-        sessions.set(id, { ...session, revokedAt: now });
-      }
+      if (session.userId === userId && session.revokedAt === null) endSession(id);
     }
   };
 
@@ -485,25 +533,38 @@ export function stubBackend(): StubBackend {
       // than in production, months later, the first time a credential lapses.
       if (presented === null) refuse(401, 'errors.http.unauthorized');
       const held = renewals.get(presented);
-      if (held === undefined) refuse(401, 'errors.http.unauthorized');
+      // Unknown, spent, expired and belonging-to-an-ended-session are one answer
+      // on the other side — `SessionNotFoundError`, which the controller turns
+      // into a bare `401` — because telling them apart says which credentials
+      // were ever real.
+      if (held === undefined) {
+        cookie = null;
+        refuse(401, 'errors.auth.session_not_found');
+      }
       if (held.spentAt !== null) {
         // **Reuse detection.** A renewal credential is single-use. A second
         // presentation means either that the holder raced itself or that somebody
         // else has a copy, and nothing on this side can tell those apart — so the
-        // safe reading is the second one, and every session the user holds ends.
-        // This is what turns "the webapp renewed three times at once" into "the
-        // user was signed out for no reason they can see".
-        const family = sessions.get(held.sessionId);
-        if (family !== undefined) revokeAllOf(family.userId);
+        // safe reading is the second one and the session ends. That session: see
+        // `endSession`. This is what turns "the webapp renewed three times at
+        // once" into "the user was signed out for no reason they can see".
+        endSession(held.sessionId);
+        // Cleared, as the backend's controller clears it on every failure below
+        // this point: leaving a credential the server has just refused in the
+        // browser means every later renewal presents it again.
         cookie = null;
-        refuse(401, 'errors.http.unauthorized');
+        refuse(401, 'errors.auth.session_not_found');
       }
       const session = sessions.get(held.sessionId);
       if (session === undefined || !Session.fromJSON(session).isActive(new Date())) {
-        refuse(401, 'errors.http.unauthorized');
+        cookie = null;
+        refuse(401, 'errors.auth.session_not_found');
       }
       const stored = users.get(session.userId);
-      if (stored === undefined) refuse(401, 'errors.http.unauthorized');
+      if (stored === undefined) {
+        cookie = null;
+        refuse(401, 'errors.auth.session_not_found');
+      }
       // Rotation: the presented credential is spent and a fresh one takes its
       // place, which is the reason a second presentation is detectable at all.
       renewals.set(presented, { ...held, spentAt: new Date() });
@@ -784,6 +845,14 @@ export function stubBackend(): StubBackend {
 
     refreshRequests(): number {
       return refreshes;
+    },
+
+    endSessionsOf(userId: UserId): void {
+      revokeAllOf(userId);
+    },
+
+    presentRenewalCookie(value: string | null): void {
+      cookie = value;
     },
   };
 }

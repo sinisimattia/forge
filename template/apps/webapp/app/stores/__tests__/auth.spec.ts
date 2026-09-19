@@ -305,6 +305,40 @@ describe('useAuthStore', () => {
     expect(store.currentUser).toBeNull();
   });
 
+  /**
+   * **A signed-in store whose renewal cookie no longer buys anything.**
+   *
+   * The production state DEC-3 produces most often — the person signed out on
+   * another device, or reuse detection already fired — and the only one in which
+   * `renew()` can be asked to renew in order to renew.
+   *
+   * It is here because `postRefresh` is issued on the **bare** transport and not
+   * on the renewing one, and nothing made that true: `utils/authFetch.ts` called
+   * the alternative impossible, and swapping `transport` for `guarded` on the one
+   * line that matters left the whole suite green. It is not impossible. With
+   * `guarded`, this renewal's own `401` asks `createAuthFetch` to renew; the
+   * credential is non-null so it does; `renew()` hands back the in-flight promise,
+   * which **is this one** — it awaits itself, never settles, and both route
+   * middleware wait on it forever. Not a redirect and not a crash: a page that
+   * never renders.
+   *
+   * Every other failing-renewal test in this file runs on a store that has never
+   * signed in, where `presented()` is `null` and `createAuthFetch` rethrows before
+   * reaching the branch. That is why signing in first is the whole test.
+   */
+  it('answers, rather than waiting on itself, when a signed-in session has been ended', async () => {
+    await store.login(ACTOR_EMAIL, PLAINTEXT);
+    expect(store.accessToken).not.toBeNull();
+
+    // Ended somewhere else. Nothing the client could have asked for.
+    backend.endSessionsOf(ACTOR_ID);
+
+    await expect(store.renew()).resolves.toBe(false);
+    expect(store.status).toBe('anonymous');
+    expect(store.accessToken).toBeNull();
+    expect(store.currentUser).toBeNull();
+  });
+
   it('asks once and then stops asking', async () => {
     await store.initialize();
     expect(backend.refreshRequests()).toBe(1);

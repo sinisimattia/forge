@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ApiRequest } from '~/types';
 import type { Harness, Middleware } from './harness';
 import { afterAFullPageLoad, harness, NAVIGATED, route } from './harness';
 
@@ -52,15 +53,46 @@ describe('middleware/guest', () => {
     expect(answer).toBe(NAVIGATED);
   });
 
+  /**
+   * The `unknown` state, held open.
+   *
+   * Asserting the end state alone would be the same test as *sends a signed-in
+   * visitor away from it* wearing a different name: both pass for a guard that
+   * read `isAuthenticated` too early, let the visitor onto the sign-in page, and
+   * corrected itself a frame later. So the renewal is held, the middleware is
+   * observed **not having decided**, and only then released.
+   *
+   * The frame it would otherwise leak is a sign-in form shown to somebody who is
+   * already signed in, which is how a person ends up re-authenticating and
+   * rotating a session they were already holding.
+   */
   it('waits for the answer instead of deciding from "unknown"', async () => {
     const store = await afterAFullPageLoad(world.backend);
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const world_ = world;
+    store.adoptTransport(async <T>(request: ApiRequest): Promise<T> => {
+      await held;
+      return world_.backend.client<T>(request);
+    });
 
-    await middleware(route('/login'));
+    let settled = false;
+    const running = middleware(route('/login')).then((answer) => {
+      settled = true;
+      return answer;
+    });
+    for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
 
-    // It did not read `isAuthenticated` while the answer was still `unknown`;
-    // had it, a signed-in visitor would have been let onto the sign-in page.
-    expect(store.status).toBe('authenticated');
+    expect(settled).toBe(false);
+    expect(world.navigateTo).not.toHaveBeenCalled();
+    expect(store.status).toBe('unknown');
+
+    release();
+    await expect(running).resolves.toBe(NAVIGATED);
     expect(world.navigateTo).toHaveBeenCalledWith('/');
+    expect(store.status).toBe('authenticated');
   });
 
   it('goes back to where the visitor was interrupted', async () => {
