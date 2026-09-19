@@ -81,6 +81,8 @@ describe('IdentitiesController', () => {
   let jwt: JwtService;
   let source: FakeDataSource;
   let recorded: RecordAuditEntryInput[];
+  /** The repository the service was built with, so a test can make it fail. */
+  let identityRepo: Repository<AuthIdentityRecord>;
 
   beforeEach(async () => {
     source = new FakeDataSource();
@@ -100,8 +102,9 @@ describe('IdentitiesController', () => {
       },
     } as unknown as AuditService;
 
+    identityRepo = repo<AuthIdentityRecord>(AuthIdentityRecord);
     const identities = new IdentitiesService(
-      repo<AuthIdentityRecord>(AuthIdentityRecord),
+      identityRepo,
       new Argon2PasswordHasher(),
       audit,
     );
@@ -235,6 +238,44 @@ describe('IdentitiesController', () => {
 
       expect(stranger.status).toBe(absent.status);
       expect(stranger.body).toStrictEqual(absent.body);
+    });
+
+    it('records nothing when it refuses', async () => {
+      // The sibling of the reset-password defect, one level down: an entry
+      // written before the thing it describes has happened is permanent, because
+      // `audit_entries` refuses UPDATE and DELETE to the role this process
+      // connects as. `unlinkIdentity` asks core's policy, then deletes, then
+      // records — and only that order makes every entry in the table true.
+      await request(app.getHttpServer())
+        .delete(`/users/me/identities/${GRACE_SOLE_IDENTITY}`)
+        .set('Authorization', bearer(GRACE))
+        .expect(409);
+      await request(app.getHttpServer())
+        .delete(`/users/me/identities/${GRACE_SOLE_IDENTITY}`)
+        .set('Authorization', bearer(ADA))
+        .expect(404);
+
+      expect(recorded).toEqual([]);
+    });
+
+    it('records nothing when the removal itself fails', async () => {
+      // The other half of "the entry is written after the thing it describes",
+      // and the half that needs a failure to be observable at all: with a store
+      // that cannot fail, recording before deleting and recording after are
+      // indistinguishable, so the order would be pinned by nothing. Here the
+      // delete throws, and the only correct outcome is a history that does not
+      // claim an identity was unlinked.
+      identityRepo.delete = async () => {
+        throw new Error('the store refused the delete');
+      };
+
+      await request(app.getHttpServer())
+        .delete(`/users/me/identities/${ADA_FEDERATED_IDENTITY}`)
+        .set('Authorization', bearer(ADA))
+        .expect(500);
+
+      expect(recorded).toEqual([]);
+      expect(source.byId(AuthIdentityRecord, ADA_FEDERATED_IDENTITY)).toBeDefined();
     });
 
     it('refuses an identifier that is not one', async () => {

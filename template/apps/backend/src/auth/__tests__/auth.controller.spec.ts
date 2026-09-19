@@ -314,6 +314,14 @@ describe('AuthController', () => {
         .expect(401);
     });
 
+    // NOTE the limit of this block. The services below are fakes, so what is
+    // asserted here is that the controller CALLS them with the right arguments
+    // and shapes the response — not what they do to each other. The composed
+    // property ("every other session dies and the caller's stays usable") and
+    // the statement ORDER that produces it are unobservable against a fake
+    // `SessionService` handing back canned values: a review reversed the two
+    // statements and this file stayed green. `change-password.spec.ts` drives
+    // the real services over an in-memory store and owns that property.
     it('proves the current secret and re-issues for the caller it is serving', async () => {
       const response = await request(app.getHttpServer())
         .post('/auth/change-password')
