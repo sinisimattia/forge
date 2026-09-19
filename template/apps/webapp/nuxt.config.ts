@@ -6,10 +6,20 @@ export default defineNuxtConfig({
     enabled: true,
   },
 
+  // `@pinia/nuxt` is the auth store's registration, and it is registration by
+  // list rather than by import: nothing in `app/` imports pinia's Nuxt plugin,
+  // so removing this line leaves every file typechecking and building and only
+  // fails at runtime, with "no active Pinia". `nuxt.config.spec.ts` imports this
+  // config and asserts the entry is here, which is the only assertion available
+  // for a wiring that has no behaviour outside a running Nuxt.
+  //
+  // It also registers `app/stores/` for auto-import — the module's default
+  // `storesDirs` is `<srcDir>/stores`, and Nuxt 4's srcDir is `app/`.
   modules: [
     '@nuxtjs/tailwindcss',
     '@nuxt/eslint',
     '@nuxtjs/i18n',
+    '@pinia/nuxt',
   ],
 
   runtimeConfig: {

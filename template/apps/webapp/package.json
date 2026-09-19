@@ -23,6 +23,7 @@
   "dependencies": {
     "__FORGE_SCOPE__/core": "*",
     "nuxt": "^4.3.1",
+    "pinia": "^4.0.3",
     "vue": "^3.5.28",
     "vue-router": "^5.1.0"
   },
@@ -31,6 +32,7 @@
     "@nuxtjs/i18n": "^10.4.0",
     "@nuxtjs/storybook": "^9.0.1",
     "@nuxtjs/tailwindcss": "^6.14.0",
+    "@pinia/nuxt": "^1.0.2",
     "@storybook-vue/nuxt": "^9.0.1",
     "@storybook/addon-a11y": "~9.0.5",
     "@storybook/addon-docs": "~9.0.5",

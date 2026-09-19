@@ -39,6 +39,50 @@ export interface ApiClientOptions {
    * that existed when it was built.
    */
   readonly credential: () => string | null;
+  /**
+   * Extra headers to put on every request this client issues.
+   *
+   * It exists for exactly one caller and could not be written without it.
+   * Under SSR there is no browser to carry the renewal cookie: the request is
+   * made by a Node process that was *handed* one by the browser, and the only
+   * way it travels onward is if this application copies it across by hand. The
+   * server-side client is therefore built with a `cookie` header taken from the
+   * incoming request. See `plugins/auth-init.server.ts`.
+   *
+   * A function rather than a value for the same reason `credential` is one: the
+   * client is built once per request and the headers it forwards must be read
+   * when the request is issued, not when the client was assembled.
+   */
+  readonly headers?: () => Readonly<Record<string, string>>;
+  /**
+   * Called with every `Set-Cookie` the response carried, if any.
+   *
+   * Also SSR's, and also unavoidable. A renewal **rotates** the credential: the
+   * server answers with a new cookie and treats the old one as spent. In a
+   * browser that is invisible — the browser stores it. In Node nothing stores
+   * it, so unless the values are relayed onto the response this process is
+   * building, SSR renews, keeps the new credential in a variable that is
+   * discarded when the render ends, and the browser is left holding the spent
+   * one. The next renewal presents it, and the backend's reuse detection
+   * correctly treats that as a stolen credential and revokes the whole session
+   * family (DEC-3). The symptom is a user who is signed out at random.
+   */
+  readonly onSetCookie?: (values: readonly string[]) => void;
+}
+
+/**
+ * Every `Set-Cookie` on a response, or nothing.
+ *
+ * `Headers.getSetCookie` is the only way to read more than one of them — they
+ * are the one header that may legally repeat, and `headers.get('set-cookie')`
+ * collapses several into one comma-joined string that cannot be split again
+ * without parsing dates. It is present in Node 22 (which `engines` pins) and in
+ * current browsers; the guard is for the browsers where it is not, where the
+ * header is forbidden to script anyway and the honest answer is "none".
+ */
+function setCookiesOf(response: Response): readonly string[] {
+  const headers: { getSetCookie?: () => string[] } = response.headers;
+  return typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
 }
 
 /** `path` and `query` assembled into a URL against `baseUrl`. */
@@ -69,7 +113,10 @@ function urlOf(baseUrl: string, request: ApiRequest): string {
 export function createApiClient(options: ApiClientOptions): ApiClient {
   return async <T>(request: ApiRequest): Promise<T> => {
     const credential = request.credential ?? options.credential();
-    const headers: Record<string, string> = { accept: 'application/json' };
+    const headers: Record<string, string> = {
+      accept: 'application/json',
+      ...(options.headers === undefined ? {} : options.headers()),
+    };
     if (request.body !== undefined) headers['content-type'] = 'application/json';
     if (credential !== null) headers.authorization = `Bearer ${credential}`;
 
@@ -83,6 +130,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       credentials: request.withCookie === true ? 'include' : 'same-origin',
       ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
     });
+
+    // Before anything can throw. A refusal can still rotate — the backend clears
+    // the cookie when it revokes a session — and a relay that only ran on the
+    // happy path would leave the browser holding a credential the server has
+    // already forgotten.
+    if (options.onSetCookie !== undefined) options.onSetCookie(setCookiesOf(response));
 
     // 204, and any other answer with nothing in it. `response.json()` throws on
     // an empty body, which would turn "it worked" into an unhandled parse error.

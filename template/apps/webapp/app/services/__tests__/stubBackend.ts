@@ -140,6 +140,22 @@ export interface StubBackend {
    * previous one.
    */
   issuedCredentials: () => readonly string[];
+  /**
+   * The renewal cookie the browser is currently holding, or `null`.
+   *
+   * A driver reads it to assert that a rotation happened, and to check that the
+   * value the browser ends up with is the one the world last issued rather than
+   * one it has already spent.
+   */
+  renewalCookie: () => string | null;
+  /**
+   * How many renewals this world has been asked for.
+   *
+   * It exists for the concurrency assertion and cannot be written without it:
+   * "three components mounting at once produce one renewal" is a claim about the
+   * number of requests, and nothing on the store's own surface reports it.
+   */
+  refreshRequests: () => number;
 }
 
 /** The reason phrase the backend's filter derives from a status. */
@@ -163,7 +179,18 @@ function refuseCredentials(): never {
   // suspended, deleted. The backend has the reason in scope and deliberately does
   // not read it; a stub that leaked it here would let a service be written that
   // depends on something the real wire never says.
-  refuse(401, 'errors.auth.invalid_credentials', 'INVALID_CREDENTIALS');
+  //
+  // **And no `code`**, which is a correction rather than an omission. The
+  // backend's sign-in refusal is an `UnauthorizedException` carrying a
+  // `messageKey`, and the filter's `HttpException` branch never sets `code` — so
+  // a real sign-in refusal is indistinguishable from the guard's. This stub used
+  // to emit `INVALID_CREDENTIALS` here, which is what `POST /auth/change-password`
+  // really answers (there the refusal is core's `InvalidCredentialsError`, a
+  // `DomainError`, which the filter does code) and what sign-in does not. Nothing
+  // read it, so nothing caught it; it is corrected because the webapp now decides
+  // whether to renew from what a `401` carries, and a decision made on a value
+  // only the stub emits is a decision made on nothing.
+  refuse(401, 'errors.auth.invalid_credentials');
 }
 
 /** Refuses a secret the deployment's policy will not accept, as the backend does. */
@@ -193,6 +220,27 @@ export function stubBackend(): StubBackend {
   const resets = new Map<string, StoredCredential>();
   /** Which session an access credential stands for. */
   const credentials = new Map<string, SessionId>();
+  /**
+   * The renewal credentials this world has issued, and whether each is spent.
+   *
+   * Modelled rather than skipped because the interesting behaviour of a renewal
+   * is not that it works — it is what happens when a spent one is presented, and
+   * that is the failure DEC-3 actually produces in the field. A stub that always
+   * said yes would let a webapp be written that renews three times per page load
+   * and never notice.
+   */
+  const renewals = new Map<string, { sessionId: SessionId; spentAt: Date | null }>();
+  /**
+   * The renewal cookie the one browser this world serves is currently holding.
+   *
+   * A single value, because a stub serves one client. It is **read when a
+   * request is issued and not when it is handled** (see `client`), which is the
+   * whole of what makes a race reproducible here: three renewals started in the
+   * same tick all present the credential that was current when they started.
+   */
+  let cookie: string | null = null;
+  /** How many renewals have been asked for. The number a concurrency test counts. */
+  let refreshes = 0;
 
   let sequence = 0;
   /** The next id of a kind, in this store's own format. */
@@ -259,6 +307,11 @@ export function stubBackend(): StubBackend {
     sessions.set(session.id, session);
     const credential = nextId('credential');
     credentials.set(credential, session.id);
+    // The renewal credential, which in the real thing is an `httpOnly` cookie the
+    // browser stores and script cannot read. Here the "browser" is `cookie`.
+    const renewal = nextId('renewal');
+    renewals.set(renewal, { sessionId: session.id, spentAt: null });
+    cookie = renewal;
     return { session, credential };
   };
 
@@ -334,8 +387,14 @@ export function stubBackend(): StubBackend {
 
   const body = <T>(request: ApiRequest): T => request.body as T;
 
-  /** One `/auth` request. */
-  const auth = (request: ApiRequest, tail: string): unknown => {
+  /**
+   * One `/auth` request.
+   *
+   * @param presented - the renewal cookie the request carried, captured when it
+   * was issued rather than read here, so that concurrent renewals present what
+   * they really would have presented
+   */
+  const auth = (request: ApiRequest, tail: string, presented: string | null): unknown => {
     const { method } = request;
 
     if (method === 'POST' && tail === '/register') {
@@ -416,6 +475,45 @@ export function stubBackend(): StubBackend {
         accessToken: opened.credential,
         expiresIn: STUB_ACCESS_LIFETIME_SECONDS,
       };
+    }
+
+    if (method === 'POST' && tail === '/refresh') {
+      refreshes += 1;
+      // A request that did not ask for the cookie to travel is indistinguishable
+      // from a browser holding none — which is the point. `postRefresh` sets
+      // `withCookie`, and a version that stopped setting it fails here rather
+      // than in production, months later, the first time a credential lapses.
+      if (presented === null) refuse(401, 'errors.http.unauthorized');
+      const held = renewals.get(presented);
+      if (held === undefined) refuse(401, 'errors.http.unauthorized');
+      if (held.spentAt !== null) {
+        // **Reuse detection.** A renewal credential is single-use. A second
+        // presentation means either that the holder raced itself or that somebody
+        // else has a copy, and nothing on this side can tell those apart — so the
+        // safe reading is the second one, and every session the user holds ends.
+        // This is what turns "the webapp renewed three times at once" into "the
+        // user was signed out for no reason they can see".
+        const family = sessions.get(held.sessionId);
+        if (family !== undefined) revokeAllOf(family.userId);
+        cookie = null;
+        refuse(401, 'errors.http.unauthorized');
+      }
+      const session = sessions.get(held.sessionId);
+      if (session === undefined || !Session.fromJSON(session).isActive(new Date())) {
+        refuse(401, 'errors.http.unauthorized');
+      }
+      const stored = users.get(session.userId);
+      if (stored === undefined) refuse(401, 'errors.http.unauthorized');
+      // Rotation: the presented credential is spent and a fresh one takes its
+      // place, which is the reason a second presentation is detectable at all.
+      renewals.set(presented, { ...held, spentAt: new Date() });
+      const rotated = nextId('renewal');
+      renewals.set(rotated, { sessionId: session.id, spentAt: null });
+      cookie = rotated;
+      const access = nextId('credential');
+      credentials.set(access, session.id);
+      sessions.set(session.id, { ...session, lastUsedAt: new Date().toISOString() });
+      return { user: stored.json, accessToken: access, expiresIn: STUB_ACCESS_LIFETIME_SECONDS };
     }
 
     if (method === 'POST' && tail === '/forgot-password') {
@@ -637,9 +735,15 @@ export function stubBackend(): StubBackend {
   // service nothing had tested. Every refusal below therefore arrives as a
   // rejected promise, exactly as `createApiClient`'s does.
   const client: ApiClient = async <T>(request: ApiRequest): Promise<T> => {
+    // Captured BEFORE the await, because that is when a real transport reads it:
+    // `createApiClient` builds its headers synchronously and hands them to
+    // `fetch`. Reading it after the await would let three renewals started in the
+    // same tick each see the credential the one before it had just rotated to,
+    // and the race this world exists to expose would quietly disappear.
+    const presented = request.withCookie === true ? cookie : null;
     await Promise.resolve();
     if (request.path.startsWith('/auth')) {
-      return auth(request, request.path.slice('/auth'.length)) as T;
+      return auth(request, request.path.slice('/auth'.length), presented) as T;
     }
     if (request.path.startsWith('/users')) {
       return userRoutes(request, request.path.slice('/users'.length)) as T;
@@ -672,6 +776,14 @@ export function stubBackend(): StubBackend {
 
     issuedCredentials(): readonly string[] {
       return [...credentials.keys()];
+    },
+
+    renewalCookie(): string | null {
+      return cookie;
+    },
+
+    refreshRequests(): number {
+      return refreshes;
     },
   };
 }
