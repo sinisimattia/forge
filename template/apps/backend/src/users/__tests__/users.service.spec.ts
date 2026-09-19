@@ -7,8 +7,8 @@ import { User } from '__FORGE_SCOPE__/core/users/entities';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import { DisplayNameRequiredError, UserNotFoundError } from '__FORGE_SCOPE__/core/users/errors';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
-import { recordingAudit } from '../../auth/__tests__/recording-audit';
-import { FakeDataSource } from '../../common/testing';
+
+import { FakeDataSource, recordingAudit } from '../../common/testing';
 import { RefreshTokenRecord } from '../../auth/entities/refresh-token-record.entity';
 import { SessionRecord } from '../../auth/entities/session-record.entity';
 import { SessionService } from '../../auth/session/session.service';

@@ -9,7 +9,7 @@ import type { Response } from 'supertest';
 import type { RecordAuditEntryInput } from '__FORGE_SCOPE__/core/audit/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
 import { AuditService } from '../../audit/audit.service';
-import { recordingAudit } from './recording-audit';
+
 import { AuthIdentityRecord } from '../../identities/auth-identity-record.entity';
 import { NoOpBreachedPasswordRegistry } from '../../identities/breached-passwords';
 import { Argon2PasswordHasher } from '../../identities/hashing';
@@ -25,7 +25,7 @@ import { SessionRecord } from '../entities/session-record.entity';
 import { RefreshTokenService } from '../session/refresh-token.service';
 import { SessionService } from '../session/session.service';
 import { JwtStrategy } from '../strategies';
-import { FakeDataSource } from '../../common/testing';
+import { FakeDataSource, recordingAudit } from '../../common/testing';
 
 /**
  * # D7 — a known address and an unknown one are indistinguishable

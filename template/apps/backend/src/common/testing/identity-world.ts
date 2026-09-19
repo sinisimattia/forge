@@ -36,11 +36,17 @@ import { FakeDataSource } from './fake-data-source';
  * `IdentitiesService`, `SessionService` and `AuditService` are constructed
  * exactly as `AppModule` constructs them, including the real
  * `Argon2PasswordHasher` — a conformance run that swapped in a cheap hasher
- * would be proving things about a deployment nobody ships. Only the three
- * things a unit test cannot have are stood in for: the store
- * ({@link FakeDataSource}), the mailer (an array), and the breached-password
- * registry (the shipped no-op, which is what a generated project actually runs
- * — ADR-0008).
+ * would be proving things about a deployment nobody ships.
+ *
+ * What is **not** the real thing, in full rather than in summary: the store is
+ * {@link FakeDataSource}; the mailer is an array; the breached-password registry
+ * is the shipped no-op, which is what a generated project actually runs
+ * (ADR-0008); and `ConfigService` and `JwtService` are the real classes handed
+ * this harness's own values rather than a deployment's. The last two were
+ * missing from an earlier version of this list, which said "only the three
+ * things a unit test cannot have" and named three — a count that was wrong the
+ * moment it was written, in a paragraph whose whole job is to be exhaustive.
+ * There is no count here now, deliberately.
  *
  * That is the point of Task 13. Until it, core's suites had only ever been
  * satisfied by reference implementations written in the same file that asserts
@@ -49,13 +55,16 @@ import { FakeDataSource } from './fake-data-source';
  *
  * ## What the store cannot express
  *
- * `FakeDataSource` carries a numbered inventory of nine properties it cannot
- * model — dirty reads, blocking, audit immutability, unique constraints, schema
- * checking, `ILIKE`'s `_`, foreign keys and cascades, tie ordering, and deletes
- * inside a transaction. **Read that list rather than any summary of it**, here
- * or anywhere else: a sentence about those limits that lives away from the class
- * is a sentence that goes stale the first time the class changes, which is
- * exactly how this project has been bitten before.
+ * `FakeDataSource` carries a numbered inventory, on the class itself, of the
+ * properties it cannot model. **Read that list rather than any summary of it**,
+ * here or anywhere else.
+ *
+ * This paragraph deliberately does not reproduce it, or count it. An earlier
+ * version opened "an inventory of nine properties" and then listed the nine
+ * keywords — which is the staleness it was warning about, in the sentence doing
+ * the warning: add a tenth item to the class and the sentence here is wrong,
+ * silently, and the reader who trusts it is worse off than one who had no
+ * summary at all. A pointer cannot go stale; a count and a copy both can.
  *
  * Two of them bear on what the conformance suites can and cannot establish here,
  * and are named at the drivers that depend on them rather than only in the

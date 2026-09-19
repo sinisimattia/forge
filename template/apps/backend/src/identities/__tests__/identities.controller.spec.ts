@@ -15,8 +15,8 @@ import type { AuthIdentityId } from '__FORGE_SCOPE__/core/identities/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
 import { AuditService } from '../../audit/audit.service';
-import { recordingAudit } from '../../auth/__tests__/recording-audit';
-import { FakeDataSource } from '../../common/testing';
+
+import { FakeDataSource, recordingAudit } from '../../common/testing';
 import { JwtStrategy } from '../../auth/strategies';
 import { AuthIdentityRecord } from '../auth-identity-record.entity';
 import { Argon2PasswordHasher } from '../hashing';

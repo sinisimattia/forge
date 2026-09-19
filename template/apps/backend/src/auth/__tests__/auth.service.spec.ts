@@ -16,7 +16,7 @@ import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
 import { WeakPasswordError } from '__FORGE_SCOPE__/core/identities/errors';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
-import { recordingAudit } from './recording-audit';
+
 import { hashOpaqueToken } from '../../common/crypto';
 import { AuthIdentityRecord } from '../../identities/auth-identity-record.entity';
 import { NoOpBreachedPasswordRegistry } from '../../identities/breached-passwords';
@@ -35,7 +35,7 @@ import { PasswordResetTokenRecord } from '../entities/password-reset-token-recor
 import { RefreshTokenRecord } from '../entities/refresh-token-record.entity';
 import { SessionRecord } from '../entities/session-record.entity';
 import { SessionService } from '../session/session.service';
-import { FakeDataSource } from '../../common/testing';
+import { FakeDataSource, recordingAudit } from '../../common/testing';
 
 /**
  * Registration, verification and sign-in.
