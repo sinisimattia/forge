@@ -68,9 +68,11 @@ src/<module>/
 ```
 
 **Present today:** `health/` (liveness probe, no business logic); `auth/` (the
-`/auth` endpoints, the global `JwtAuthGuard`, `@Public()`/`@CurrentUser()`, the session
-and rotation services, and the one `REFRESH_COOKIE` constant); `identities/` (the password
-identity, the argon2id hasher, the breached-password port); `audit/`; and the persistence
+`/auth` endpoints including recovery, the global `JwtAuthGuard`, `PlatformAdminGuard`,
+`@Public()`/`@CurrentUser()`, the session and rotation services, and the one
+`REFRESH_COOKIE` constant); `identities/` (the password identity, the argon2id hasher, the
+breached-password port, and `/users/me/identities`); `users/` (`/users/me` and the four
+platform-admin endpoints); `audit/` (`GET /audit`); and the persistence
 record classes under `users/`, `identities/`, `auth/entities/` and `audit/`. Those are
 named `<Thing>Record` because `__FORGE_SCOPE__/core` already exports `User`,
 `AuthIdentity`, `Session` and `AuditEntry`, and a repository imports both in one file.
@@ -87,11 +89,17 @@ named `<Thing>Record` because `__FORGE_SCOPE__/core` already exports `User`,
 ## What's wired up
 
 - `AppModule` — `ConfigModule` (global, `.env`), `TypeOrmModule.forRootAsync` reading
-  `DATABASE_URL`, the seven persistence record classes, `HealthModule`, `MailModule`,
-  `AuditModule`, `AuthModule`, and the `APP_GUARD` provider described above.
-- `main.ts` — global `I18nValidationPipe`, `I18nResponseInterceptor`,
-  `HttpExceptionFilter` and `cookie-parser`; CORS from `CORS_ORIGIN`; listens on `PORT`
-  (default `3000`).
+  `DATABASE_URL`, the seven persistence record classes, `I18nModule`, `HealthModule`,
+  `MailModule`, `AuditModule`, `IdentitiesModule`, `AuthModule`, `UsersModule`, and
+  `GLOBAL_PROVIDERS` — the `APP_GUARD`, `APP_PIPE`, `APP_FILTER` and `APP_INTERCEPTOR`
+  described above. Everything that can be module metadata IS, because module metadata is
+  assertable without starting anything; `__tests__/composition-root.spec.ts` reads this list
+  off the decorator and its table says which fault each assertion catches.
+- `app.setup.ts` — `cookie-parser` and CORS from `CORS_ORIGIN`, which are the two things
+  the framework has no declarative form for. A spec calls **this function**, not a copy.
+- `main.ts` — four statements: create, `configureApp`, read `PORT` (default `3000`),
+  listen. Deliberately almost empty: it is excluded from coverage and no spec imports it,
+  so anything added there is invisible to the whole suite. That was measured.
   There is **no** global route prefix — `GET /health` is polled unprefixed by the
   container healthcheck and by the e2e smoke test; keep it that way unless every
   consumer of `/health` is updated at the same time. `GET /health` also carries
@@ -137,13 +145,13 @@ named `<Thing>Record` because `__FORGE_SCOPE__/core` already exports `User`,
   as a restricted role that owns nothing, and `UPDATE`/`DELETE` on `audit_entries` are
   revoked from that role — which a non-owner cannot grant back to itself. That is the
   whole of the append-only audit guarantee; see `src/db/migrations/` and `.env.example`.
-- `src/i18n/en/*.json` + `src/common/i18n/` — translation plumbing, **still not registered
-  as an `I18nModule`**, and now with routes that depend on it. The consequence is concrete:
-  `HttpExceptionFilter` falls back to emitting the raw key, so a refused sign-in answers
-  `{"error":"Unauthorized","message":"errors.auth.invalid_credentials"}` rather than the
-  English in `src/i18n/en/errors.json`. Statuses and shapes are correct; the prose is a key.
-  Registering the module is a cross-cutting change to every response and is not yet done. See
-  `STANDARDS.md` — nestjs-i18n mechanics.
+- `src/i18n/en/*.json` + `src/common/i18n/` — translation plumbing, **registered** as the
+  exported `I18N` dynamic module in `app.module.ts`. It was not, for a phase, and the
+  consequence was concrete: `HttpExceptionFilter` fell back to emitting the raw key, so a
+  refused sign-in answered `{"message":"errors.auth.invalid_credentials"}` rather than the
+  English beside it. Two specs now assert that a body carries prose rather than a key, so
+  the registration cannot silently go away again. See `STANDARDS.md` — nestjs-i18n
+  mechanics.
 
 ## Pinned dependencies
 
