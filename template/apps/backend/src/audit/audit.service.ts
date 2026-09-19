@@ -65,6 +65,22 @@ export class AuditService implements IAuditService {
    * it is checked here rather than at the transport boundary because this is the
    * only way in: a later caller that reaches the service directly — a scheduled
    * job, a console command — gets the same refusal a request would.
+   *
+   * ## CARRY-FORWARD: this check is in the wrong place, and knows it
+   *
+   * ADR-0006 puts authorization in `__FORGE_SCOPE__/core` as a pure function.
+   * Nothing in core implements one yet — `shared/policies/` holds `assertNever`
+   * and `normalizeEmail` and nothing else — so when this method was written there
+   * was no policy to call and the alternatives were to invent this check or to
+   * leave the whole audit history readable by anybody. It is here because an
+   * unguarded audit query is worse, not because this is where it belongs.
+   *
+   * **Whoever builds platform administration replaces this with the core policy
+   * and deletes these paragraphs.** Two things make that easy to miss: nothing
+   * reaches this method over HTTP today — there is no audit controller — so the
+   * check is currently unreachable code, and an unmarked local check reads as
+   * intentional and survives for ever. The first audit endpoint added on top of
+   * it is the moment it becomes permanent.
    */
   public async query(actorId: UserId, query: AuditQuery): Promise<PaginatedResult<AuditEntry>> {
     const actor = await this.users.findOne({ where: { id: actorId } });

@@ -150,9 +150,14 @@ export class AuthService implements IAuthService {
     const existing = await this.users.findOne({ where: { email } });
     if (existing !== null) {
       await this.mailer.send(buildAccountExistsMessage({ to: email, webappUrl: this.webappUrl }));
-      await this.record(AuditAction.EMAIL_VERIFICATION_REQUESTED, existing.id as UserId, {
-        outcome: 'address-already-registered',
-      }, now);
+      // The action says what happened. It is not `EMAIL_VERIFICATION_REQUESTED`
+      // — no verification was issued and none was sent — and it is not
+      // `USER_REGISTERED`, because no account was created. See the member's own
+      // comment in core: the caller is told nothing, so the entry is the only
+      // place this event exists, and an entry that misnames it is worse than no
+      // entry at all in a table nothing may correct.
+      const owner = existing.id as UserId;
+      await this.record(AuditAction.DUPLICATE_REGISTRATION_ATTEMPTED, owner, {}, now);
       return;
     }
 
@@ -184,6 +189,14 @@ export class AuthService implements IAuthService {
       // the oracle the whole method is arranged to avoid.
       if (!AuthService.isUniqueViolation(error)) throw error;
       await this.mailer.send(buildAccountExistsMessage({ to: email, webappUrl: this.webappUrl }));
+      // Audited like the non-racing branch. It answers the caller identically, so
+      // if it recorded nothing a registration that lost a race would be the one
+      // case invisible in the history — and a race is exactly the circumstance
+      // somebody reads the history to understand. The actor is unknown here:
+      // the winning insert is not necessarily ours to look up, and this branch
+      // must not spend a query establishing whose it was.
+      const lost = { lostRace: true };
+      await this.record(AuditAction.DUPLICATE_REGISTRATION_ATTEMPTED, null, lost, now);
       return;
     }
 
@@ -219,11 +232,21 @@ export class AuthService implements IAuthService {
       if (row.consumedAt !== null) throw new ConsumedTokenError();
       if (row.expiresAt.getTime() <= now.getTime()) throw new ExpiredTokenError();
 
-      await manager.update(
+      // The `affected` count is read, not discarded. The predicate is redundant
+      // while the row lock above is held, and it is here for what happens if
+      // that lock is ever removed: two presentations both read `consumed_at` as
+      // null, this statement matches no row for the loser, and an implementation
+      // that ignored the count would go on to mark the address proven and
+      // report success — the single-use credential used twice. The same shape,
+      // and the same blindness, as the double-spend measured against Postgres 16
+      // in `session/refresh-token.service.ts`; both siblings now read the count.
+      const consumed = await manager.update(
         EmailVerificationTokenRecord,
         { id: row.id, consumedAt: IsNull() },
         { consumedAt: now },
       );
+      if (consumed.affected !== 1) throw new ConsumedTokenError();
+
       // `emailVerifiedAt: IsNull()` in the predicate so a second, later
       // verification cannot move the instant an address was first proven.
       await manager.update(
@@ -360,6 +383,24 @@ export class AuthService implements IAuthService {
   }
 
   // ------------------------------------------------------------------- recovery
+  //
+  // ## NOT YET EXERCISED BY ANY TEST — treat everything below as unwritten
+  //
+  // `resendVerification` above, and `requestPasswordReset`, `resetPassword` and
+  // `changePassword` below, exist because `IAuthService` is one interface and a
+  // class cannot implement three ninths of it. They are complete
+  // implementations, written against that interface's own documentation, and
+  // **three of the four have no test at all** — only `resetPassword` is covered,
+  // and only for its policy check, its single-use guarantee and its
+  // session-ending. Nothing exercises `requestPasswordReset`'s silence for an
+  // unknown address, `changePassword`'s proof of the current secret, or
+  // `resendVerification` at all.
+  //
+  // That is more dangerous than a stub, which is why it is said here rather than
+  // only in a plan: a stub announces that work remains, and a complete
+  // untested implementation of security-critical code reads as done. Whoever
+  // owns password recovery and identity management writes the tests before
+  // trusting any of it, and should expect to find defects.
 
   /**
    * Begins password recovery. Resolves whether or not the address is known, for
@@ -420,11 +461,17 @@ export class AuthService implements IAuthService {
       if (row.consumedAt !== null) throw new ConsumedTokenError();
       if (row.expiresAt.getTime() <= now.getTime()) throw new ExpiredTokenError();
 
-      await manager.update(
+      // The `affected` count is read for the reason `verifyEmail` gives, and the
+      // consequence here is larger: a recovery credential consumed twice is two
+      // password replacements from one mail, the second of which the account's
+      // owner did not ask for.
+      const consumed = await manager.update(
         PasswordResetTokenRecord,
         { id: row.id, consumedAt: IsNull() },
         { consumedAt: now },
       );
+      if (consumed.affected !== 1) throw new ConsumedTokenError();
+
       return row.userId as UserId;
     });
 

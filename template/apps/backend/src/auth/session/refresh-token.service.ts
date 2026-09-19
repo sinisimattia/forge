@@ -137,7 +137,13 @@ export class RefreshTokenService {
         { id: row.id, usedAt: IsNull() },
         { usedAt: now },
       );
-      if (spent.affected === 0) {
+      // `!== 1`, not `=== 0`: TypeORM types `affected` as
+      // `number | null | undefined`, and on the postgres driver it is always a
+      // number — but a driver that returned `undefined` would slip past an
+      // equality with zero and skip this branch silently. The update is by
+      // primary key, so exactly one is the only correct answer, and anything
+      // else fails closed.
+      if (spent.affected !== 1) {
         await SessionService.endSession(manager, row.sessionId, now);
         return { reuse: true as const, sessionId: row.sessionId };
       }

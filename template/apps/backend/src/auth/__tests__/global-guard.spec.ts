@@ -1,6 +1,6 @@
 import { Controller, Get, INestApplication } from '@nestjs/common';
 import { MODULE_METADATA } from '@nestjs/common/constants';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -138,6 +138,41 @@ describe('D6: the global guard closes every route that does not open itself', ()
       .get('/probe/undecorated')
       .set('Authorization', `Bearer ${forged}`)
       .expect(401);
+  });
+
+  // The three assertions below are about `JwtStrategy`'s CONSTRUCTOR OPTIONS,
+  // which no behavioural test could see while they were only passed to `super()`.
+  // A review changed each of them in the shipped file and the whole suite stayed
+  // green; all three are security regressions.
+  it('refuses a credential that has expired', async () => {
+    // `ignoreExpiration: true` makes every access credential permanent and
+    // deletes the bounded revocation window the whole stateless design rests on
+    // — and changes no response anybody would look at.
+    const lapsed = new JwtService({ secret: SIGNING_KEY }).sign(ACTOR, { expiresIn: '-1s' });
+
+    await request(app.getHttpServer())
+      .get('/probe/undecorated')
+      .set('Authorization', `Bearer ${lapsed}`)
+      .expect(401);
+  });
+
+  it('refuses a credential offered in the query string', async () => {
+    // `passport-jwt` will happily read one from there, and a credential in a
+    // query string is a credential in browser history, in access logs and in
+    // every `Referer` header the page goes on to send.
+    const credential = jwt.sign(ACTOR);
+
+    await request(app.getHttpServer())
+      .get(`/probe/undecorated?access_token=${credential}`)
+      .expect(401);
+  });
+
+  it('refuses to be constructed without a signing key', () => {
+    // `getOrThrow`, not `get(..., 'some-default')`. A fallback is a key every
+    // project generated from this template shares. Note this is the SECOND place
+    // the same rule is spelled — `auth.module.ts`'s factory is the other — and
+    // nothing makes the two agree, so each is asserted where it lives.
+    expect(() => new JwtStrategy(new ConfigService({}))).toThrow();
   });
 
   it('admits a route marked @Public() with no credential', async () => {

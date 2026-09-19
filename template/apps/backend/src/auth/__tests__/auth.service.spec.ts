@@ -93,8 +93,13 @@ describe('AuthService', () => {
   let recorded: RecordAuditEntryInput[];
   let breached: IBreachedPasswordRegistry;
 
-  const build = (): void => {
-    source = new FakeDataSource();
+  /**
+   * @param honourLocks - `false` builds a store that accepts `pessimistic_write`
+   *   and ignores it, which is the only way to reach the `affected`-count
+   *   predicates behind those locks. See `FakeDataSource`.
+   */
+  const build = (honourLocks = true): void => {
+    source = new FakeDataSource(honourLocks);
     sent = [];
     recorded = [];
     hasher = new CountingHasher(new Argon2PasswordHasher());
@@ -140,7 +145,7 @@ describe('AuthService', () => {
     );
   };
 
-  beforeEach(build);
+  beforeEach(() => build());
 
   /** Registers, then proves the address, leaving an account that can sign in. */
   const registerAndVerify = async (email: string, secret = PLAINTEXT): Promise<string> => {
@@ -236,6 +241,55 @@ describe('AuthService', () => {
       expect(JSON.stringify(rows)).not.toContain(credential);
     });
 
+    it('answers a lost race exactly as it answers an address already taken', async () => {
+      // Two registrations for one address, racing. The unique constraints decide
+      // it; the loser gets a driver error and must answer the way it would have
+      // if it had simply arrived second — silently, with the message that goes
+      // to the address. The error is injected rather than raced for real,
+      // because the fake enforces no constraints; what is asserted is the
+      // branch, which is shipped code.
+      const insert = source.insert.bind(source);
+      source.insert = (entity, values) => {
+        if (entity.name === UserRecord.name) {
+          throw Object.assign(new Error('duplicate key value violates unique constraint'), {
+            code: '23505',
+          });
+        }
+        return insert(entity, values);
+      };
+
+      await expect(
+        auth.register({ email: 'ada@example.test', displayName: 'Ada', secret: PLAINTEXT }),
+      ).resolves.toBeUndefined();
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0].body).not.toContain('token=');
+      // And it is recorded. Without this the one registration invisible in the
+      // history is the one that lost a race — which is the circumstance somebody
+      // reads the history to understand.
+      expect(recorded.map((entry) => entry.action)).toEqual([
+        AuditAction.DUPLICATE_REGISTRATION_ATTEMPTED,
+      ]);
+      expect(recorded[0].metadata).toMatchObject({ lostRace: true });
+    });
+
+    it('lets a driver error that is not a unique violation out', async () => {
+      // The race branch is reached by SQLSTATE, not by "an error happened".
+      // Swallowing everything here would turn a broken database into a
+      // registration that silently did nothing and told the caller it was fine.
+      const insert = source.insert.bind(source);
+      source.insert = (entity, values) => {
+        if (entity.name === UserRecord.name) {
+          throw Object.assign(new Error('connection terminated'), { code: '08006' });
+        }
+        return insert(entity, values);
+      };
+
+      await expect(
+        auth.register({ email: 'ada@example.test', displayName: 'Ada', secret: PLAINTEXT }),
+      ).rejects.toThrow('connection terminated');
+    });
+
     describe('when the address already has an account', () => {
       beforeEach(async () => {
         await auth.register({ email: 'ada@example.test', displayName: 'Ada', secret: PLAINTEXT });
@@ -287,10 +341,16 @@ describe('AuthService', () => {
           secret: OTHER_PLAINTEXT,
         });
 
+        // The action must say what happened. `EMAIL_VERIFICATION_REQUESTED` would
+        // be false — no verification was issued and none was sent — and the
+        // caller is told nothing, so this entry is the only place the event
+        // exists. Asserted against a member, not against "something was
+        // recorded", because the failure mode is a true-shaped row with a false
+        // action in a table nothing may correct.
         expect(recorded.map((entry) => entry.action)).toEqual([
-          AuditAction.EMAIL_VERIFICATION_REQUESTED,
+          AuditAction.DUPLICATE_REGISTRATION_ATTEMPTED,
         ]);
-        expect(recorded[0].metadata).toMatchObject({ outcome: 'address-already-registered' });
+        expect(recorded[0].actorId).toBe(source.all(UserRecord)[0].id);
       });
     });
   });
@@ -330,6 +390,25 @@ describe('AuthService', () => {
       );
     });
 
+    it('still lets only one succeed against a store that ignores the lock', async () => {
+      // The second mechanism behind the lock, isolated: this world accepts the
+      // lock request and does nothing with it, so both callers read
+      // `consumed_at` as null and the `consumed_at IS NULL` predicate on the
+      // consuming statement is all that is left. Without the `affected` count
+      // being read, the loser's update matches no row, the method carries on,
+      // and a single-use credential has been used twice.
+      build(false);
+      await auth.register({ email: 'ada@example.test', displayName: 'Ada', secret: PLAINTEXT });
+      const credential = credentialFromLastLink();
+
+      const outcomes = await Promise.allSettled([
+        auth.verifyEmail(credential),
+        auth.verifyEmail(credential),
+      ]);
+
+      expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+    });
+
     it('lets only one of two simultaneous presentations succeed', async () => {
       await auth.register({ email: 'ada@example.test', displayName: 'Ada', secret: PLAINTEXT });
       const credential = credentialFromLastLink();
@@ -337,6 +416,68 @@ describe('AuthService', () => {
       const outcomes = await Promise.allSettled([
         auth.verifyEmail(credential),
         auth.verifyEmail(credential),
+      ]);
+
+      expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+    });
+  });
+
+  describe('resetPassword', () => {
+    /** Registers, proves the address, then asks for a reset and returns the credential. */
+    const requestReset = async (): Promise<string> => {
+      await registerAndVerify('ada@example.test');
+      await auth.requestPasswordReset('ada@example.test');
+      return credentialFromLastLink();
+    };
+
+    it('replaces the secret and ends every session the account held', async () => {
+      await registerAndVerify('ada@example.test');
+      await auth.signIn({ email: 'ada@example.test', secret: PLAINTEXT, client: CLIENT });
+      await auth.requestPasswordReset('ada@example.test');
+      const credential = credentialFromLastLink();
+      const before = source.all(AuthIdentityRecord)[0].secretHash;
+
+      await auth.resetPassword(credential, OTHER_PLAINTEXT);
+
+      expect(source.all(AuthIdentityRecord)[0].secretHash).not.toBe(before);
+      // Recovery is what somebody does when they have lost control of the
+      // account, so a session left alive leaves whoever took it where they were.
+      expect(source.all(SessionRecord).every((row) => row.revokedAt !== null)).toBe(true);
+      await expect(
+        auth.authenticate({ email: 'ada@example.test', secret: OTHER_PLAINTEXT, client: CLIENT }),
+      ).resolves.toMatchObject({ status: AuthenticationStatus.AUTHENTICATED });
+    });
+
+    it('refuses a replacement that breaks the policy, before consuming anything', async () => {
+      const credential = await requestReset();
+
+      await expect(auth.resetPassword(credential, TOO_SHORT_PLAINTEXT)).rejects.toBeInstanceOf(
+        WeakPasswordError,
+      );
+      // The credential must survive a refused replacement, or one mistyped
+      // password costs the person their only way back into the account.
+      expect(source.all(PasswordResetTokenRecord)[0].consumedAt).toBeNull();
+    });
+
+    it('tells a second presentation apart from an expired one', async () => {
+      const credential = await requestReset();
+      await auth.resetPassword(credential, OTHER_PLAINTEXT);
+
+      await expect(auth.resetPassword(credential, PLAINTEXT)).rejects.toBeInstanceOf(
+        ConsumedTokenError,
+      );
+    });
+
+    it('still lets only one of two simultaneous presentations succeed against a store that ignores the lock', async () => {
+      // The `affected`-count predicate, isolated exactly as in `verifyEmail`.
+      // The consequence here is larger: two replacements from one mail, the
+      // second of which the account's owner did not ask for.
+      build(false);
+      const credential = await requestReset();
+
+      const outcomes = await Promise.allSettled([
+        auth.resetPassword(credential, OTHER_PLAINTEXT),
+        auth.resetPassword(credential, PLAINTEXT),
       ]);
 
       expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);

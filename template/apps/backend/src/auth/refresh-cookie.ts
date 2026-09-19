@@ -4,14 +4,18 @@ import { SESSION_TTL_SECONDS } from './session/session.service';
 /**
  * The one place the renewal credential's cookie is named and described.
  *
- * **Three call sites read this and none of them spells its own options**:
- * signing in sets it, renewing replaces it, signing out clears it. That is the
- * point of the file existing. Clearing a cookie only works when the name, the
- * `path` and the other attributes match what was set — the browser treats a
- * different `path` as a different cookie — and a mismatch fails *silently*: the
- * response looks correct, the server believes the credential is gone, and the
- * browser still holds a working one. Three call sites each spelling their own
- * options is exactly how that arrives.
+ * **Four call sites read this and none of them spells its own options**: signing
+ * in sets it, renewing replaces it, a refused renewal clears it, and signing out
+ * clears it. That is the point of the file existing — and the count is written
+ * down because the fourth is the one a reader forgets, which is exactly the one
+ * a hand-spelled `clearCookie` would get wrong.
+ *
+ * Clearing a cookie only works when the name, the `path` and the other
+ * attributes match what was set — the browser treats a different `path` as a
+ * different cookie — and a mismatch fails *silently*: the response looks
+ * correct, the server believes the credential is gone, and the browser still
+ * holds a working one. Four call sites each spelling their own options is
+ * exactly how that arrives.
  *
  * ### Why each attribute is what it is
  *

@@ -21,6 +21,14 @@
     "migration:run:prod": "node $(node -e \"process.stdout.write(require.resolve('typeorm/cli'))\") migration:run -d dist/apps/backend/src/db/data-source.js",
     "migration:revert": "npm run typeorm -- migration:revert -d src/db/data-source.ts"
   },
+  "//pinned": [
+    "@nestjs/jwt and @nestjs/passport are held at 11.x DELIBERATELY. Their 12.x",
+    "releases are ESM-only ('type': 'module' in their package.json), and this",
+    "package is CommonJS: jest fails outright with \"Must use import to load ES",
+    "Module\" before a single test runs, and Node 22 is what CI and the Docker",
+    "images use. Upgrading means moving this package's test runner off CommonJS",
+    "first. Verified against 12.0.0, 12.0.1 and 12.0.2."
+  ],
   "dependencies": {
     "@nestjs/common": "^11.1.14",
     "@nestjs/config": "^4.0.3",

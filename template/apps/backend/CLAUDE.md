@@ -101,13 +101,23 @@ named `<Thing>Record` because `__FORGE_SCOPE__/core` already exports `User`,
   (the key access credentials are signed with) and `PUBLIC_WEBAPP_URL` (the origin every
   mail link is built from). All three are `getOrThrow` with no default, deliberately —
   see `.env.example`.
-- `nest-cli.json` carries `"entryFile": "apps/backend/src/main"`, and it is load-bearing.
+- `nest-cli.json` carries `"entryFile": "apps/backend/src/main"` **and**
+  `"outDir": "dist/apps/backend/src"` on its `assets` entry, and both are load-bearing.
   `tsconfig.json` pins `rootDir` to the workspace root, so `nest build` emits
   `dist/apps/backend/src/main.js`; `nest start` (what `start:dev` and therefore the dev
   container run) otherwise looks for `dist/main` and dies with `MODULE_NOT_FOUND` **after
   reporting a clean compile**, so the container reports "Up", never healthy, and everything
   waiting on `service_healthy` stalls. `start:prod` and `migration:run:prod` name the same
   layout in `package.json`; this is the third consumer of it.
+
+  The `assets` `outDir` is the fourth. Without it the `i18n/**/*` files are copied to
+  `dist/i18n/`, while `app.module.js` — which resolves them with `join(__dirname, 'i18n')`
+  — sits in `dist/apps/backend/src/`. The build succeeds and then **the production image
+  does not boot at all**: `nestjs-i18n` throws `I18nError: i18n path (...) cannot be found`
+  from `onModuleInit`, after every route has been mapped. Measured by running the compiled
+  output directly. Nothing in the fast test tiers can see it — jest runs against `src/`,
+  where the files already sit beside the module — and neither can the docker e2e, which
+  boots the *dev* target and therefore also runs from `src/`.
 - `src/db/data-source.ts` — the TypeORM CLI data source for `migration:generate` /
   `migration:run`, reading `MIGRATION_DATABASE_URL` and falling back to `DATABASE_URL`.
   **Two roles, on purpose:** migrations run as the schema owner, the application connects
@@ -121,6 +131,20 @@ named `<Thing>Record` because `__FORGE_SCOPE__/core` already exports `User`,
   English in `src/i18n/en/errors.json`. Statuses and shapes are correct; the prose is a key.
   Registering the module is a cross-cutting change to every response and is not yet done. See
   `STANDARDS.md` — nestjs-i18n mechanics.
+
+## Pinned dependencies
+
+| Package | Held at | Why |
+| --- | --- | --- |
+| `@nestjs/jwt` | `^11.0.2` | 12.x is ESM-only |
+| `@nestjs/passport` | `^11.0.5` | 12.x is ESM-only |
+
+Both 12.x releases declare `"type": "module"`. This package compiles to CommonJS and its
+Jest runner is CommonJS, so importing either one fails before a single test runs with
+`Must use import to load ES Module`, on the Node 22 that CI and both Docker images use.
+The caret ranges cannot cross into 12 on their own; a deliberate upgrade means moving this
+package's test runner off CommonJS first. The same note is in `package.json` under
+`//pinned`, which is where `npm outdated` sends a reader.
 
 ## Common utilities
 

@@ -5,6 +5,6 @@
   "entryFile": "apps/backend/src/main",
   "compilerOptions": {
     "deleteOutDir": true,
-    "assets": [{ "include": "i18n/**/*", "watchAssets": true }]
+    "assets": [{ "include": "i18n/**/*", "outDir": "dist/apps/backend/src", "watchAssets": true }]
   }
 }

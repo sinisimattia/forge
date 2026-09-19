@@ -14,6 +14,7 @@ import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { HttpExceptionFilter } from '../../common/filters';
+import { I18N } from '../../app.module';
 import { AuthController } from '../auth.controller';
 import { AuthService } from '../auth.service';
 import { JwtAuthGuard } from '../guards';
@@ -44,7 +45,7 @@ const SIGNING_KEY = 'auth-controller-spec-signing-key';
  * Fixture values, named rather than written inline at each use.
  *
  * Partly because one name is easier to follow than six copies, and partly
- * because Forge's extraction gate (`tools/sanitize.mjs`) reads a quoted literal
+ * because the extraction gate that produced this project reads a quoted literal
  * assigned to a credential-shaped key as a populated credential wherever it
  * appears. That is exactly the shape it should flag, and it is also the shape a
  * test fixture written inline takes, so the fixtures are named instead.
@@ -126,6 +127,12 @@ describe('AuthController', () => {
     const moduleRef = await Test.createTestingModule({
       imports: [
         ConfigModule.forRoot({ ignoreEnvFile: true, load: [() => ({ JWT_SECRET: SIGNING_KEY })] }),
+        // The application's own translation registration. The enumeration
+        // assertions below compare RENDERED bodies, so they have to be rendered
+        // the way the application renders them: before `I18N` existed they
+        // compared two identical translation keys, which is a weaker claim than
+        // it looks.
+        I18N,
         PassportModule,
         JwtModule.register({ secret: SIGNING_KEY, signOptions: { expiresIn: '5m' } }),
       ],
@@ -197,6 +204,19 @@ describe('AuthController', () => {
       for (const reason of Object.values(AuthenticationRejectionReason)) {
         expect(JSON.stringify(response.body)).not.toContain(reason);
       }
+    });
+
+    it('renders prose, so the byte-equality above is a claim about what a caller sees', async () => {
+      // Before `I18nModule` was registered this body was the translation key
+      // itself, and two keys compare equal for a reason that has nothing to do
+      // with the property being asserted. Pinned against the English literal
+      // rather than against the key, so the rendering cannot silently regress.
+      const response = await attempt(AuthenticationRejectionReason.INVALID_SECRET);
+
+      expect(response.body).toEqual({
+        error: 'Unauthorized',
+        message: 'That email address and password do not match an account',
+      });
     });
 
     it('sets no renewal cookie', async () => {

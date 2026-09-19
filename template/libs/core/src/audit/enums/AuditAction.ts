@@ -7,6 +7,24 @@
  */
 export enum AuditAction {
   USER_REGISTERED = 'USER_REGISTERED',
+  /**
+   * Somebody tried to bring an account into being at an address that already has
+   * one.
+   *
+   * It exists because the alternative was a false entry. Registration answers a
+   * known address and an unknown one identically — that silence is the whole
+   * design — and what makes the silence affordable is that the *server* still
+   * knows which of the two happened and writes it down. Recording that as
+   * {@link AuditAction.USER_REGISTERED} would say an account was created when
+   * none was; recording it as {@link AuditAction.EMAIL_VERIFICATION_REQUESTED}
+   * would say a verification was asked for when none was issued and none was
+   * sent. Either one destroys the only thing the entry is for, in a table
+   * nothing is permitted to correct afterwards.
+   *
+   * The actor is the account that already existed, not whoever made the attempt
+   * — nothing about them has been established, which is the point.
+   */
+  DUPLICATE_REGISTRATION_ATTEMPTED = 'DUPLICATE_REGISTRATION_ATTEMPTED',
   EMAIL_VERIFICATION_REQUESTED = 'EMAIL_VERIFICATION_REQUESTED',
   EMAIL_VERIFIED = 'EMAIL_VERIFIED',
   LOGIN_SUCCEEDED = 'LOGIN_SUCCEEDED',
