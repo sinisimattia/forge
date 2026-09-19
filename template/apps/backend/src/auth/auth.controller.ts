@@ -24,6 +24,7 @@ import {
   ForgotPasswordDto,
   LoginDto,
   RegisterDto,
+  ResendVerificationDto,
   ResetPasswordDto,
   VerifyEmailDto,
   type AuthResponseDto,
@@ -85,6 +86,33 @@ export class AuthController {
   public async verifyEmail(@Body() body: VerifyEmailDto): Promise<{ status: 'verified' }> {
     await this.auth.verifyEmail(body.credential);
     return { status: 'verified' };
+  }
+
+  /**
+   * Re-issues verification.
+   *
+   * **`202` with a fixed body, in both cases, with no branch anywhere in this
+   * method** — the third of the three endpoints that take an address without
+   * proving anything, and the same arrangement for the same reason as
+   * {@link AuthController.register} and {@link AuthController.forgotPassword}.
+   * The service already answers alike for an unknown address, an address that is
+   * already proven, and one whose account has been closed; this method must not
+   * reintroduce a difference the service was careful not to have.
+   *
+   * It was missing for a phase, while `AuthService.resendVerification` existed
+   * and was tested. The consequence was invisible from this side and total from
+   * the other: `IAuthService` names the method, so no caller implementing that
+   * contract over this API could honour it, and anybody who let a verification
+   * link lapse had no way to ask for another.
+   */
+  @Public()
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.ACCEPTED)
+  public async resendVerification(
+    @Body() body: ResendVerificationDto,
+  ): Promise<RegistrationAcceptedDto> {
+    await this.auth.resendVerification(body.email);
+    return { status: 'accepted' };
   }
 
   /**

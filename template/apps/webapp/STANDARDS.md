@@ -110,27 +110,32 @@ dependencies, not the placement — placement is a judgement, and this is the qu
   (`Primary`, `Secondary`, `Disabled`, …), not a single story with a control the reader
   has to discover.
 
-## Layering: Fetcher → Composable → Component
+## Layering: Fetcher → Service → Composable → Component
 
-Once a domain exists, external calls (HTTP requests, third-party SDKs) live in
-`app/fetchers/[domain].fetcher.ts`. Composables import fetcher functions and manage
-reactive state (loading/error/data). Components and pages call composables only — **never
-fetchers or API clients directly.**
+External calls (HTTP requests, third-party SDKs) live in `app/fetchers/[domain].fetchers.ts`
+and are the only place a path is spelled. A **service** in `app/services/` turns what comes
+back into the entities `libs/core`'s contracts promise and what fails into the errors they
+name; it is an `I*Service` implementation and is held to core's shared conformance suite.
+Composables import services and manage reactive state (loading/error/data). Components and
+pages call composables only — **never services, fetchers or API clients directly.**
 
 ```
-app/fetchers/[domain].fetcher.ts   ← useApi() / $fetch / external SDKs
+app/fetchers/[domain].fetchers.ts  ← the transport; the only place a path is written
         ↓
-app/composables/use[Domain].ts     ← imports fetchers, manages state
+app/services/[domain].service.ts   ← implements a core I*Service over the wire
+        ↓
+app/composables/use[Domain].ts     ← imports services, manages state
         ↓
 app/components/**/*.vue · app/pages/**/*.vue   ← call composables only
 ```
 
-- Use `useFetch`/`useAsyncData` for SSR-compatible fetching; `$fetch` for client-only
-  calls. Both belong in fetchers, not components.
+- The transport is an `ApiClient` (`app/types/api.ts`) built by `createApiClient`. It is
+  injected rather than imported, which is what lets the conformance suites drive the real
+  services against `app/services/__tests__/stubBackend.ts`.
 - The backend base URL comes from runtime config (`runtimeConfig.public.apiBase`,
   `runtimeConfig.apiBaseServer` for SSR-inside-Docker — see `nuxt.config.ts`).
-- None of `app/fetchers/`, `app/composables/`, or `app/stores/` exist yet — this section
-  documents the standing rule for when they are added.
+- `app/fetchers/` and `app/services/` exist; `app/composables/` and `app/stores/` do not
+  yet — this section documents the standing rule for when they are added.
 
 ## Tailwind
 

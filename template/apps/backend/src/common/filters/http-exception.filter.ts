@@ -17,6 +17,7 @@ import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policie
 import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/types';
 import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
 import {
+  DisplayNameRequiredError,
   EmailAlreadyRegisteredError,
   UserNotFoundError,
 } from '__FORGE_SCOPE__/core/users/errors';
@@ -103,32 +104,55 @@ const POLICY_ARGS: I18nArgs = {
  *
  * The order matters where one error extends another; today none of them do, and
  * the first match wins either way.
+ *
+ * ## `code`, and why a status is not enough
+ *
+ * Each row also carries a stable, machine-readable name that goes into the
+ * response as `code`. **It is what makes this API's refusals implementable by a
+ * caller, and its absence was a real defect rather than a missing nicety.**
+ * `ConsumedTokenError` and `ExpiredTokenError` share `410` on purpose, three
+ * different errors share `404`, and three more share `409`; the only other thing
+ * that distinguished any of them was `message`, which is translated prose and
+ * therefore changes with the reader's language. A caller obliged to honour
+ * `IAuthService.verifyEmail` — which names both token errors — could not.
+ *
+ * It is deliberately not the class name. A class is renamed by a refactor and a
+ * wire contract is not, so these are written out as their own vocabulary and a
+ * rename that wants to change one has to come here and say so.
  */
 const DOMAIN_ERRORS: {
   type: new (...args: never[]) => DomainError;
   status: HttpStatus;
   messageKey: I18nKey;
+  code: string;
 }[] = [
   // 401, not 403: the caller has not proven who they are, rather than having
   // been found not to be allowed.
-  { type: InvalidCredentialsError, status: HttpStatus.UNAUTHORIZED, messageKey: 'errors.auth.invalid_credentials' },
+  { type: InvalidCredentialsError, status: HttpStatus.UNAUTHORIZED, messageKey: 'errors.auth.invalid_credentials', code: 'INVALID_CREDENTIALS' },
   // 410 Gone for both, and two different keys. The statuses match because only
   // somebody who held a real credential can reach either, so telling them apart
   // reveals nothing to a guesser and is the difference between "try again" and
-  // "you already did this".
-  { type: ConsumedTokenError, status: HttpStatus.GONE, messageKey: 'errors.auth.token_consumed' },
-  { type: ExpiredTokenError, status: HttpStatus.GONE, messageKey: 'errors.auth.token_expired' },
+  // "you already did this". The two `code`s are what let a caller act on that
+  // difference; without them the status is all a caller has and the distinction
+  // this pair exists to draw is invisible outside the server.
+  { type: ConsumedTokenError, status: HttpStatus.GONE, messageKey: 'errors.auth.token_consumed', code: 'TOKEN_CONSUMED' },
+  { type: ExpiredTokenError, status: HttpStatus.GONE, messageKey: 'errors.auth.token_expired', code: 'TOKEN_EXPIRED' },
   // 404, which is what it means at every call site but one: no session the
   // caller may see answers to that id. The renewal endpoint turns it into a 401
   // itself, because there it means the credential presented is dead — see
   // `AuthController.refreshSession`.
-  { type: SessionNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.auth.session_not_found' },
-  { type: WeakPasswordError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.auth.weak_password' },
-  { type: UserNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.http.not_found' },
-  { type: IdentityNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.http.not_found' },
-  { type: EmailAlreadyRegisteredError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict' },
-  { type: IdentityAlreadyLinkedError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict' },
-  { type: LastIdentityRemovalError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict' },
+  { type: SessionNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.auth.session_not_found', code: 'SESSION_NOT_FOUND' },
+  { type: WeakPasswordError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.auth.weak_password', code: 'WEAK_PASSWORD' },
+  { type: UserNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.http.not_found', code: 'USER_NOT_FOUND' },
+  { type: IdentityNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.http.not_found', code: 'IDENTITY_NOT_FOUND' },
+  // 422 and a code, rather than falling through to the unnamed-domain-error
+  // branch below. A blank display name is the one refusal `PATCH /users/me` can
+  // raise from the domain, and a caller that had to infer it from "a 422 on this
+  // path" would be reading the route rather than the answer.
+  { type: DisplayNameRequiredError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.http.unprocessable', code: 'DISPLAY_NAME_REQUIRED' },
+  { type: EmailAlreadyRegisteredError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict', code: 'EMAIL_ALREADY_REGISTERED' },
+  { type: IdentityAlreadyLinkedError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict', code: 'IDENTITY_ALREADY_LINKED' },
+  { type: LastIdentityRemovalError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict', code: 'LAST_IDENTITY_REMOVAL' },
 ];
 
 /** Generic fallback translation key for framework-originated HTTP statuses. */
@@ -142,8 +166,8 @@ const HTTP_STATUS_FALLBACK_KEY: Record<number, I18nKey> = {
 };
 
 /**
- * Global exception filter that produces the standard `{ error, message, details? }`
- * response. All user-facing text is resolved through `nestjs-i18n` using the
+ * Global exception filter that produces the standard
+ * `{ error, message, code?, details? }` response. All user-facing text is resolved through `nestjs-i18n` using the
  * request-scoped `I18nContext`:
  * - `I18nValidationException` (from `I18nValidationPipe`) → translated per-field details.
  * - `HttpException` carrying a `TranslatableErrorResponse` (`messageKey`) → translated message.
@@ -173,6 +197,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let details: ResponseDetail[] | undefined;
     let violations: ResponseViolation[] | undefined;
     let errorOverride: string | undefined;
+    let code: string | undefined;
 
     if (exception instanceof I18nValidationException) {
       status = exception.getStatus();
@@ -204,6 +229,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
       // whole branch exists to stop.
       status = mapped?.status ?? HttpStatus.UNPROCESSABLE_ENTITY;
       message = translate(mapped?.messageKey ?? 'errors.http.unprocessable');
+      // Absent for a domain error this table does not name, which is the
+      // truthful answer: there is no stable name to give it yet. A caller then
+      // sees the 422 and no code, and treats it as a refusal it does not
+      // understand — which is what it is.
+      code = mapped?.code;
 
       // The list core built, rendered. `WeakPasswordError` carries every way a
       // password fell short precisely so a caller can show a person all of them
@@ -233,6 +263,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     response.status(status).json({
       error,
       message,
+      ...(code ? { code } : {}),
       ...(details ? { details } : {}),
       ...(violations ? { violations } : {}),
     });

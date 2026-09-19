@@ -98,6 +98,9 @@ describe('AuthController', () => {
     const auth = {
       register: async () => undefined,
       verifyEmail: async () => undefined,
+      resendVerification: async (...args: unknown[]) => {
+        recovery.push({ method: 'resendVerification', args });
+      },
       signIn: async () =>
         rejectWith === null
           ? {
@@ -200,6 +203,7 @@ describe('AuthController', () => {
       ['/auth/register', { email: 'a@b.test', displayName: 'A', secret: PLAINTEXT }],
       ['/auth/login', { email: 'a@b.test', secret: PLAINTEXT }],
       ['/auth/verify-email', { credential: 'x' }],
+      ['/auth/resend-verification', { email: 'a@b.test' }],
     ])('%s is reachable', async (path, body) => {
       const response = await request(app.getHttpServer()).post(path).send(body);
       expect(response.status).not.toBe(401);
@@ -273,6 +277,36 @@ describe('AuthController', () => {
   });
 
   describe('recovery', () => {
+    // The third of the three endpoints that take an address without proving
+    // anything, and the one that had no route at all for a phase while
+    // `AuthService.resendVerification` existed and was tested. `IAuthService`
+    // names the method, so a caller implementing that contract over this API
+    // could not honour it — which is where the gap surfaced.
+    it('POST /auth/resend-verification is reachable with no credential and answers like the others', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/resend-verification')
+        .send({ email: 'ada@example.test' });
+
+      expect(response.status).toBe(202);
+      expect(response.body).toEqual({ status: 'accepted' });
+      expect(recovery.map((call) => call.method)).toEqual(['resendVerification']);
+    });
+
+    // The enumeration property, stated as one claim rather than inferred from
+    // two literals: a known address and an unknown one must produce the same
+    // status and the same body, or this endpoint is an oracle.
+    it('answers a known and an unknown address identically', async () => {
+      const known = await request(app.getHttpServer())
+        .post('/auth/resend-verification')
+        .send({ email: 'ada@example.test' });
+      const unknown = await request(app.getHttpServer())
+        .post('/auth/resend-verification')
+        .send({ email: 'nobody@example.test' });
+
+      expect(known.status).toBe(unknown.status);
+      expect(known.body).toEqual(unknown.body);
+    });
+
     it('POST /auth/forgot-password is reachable with no credential', async () => {
       // A caller asking for a recovery link has, by definition, no usable
       // credential — that is why they are asking.

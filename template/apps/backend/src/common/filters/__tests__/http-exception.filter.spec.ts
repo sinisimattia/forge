@@ -118,18 +118,49 @@ describe('HttpExceptionFilter', () => {
     // Without the DOMAIN_ERRORS table in the filter, every one of these is a 500
     // and reads to whoever is watching as the server being broken. Each is an
     // ordinary thing for a person to do.
+    // The title's "distinguishably" used to rest on `message` alone, which is
+    // translated prose: the two bodies differed in the reader's language and in
+    // nothing a program could switch on. A caller obliged to honour
+    // `IAuthService.verifyEmail` — which names both errors — therefore could not,
+    // and the webapp's conformance run is where that surfaced. `code` is what
+    // makes the word in this title true.
     it('maps a spent single-use credential to 410, distinguishably from an expired one', () => {
       filter.catch(new ConsumedTokenError(), host);
 
       expect(statusMock).toHaveBeenCalledWith(HttpStatus.GONE);
-      expect(body()).toEqual({ error: 'Gone', message: 't:errors.auth.token_consumed' });
+      expect(body()).toEqual({
+        error: 'Gone',
+        message: 't:errors.auth.token_consumed',
+        code: 'TOKEN_CONSUMED',
+      });
     });
 
     it('maps an expired or unknown single-use credential to 410', () => {
       filter.catch(new ExpiredTokenError(), host);
 
       expect(statusMock).toHaveBeenCalledWith(HttpStatus.GONE);
-      expect(body()).toEqual({ error: 'Gone', message: 't:errors.auth.token_expired' });
+      expect(body()).toEqual({
+        error: 'Gone',
+        message: 't:errors.auth.token_expired',
+        code: 'TOKEN_EXPIRED',
+      });
+    });
+
+    // The property the two tests above are each half of, asserted as one claim
+    // rather than left to be inferred from two literals that happen to differ.
+    // The statuses match on purpose — only somebody who held a real credential
+    // reaches either — so `code` is the whole of what tells them apart.
+    it('gives the two 410s different codes, which is the only thing that does', () => {
+      filter.catch(new ConsumedTokenError(), host);
+      filter.catch(new ExpiredTokenError(), host);
+      // Both calls, read by index. `body()` is the *first* one, so reading it
+      // twice would compare the consumed answer with itself and pass whatever
+      // the second call did — the shape of tautology this project keeps finding.
+      const consumed = jsonMock.mock.calls[0][0] as { code: string; error: string };
+      const expired = jsonMock.mock.calls[1][0] as { code: string; error: string };
+
+      expect(consumed.error).toBe(expired.error);
+      expect(consumed.code).not.toBe(expired.code);
     });
 
     it('maps a secret that breaks the policy to 422', () => {
@@ -243,6 +274,12 @@ describe('HttpExceptionFilter', () => {
 
       expect(statusMock).toHaveBeenCalledWith(HttpStatus.UNPROCESSABLE_ENTITY);
       expect(body().message).toBe('t:errors.http.unprocessable');
+      // And **no** `code`, which is the truthful answer rather than a gap: there
+      // is no stable name to give a refusal the table has never heard of, and
+      // inventing one would have a caller switching on a value that means
+      // nothing. A caller sees a refusal it does not understand, which is what
+      // this is.
+      expect(body()).not.toHaveProperty('code');
     });
   });
 

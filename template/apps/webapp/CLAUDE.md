@@ -4,12 +4,17 @@
 
 This package is the **webapp**: a Nuxt 4 / Vue 3 frontend. It ships a generic, domain-free
 component library — 32 atoms, 3 molecules and one page template, each with a Storybook story
-— on a named colour palette, plus an index page. There is no auth, there are no
-fetchers/composables/stores, and there is no business domain. Feature domains (e.g.
+— on a named colour palette, plus an index page. There is no business domain of its own.
+
+What it does ship is the identity foundation's client half: `app/fetchers/` (one function
+per backend endpoint, the only place a path is spelled) and `app/services/` — `AuthHttpService`,
+`UserHttpService` and `IdentityHttpService`, which implement `libs/core`'s `IAuthService`,
+`IUserService` and `IIdentityService` **over the wire** and are driven through the same
+shared conformance suites the backend's implementations are driven through, under vitest
+rather than jest. There are no composables and no stores yet. Feature domains (e.g.
 `articles`, `comments`, `tags`) land here once `libs/core` defines their entities and
 `I*Service` contracts (see `libs/core/CLAUDE.md`); that phase also introduces
-`app/fetchers/`, `app/composables/`, `app/stores/`, and `app/services/` (the `I*Service`
-implementations), none of which exist yet.
+`app/composables/` and `app/stores/`.
 
 The library is the starting vocabulary, not a finished design system: rename it, restyle it,
 delete what you do not use. What it is **not** is a place for your domain — an `ArticleCard`
@@ -74,8 +79,12 @@ webapp/
 │   │   ├── molecules/          # 3  — AppTabGroup, ConfirmDialog, FormField
 │   │   ├── organisms/          # empty
 │   │   └── templates/          # 1  — AuthTemplate
+│   ├── fetchers/               # one function per endpoint; the only place a path is spelled
+│   ├── services/               # the core I*Service implementations, over the wire
+│   │   └── __tests__/          # the shared conformance suites, driven under vitest
 │   ├── types/
 │   │   ├── ui.ts               # the library's own closed unions (IconName)
+│   │   ├── api.ts              # the wire's own vocabulary (ApiClient, the error envelope)
 │   │   └── index.ts            # the `~/types` barrel components import from
 │   ├── locales/
 │   │   └── en.json             # i18n strings (single file today)
@@ -85,8 +94,8 @@ webapp/
 └── .storybook/                 # Storybook config
 ```
 
-Not present yet: `app/fetchers/`, `app/composables/`, `app/stores/`, `app/services/`,
-`app/middleware/`, `app/layouts/`, auth pages. `app/components/organisms/` exists but is
+Not present yet: `app/composables/`, `app/stores/`, `app/middleware/`, `app/layouts/`,
+auth pages. `app/components/organisms/` exists but is
 empty.
 
 ## What's wired up
