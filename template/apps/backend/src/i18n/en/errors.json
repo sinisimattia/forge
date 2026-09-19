@@ -30,6 +30,13 @@
     "session_not_found": "That session is no longer valid. Sign in again",
     "token_consumed": "That link has already been used",
     "token_expired": "That link is no longer valid. Ask for a new one",
-    "weak_password": "That password does not meet this deployment’s requirements"
+    "weak_password": "That password does not meet this deployment’s requirements",
+    "password": {
+      "TOO_SHORT": "Use at least {minLength} characters",
+      "TOO_LONG": "Use at most {maxLength} characters",
+      "NEEDS_MIXED_CASE": "Include both upper-case and lower-case letters",
+      "NEEDS_DIGIT": "Include at least one digit",
+      "BREACHED": "That password appears in a public list of known passwords. Choose a different one"
+    }
   }
 }

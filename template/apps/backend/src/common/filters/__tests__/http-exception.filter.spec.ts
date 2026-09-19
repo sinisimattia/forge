@@ -1,6 +1,7 @@
 import { ArgumentsHost, BadRequestException, HttpStatus, NotFoundException } from '@nestjs/common';
 import { I18nContext, I18nValidationException } from 'nestjs-i18n';
 import { ConsumedTokenError, ExpiredTokenError, SessionNotFoundError } from '__FORGE_SCOPE__/core/auth/errors';
+import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policies';
 import { WeakPasswordError } from '__FORGE_SCOPE__/core/identities/errors';
 import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
 import { HttpExceptionFilter } from '../http-exception.filter';
@@ -116,7 +117,60 @@ describe('HttpExceptionFilter', () => {
       filter.catch(new WeakPasswordError(['TOO_SHORT']), host);
 
       expect(statusMock).toHaveBeenCalledWith(HttpStatus.UNPROCESSABLE_ENTITY);
+    });
+
+    it('tells the caller every way the password fell short, in code and in prose', () => {
+      // Core builds this list on purpose — `WeakPasswordError` carries all of
+      // them rather than the first, because the list is what a caller shows the
+      // person. For a phase this filter dropped it, so a person was told only
+      // that something was wrong with a password they could not see.
+      filter.catch(new WeakPasswordError(['TOO_SHORT', 'NEEDS_DIGIT']), host);
+
+      expect(body().violations).toEqual([
+        // The code is core's own union member, so a client can switch on it
+        // exhaustively; the message is the same reason rendered.
+        { code: 'TOO_SHORT', message: 'errors.auth.password.TOO_SHORT|{"minLength":12,"maxLength":200}' },
+        { code: 'NEEDS_DIGIT', message: 'errors.auth.password.NEEDS_DIGIT|{"minLength":12,"maxLength":200}' },
+      ]);
+    });
+
+    it('interpolates the policy the judgement was actually made against', () => {
+      // The numbers come from `DEFAULT_PASSWORD_POLICY`, the same constant
+      // `AuthService` evaluates against. A literal here would be a second copy
+      // of a number, and the failure would be a message telling somebody to use
+      // twelve characters when the rule now says sixteen.
+      filter.catch(new WeakPasswordError(['TOO_SHORT']), host);
+
+      expect(body().violations[0].message).toContain(
+        `"minLength":${DEFAULT_PASSWORD_POLICY.minLength}`,
+      );
+    });
+
+    it('promotes the one reason to the message when there is only one', () => {
+      // A rule rather than a special case: a single-reason refusal is the common
+      // one, and its own sentence is a better answer than "does not meet this
+      // deployment's requirements" whatever the reason happens to be.
+      filter.catch(new WeakPasswordError(['BREACHED']), host);
+
+      expect(body().message).toBe(
+        'errors.auth.password.BREACHED|{"minLength":12,"maxLength":200}',
+      );
+    });
+
+    it('keeps the summary as the message when there are several', () => {
+      // Nothing to promote — there is no one sentence — so the summary stays and
+      // `violations` carries them all.
+      filter.catch(new WeakPasswordError(['TOO_SHORT', 'NEEDS_DIGIT']), host);
+
       expect(body().message).toBe('t:errors.auth.weak_password');
+    });
+
+    it('carries no violations for an error that is not about a password', () => {
+      // The key is absent, not empty: a caller branching on its presence must
+      // not have to tell `[]` from "not applicable".
+      filter.catch(new ExpiredTokenError(), host);
+
+      expect(body()).not.toHaveProperty('violations');
     });
 
     it('never puts the domain error’s own message in the response', () => {

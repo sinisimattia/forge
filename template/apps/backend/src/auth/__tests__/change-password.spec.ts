@@ -7,6 +7,7 @@ import cookieParser from 'cookie-parser';
 import type { DataSource, ObjectLiteral, Repository } from 'typeorm';
 import request from 'supertest';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
+import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policies';
 import type { RecordAuditEntryInput } from '__FORGE_SCOPE__/core/audit/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
 import { AuditService } from '../../audit/audit.service';
@@ -366,6 +367,48 @@ describe('POST /auth/change-password', () => {
         .expect(422);
 
       expect(usable()).toHaveLength(2);
+    });
+
+    it('tells the person what was wrong with the password, in prose and in code', async () => {
+      // The whole point of `WeakPasswordError` carrying a list. Asserted over the
+      // wire and through the shipped translation setup, because that is where it
+      // was lost: core built the list, the filter dropped it, and the person was
+      // told only that something was wrong with a password they could not see.
+      const first = await signIn();
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/change-password')
+        .set('Authorization', `Bearer ${first.access}`)
+        .send({ currentSecret: PLAINTEXT, newSecret: TOO_SHORT })
+        .expect(422);
+
+      expect(response.body.violations).toEqual([
+        { code: 'TOO_SHORT', message: 'Use at least 12 characters' },
+      ]);
+      // Prose, not a translation key, and the number is the policy's own.
+      expect(response.body.violations[0].message).not.toMatch(/^errors\./);
+      expect(response.body.violations[0].message).toContain(
+        String(DEFAULT_PASSWORD_POLICY.minLength),
+      );
+      // One reason, so it becomes the message too.
+      expect(response.body.message).toBe('Use at least 12 characters');
+    });
+
+    it('says nothing about the account, only about the password just typed', async () => {
+      // `violations` describes what the person typed and never anything about an
+      // account, so it adds no oracle: D7's property is untouched by it.
+      const first = await signIn();
+
+      const response = await request(app.getHttpServer())
+        .post('/auth/change-password')
+        .set('Authorization', `Bearer ${first.access}`)
+        .send({ currentSecret: PLAINTEXT, newSecret: TOO_SHORT })
+        .expect(422);
+
+      const body = JSON.stringify(response.body);
+      expect(body).not.toContain('ada@example.test');
+      expect(body).not.toContain(TOO_SHORT);
+      expect(body).not.toContain(PLAINTEXT);
     });
   });
 });

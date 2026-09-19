@@ -13,6 +13,7 @@ import {
   LastIdentityRemovalError,
   WeakPasswordError,
 } from '__FORGE_SCOPE__/core/identities/errors';
+import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policies';
 import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
 import {
   EmailAlreadyRegisteredError,
@@ -25,6 +26,43 @@ interface ResponseDetail {
   field: string;
   message: string;
 }
+
+/**
+ * One reason a password was refused, as a caller receives it.
+ *
+ * Two fields because two audiences. `code` is core's own
+ * `PasswordPolicyViolation`, so a client can switch on it exhaustively — the
+ * webapp evaluates the same union and a member added to it becomes a compile
+ * error there rather than an unrendered string. `message` is that reason in
+ * prose, already translated, so a caller with no knowledge of the union has
+ * something to show without inventing wording of its own.
+ *
+ * Deliberately **not** `details`, which is the field-level shape validation
+ * errors use. These are not field-level: the field a password arrives in is
+ * `secret` on registration and recovery and `newSecret` on a change, and the
+ * domain error knows none of them. Putting them in `details` would mean
+ * inventing a field name that is wrong on one endpoint out of three.
+ */
+interface ResponseViolation {
+  /** Core's `PasswordPolicyViolation` member. */
+  code: string;
+  /** The same reason, translated. */
+  message: string;
+}
+
+/**
+ * The numbers the password messages interpolate.
+ *
+ * Read from the same constant the judgement was made against
+ * (`AuthService` applies `DEFAULT_PASSWORD_POLICY`), so a deployment that
+ * changes its policy changes what people are told in the same edit. A literal
+ * here would be a second copy of a number, and the failure would be a message
+ * telling somebody to use twelve characters when the rule now says sixteen.
+ */
+const POLICY_ARGS: I18nArgs = {
+  minLength: DEFAULT_PASSWORD_POLICY.minLength,
+  maxLength: DEFAULT_PASSWORD_POLICY.maxLength,
+};
 
 /**
  * How a refusal the domain expressed becomes a status and a message.
@@ -90,6 +128,8 @@ const HTTP_STATUS_FALLBACK_KEY: Record<number, I18nKey> = {
  * - `DomainError` from `__FORGE_SCOPE__/core` → the status and key `DOMAIN_ERRORS` gives it,
  *   or `422` for one it does not name. A refusal the domain expressed is a
  *   statement about the request, not a fault, and must never answer `500`.
+ *   `WeakPasswordError` additionally carries a `violations` array — see
+ *   {@link ResponseViolation}.
  * - Anything else → translated internal-error message.
  *
  * The `error` field stays the canonical HTTP reason phrase (a protocol-level
@@ -108,6 +148,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message: string;
     let details: ResponseDetail[] | undefined;
+    let violations: ResponseViolation[] | undefined;
     let errorOverride: string | undefined;
 
     if (exception instanceof I18nValidationException) {
@@ -141,21 +182,24 @@ export class HttpExceptionFilter implements ExceptionFilter {
       status = mapped?.status ?? HttpStatus.UNPROCESSABLE_ENTITY;
       message = translate(mapped?.messageKey ?? 'errors.http.unprocessable');
 
-      // One refusal type, two messages. `WeakPasswordError` now carries every
-      // reason a password was refused, including `BREACHED` — which used to be a
-      // transport-level `BadRequestException` of its own, so "this password is
-      // not acceptable" had two different response shapes depending on why, and
-      // the two code paths that did not handle the second one simply never asked
-      // the question. Collapsing them to one error type is what let the check be
-      // applied on recovery and on a deliberate change as well as on
-      // registration; keeping the specific message here is what stops that
-      // collapse costing a person the only sentence that tells them what to do.
+      // The list core built, rendered. `WeakPasswordError` carries every way a
+      // password fell short precisely so a caller can show a person all of them
+      // at once — core's own comment says the list "is what a caller shows the
+      // person" — and for a phase this filter dropped it, so the person was told
+      // only that something was wrong with a password they could not see.
       //
-      // `BREACHED` is never mixed with the other four: `AuthService` asks the
-      // registry only after `evaluatePassword` has passed, so this branch is
-      // reached with a list of exactly one.
-      if (exception instanceof WeakPasswordError && exception.violations.includes('BREACHED')) {
-        message = translate('errors.auth.secret_is_public');
+      // When there is exactly one, it becomes the message. That is a rule rather
+      // than a special case for `BREACHED`, and it generalises: a single-reason
+      // refusal is the common one, and "Use at least 12 characters" is a better
+      // sentence than "does not meet this deployment's requirements" whatever the
+      // reason happens to be. Several reasons keep the summary, because there is
+      // no one sentence to promote and `violations` carries them all.
+      if (exception instanceof WeakPasswordError) {
+        violations = exception.violations.map((violation) => ({
+          code: violation,
+          message: translate(`errors.auth.password.${violation}` as I18nKey, POLICY_ARGS),
+        }));
+        if (violations.length === 1) message = violations[0].message;
       }
     } else {
       message = translate('errors.common.internal');
@@ -167,6 +211,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       error,
       message,
       ...(details ? { details } : {}),
+      ...(violations ? { violations } : {}),
     });
   }
 
