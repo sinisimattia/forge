@@ -55,7 +55,7 @@ export default defineNuxtPlugin(async () => {
     // than it does from a browser — see `runtimeConfig.apiBaseServer`.
     baseUrl: config.apiBaseServer === '' ? config.public.apiBase : config.apiBaseServer,
     credential: () => store.accessToken,
-    headers: () => (incoming === undefined ? {} : { cookie: incoming }),
+    headers: (): Record<string, string> => (incoming === undefined ? {} : { cookie: incoming }),
     onSetCookie: relay,
   }));
 

@@ -134,8 +134,16 @@ app/components/**/*.vue · app/pages/**/*.vue   ← call composables only
   services against `app/services/__tests__/stubBackend.ts`.
 - The backend base URL comes from runtime config (`runtimeConfig.public.apiBase`,
   `runtimeConfig.apiBaseServer` for SSR-inside-Docker — see `nuxt.config.ts`).
-- `app/fetchers/` and `app/services/` exist; `app/composables/` and `app/stores/` do not
-  yet — this section documents the standing rule for when they are added.
+- All four layers exist. `app/stores/auth.ts` is the first store: state that outlives a
+  component — who is signed in — belongs there, and a composable over it (`useAuth`) is what
+  a component calls. A composable that holds its own `ref` for something two components must
+  agree about is the mistake this ordering exists to prevent.
+- The access credential lives **in memory only** (DEC-3): not in `localStorage`, not in a
+  cookie this code writes. `app/stores/__tests__/auth.spec.ts` asserts it by watching the
+  write API of all three, not by reading a key back.
+- A `?redirect=` taken from a URL goes through `localRedirect` (`app/utils/redirect.ts`)
+  before anything navigates to it. An unjudged one is an open redirect, and a sign-in page
+  is the highest-value place in an application to have one.
 
 ## Tailwind
 

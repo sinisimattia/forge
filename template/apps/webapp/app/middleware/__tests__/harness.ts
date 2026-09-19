@@ -55,6 +55,17 @@ export interface Harness {
   registered: unknown[];
   /** `navigateTo`, spied. */
   navigateTo: ReturnType<typeof vi.fn>;
+  /**
+   * The store the middleware will find, already pointed at the world.
+   *
+   * Adopted here and not left to each test, because a store that has not adopted
+   * one builds the browser transport from `useRuntimeConfig` and renews against
+   * a real address — which is a DNS lookup per test, an unbounded wait when the
+   * network is slow, and a test that depends on a hostname failing to resolve.
+   * Observed: two specs passing while `getaddrinfo ENOTFOUND backend.test` was
+   * printed underneath them.
+   */
+  store: ReturnType<typeof useAuthStore>;
 }
 
 /**
@@ -81,7 +92,9 @@ export function harness(): Harness {
 
   const backend = stubBackend();
   backend.putUser(ACTOR, PLAINTEXT);
-  return { backend, registered, navigateTo };
+  const store = useAuthStore();
+  store.adoptTransport(backend.client);
+  return { backend, registered, navigateTo, store };
 }
 
 /**
@@ -96,7 +109,9 @@ export function harness(): Harness {
  * @param backend - the world to sign in to
  * @returns the fresh store, with the world's transport adopted
  */
-export async function afterAFullPageLoad(backend: StubBackend): Promise<ReturnType<typeof useAuthStore>> {
+export async function afterAFullPageLoad(
+  backend: StubBackend,
+): Promise<ReturnType<typeof useAuthStore>> {
   const first = useAuthStore();
   first.adoptTransport(backend.client);
   await first.login(ACTOR.email, PLAINTEXT);

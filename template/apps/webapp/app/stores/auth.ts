@@ -47,9 +47,12 @@ const NO_CLIENT: ClientContext = { address: null, label: null };
  * In memory, in `accessToken`, and nowhere else — not in `localStorage`, not in
  * `sessionStorage`, not in a cookie this code can write (DEC-3). That is a
  * decision rather than an omission, so it has its own test: the store's spec
- * spies on the setters of all three and asserts none of them is ever called,
- * because a later commit that adds "remember me" will write **through the API**
- * and not to a key anybody guessed in advance.
+ * installs a recording `Storage` over both of them and a recording setter over
+ * `document.cookie`, and asserts that nothing was written to any of the three.
+ * Reading a key back instead would pass for an application that stores nothing,
+ * for one that stores under a different key, and for one with no storage at all;
+ * a later commit that adds "remember me" will write **through the API**, not to
+ * a key anybody guessed in advance.
  *
  * The consequence is the reason this store is more than a box: a full page load
  * begins with nothing, so being signed in has to be re-established from the

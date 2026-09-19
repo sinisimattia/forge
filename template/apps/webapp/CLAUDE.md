@@ -11,10 +11,16 @@ per backend endpoint, the only place a path is spelled) and `app/services/` — 
 `UserHttpService` and `IdentityHttpService`, which implement `libs/core`'s `IAuthService`,
 `IUserService` and `IIdentityService` **over the wire** and are driven through the same
 shared conformance suites the backend's implementations are driven through, under vitest
-rather than jest. There are no composables and no stores yet. Feature domains (e.g.
-`articles`, `comments`, `tags`) land here once `libs/core` defines their entities and
-`I*Service` contracts (see `libs/core/CLAUDE.md`); that phase also introduces
-`app/composables/` and `app/stores/`.
+rather than jest.
+
+On top of those sits the machinery that makes a signed-in user a fact the whole app can
+see: `app/stores/auth.ts` (the credential in memory, the person, and a three-valued
+`status`), `useAuth()`/`useCurrentUser()`, the `auth` and `guest` route middleware, and
+`app/plugins/auth-init.server.ts`, which renews the session once per server-rendered
+request. There are no sign-in or registration **pages** yet.
+
+Feature domains (e.g. `articles`, `comments`, `tags`) land here once `libs/core` defines
+their entities and `I*Service` contracts (see `libs/core/CLAUDE.md`).
 
 The library is the starting vocabulary, not a finished design system: rename it, restyle it,
 delete what you do not use. What it is **not** is a place for your domain — an `ArticleCard`
@@ -82,6 +88,11 @@ webapp/
 │   ├── fetchers/               # one function per endpoint; the only place a path is spelled
 │   ├── services/               # the core I*Service implementations, over the wire
 │   │   └── __tests__/          # the shared conformance suites, driven under vitest
+│   ├── stores/                 # auth.ts — the credential (in memory), the person, the status
+│   ├── composables/            # useAuth, useCurrentUser — the only layer a component calls
+│   ├── middleware/             # auth, guest — registered by FILE NAME, not by an import
+│   ├── plugins/                # auth-init.server.ts — the SSR session renewal
+│   ├── utils/                  # authFetch (renew once, retry once), redirect (localRedirect)
 │   ├── types/
 │   │   ├── ui.ts               # the library's own closed unions (IconName)
 │   │   ├── api.ts              # the wire's own vocabulary (ApiClient, the error envelope)
@@ -95,8 +106,7 @@ webapp/
 └── .storybook/                 # Storybook config
 ```
 
-Not present yet: `app/composables/`, `app/stores/`, `app/middleware/`, `app/layouts/`,
-auth pages. `app/components/organisms/` exists but is
+Not present yet: `app/layouts/`, auth pages. `app/components/organisms/` exists but is
 empty.
 
 ## What's wired up
@@ -105,6 +115,8 @@ empty.
   `NUXT_PUBLIC_API_BASE`) and `runtimeConfig.apiBaseServer` (from `NUXT_API_BASE_SERVER`,
   used by SSR inside the Docker network); `@nuxtjs/tailwindcss`, `@nuxt/eslint`,
   `@nuxtjs/i18n` modules; `runtimeConfig.public.appName` (the wordmark `AppLogo` renders);
+  `@pinia/nuxt` (which also registers `app/stores/` for auto-import — the module's default
+  `storesDirs` is `<srcDir>/stores`, and Nuxt 4's srcDir is `app/`);
   components auto-import from all four Atomic Design layers without a path prefix
   (`AppButton`, not `AtomsAppButton`); `vite.css.preprocessorOptions.scss.additionalData`
   injects the SCSS variables and mixins; `typescript.tsConfig.compilerOptions` re-states
