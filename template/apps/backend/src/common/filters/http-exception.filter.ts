@@ -140,6 +140,23 @@ export class HttpExceptionFilter implements ExceptionFilter {
       // whole branch exists to stop.
       status = mapped?.status ?? HttpStatus.UNPROCESSABLE_ENTITY;
       message = translate(mapped?.messageKey ?? 'errors.http.unprocessable');
+
+      // One refusal type, two messages. `WeakPasswordError` now carries every
+      // reason a password was refused, including `BREACHED` — which used to be a
+      // transport-level `BadRequestException` of its own, so "this password is
+      // not acceptable" had two different response shapes depending on why, and
+      // the two code paths that did not handle the second one simply never asked
+      // the question. Collapsing them to one error type is what let the check be
+      // applied on recovery and on a deliberate change as well as on
+      // registration; keeping the specific message here is what stops that
+      // collapse costing a person the only sentence that tells them what to do.
+      //
+      // `BREACHED` is never mixed with the other four: `AuthService` asks the
+      // registry only after `evaluatePassword` has passed, so this branch is
+      // reached with a list of exactly one.
+      if (exception instanceof WeakPasswordError && exception.violations.includes('BREACHED')) {
+        message = translate('errors.auth.secret_is_public');
+      }
     } else {
       message = translate('errors.common.internal');
     }

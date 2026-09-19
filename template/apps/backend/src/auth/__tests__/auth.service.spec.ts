@@ -1,4 +1,3 @@
-import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { argon2id, hash as argon2Hash } from 'argon2';
@@ -198,7 +197,7 @@ describe('AuthService', () => {
 
       await expect(
         auth.register({ email: 'ada@example.test', displayName: 'Ada', secret: PLAINTEXT }),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toMatchObject({ violations: ['BREACHED'] });
       expect(source.all(UserRecord)).toEqual([]);
     });
 
@@ -360,6 +359,93 @@ describe('AuthService', () => {
         ]);
         expect(recorded[0].actorId).toBe(source.all(UserRecord)[0].id);
       });
+    });
+  });
+
+  /**
+   * ## The breach check applies to every path that sets a password
+   *
+   * It applied to registration alone, which made the control decorative exactly
+   * where it matters most: the likeliest reason somebody is completing a
+   * recovery is that they believe their credential is already in somebody
+   * else's hands. Driven over the three methods by a table rather than written
+   * three times, so a fourth path that sets a password is one row away from
+   * being covered — and so none of the three can lose the check on its own.
+   */
+  describe('a password the registry reports as already public', () => {
+    /** Registers and verifies with the registry quiet, then makes it answer `true`. */
+    const withAPublicReplacement = async (): Promise<UserId> => {
+      await registerAndVerify('ada@example.test');
+      breached.isKnownBreached = async () => true;
+      return source.all(UserRecord)[0].id as UserId;
+    };
+
+    it('is refused at registration', async () => {
+      breached.isKnownBreached = async () => true;
+      await expect(
+        auth.register({ email: 'ada@example.test', displayName: 'Ada', secret: PLAINTEXT }),
+      ).rejects.toMatchObject({ violations: ['BREACHED'] });
+    });
+
+    it('is refused when a recovery credential is spent on it', async () => {
+      await registerAndVerify('ada@example.test');
+      await auth.requestPasswordReset('ada@example.test');
+      const credential = credentialFromLastLink();
+      breached.isKnownBreached = async () => true;
+
+      await expect(auth.resetPassword(credential, OTHER_PLAINTEXT)).rejects.toMatchObject({
+        violations: ['BREACHED'],
+      });
+    });
+
+    it('is refused when the actor changes their own password to it', async () => {
+      const actorId = await withAPublicReplacement();
+
+      await expect(
+        auth.changePassword(actorId, PLAINTEXT, OTHER_PLAINTEXT),
+      ).rejects.toMatchObject({ violations: ['BREACHED'] });
+    });
+
+    it('leaves the recovery credential unspent when it refuses', async () => {
+      // A refused replacement must not cost the person their only way back in —
+      // the same property the policy check already has, now on the same path.
+      await registerAndVerify('ada@example.test');
+      await auth.requestPasswordReset('ada@example.test');
+      const credential = credentialFromLastLink();
+      breached.isKnownBreached = async () => true;
+
+      await auth.resetPassword(credential, OTHER_PLAINTEXT).catch(() => undefined);
+
+      expect(source.all(PasswordResetTokenRecord)[0].consumedAt).toBeNull();
+    });
+
+    it('leaves the stored secret alone when a change is refused', async () => {
+      const actorId = await withAPublicReplacement();
+      const before = source.all(AuthIdentityRecord)[0].secretHash;
+
+      await auth.changePassword(actorId, PLAINTEXT, OTHER_PLAINTEXT).catch(() => undefined);
+
+      expect(source.all(AuthIdentityRecord)[0].secretHash).toBe(before);
+    });
+
+    it('is asked only after the policy has passed, on all three paths', async () => {
+      // The order is load-bearing twice over: a secret that breaks the policy is
+      // refused without a lookup that may be slow or remote, and `BREACHED` is
+      // therefore never mixed into a list with the other four — so the message a
+      // person is shown is about the one thing that is wrong.
+      let asked = 0;
+      breached.isKnownBreached = async () => {
+        asked += 1;
+        return true;
+      };
+
+      await auth
+        .register({ email: 'ada@example.test', displayName: 'Ada', secret: TOO_SHORT_PLAINTEXT })
+        .catch(() => undefined);
+      expect(asked).toBe(0);
+
+      await registerAndVerify('grace@example.test', OTHER_PLAINTEXT).catch(() => undefined);
+      expect(asked).toBeGreaterThan(0);
     });
   });
 

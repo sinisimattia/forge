@@ -38,6 +38,16 @@ import { IdentitiesService } from './identities.service';
       // ADR-0008: the seam exists and answers `false`. Binding a real corpus is
       // changing this one line — see `NoOpBreachedPasswordRegistry` for what
       // such an implementation owes, and the trap it is walking into.
+      //
+      // "This one line" is now true of the whole surface, and it was not always.
+      // The port was consulted on registration alone, so binding a corpus bought
+      // a check on the one path where somebody is *choosing* a password and none
+      // on the two where they are *replacing* one — including recovery, which is
+      // what somebody does when they believe their credential is already in
+      // somebody else's hands. `AuthService.refuseIfPublic` is the one caller
+      // now, and registration, recovery and a deliberate change all go through
+      // it. Anything added later that sets a password calls it too, or the claim
+      // on this line stops being true again.
       provide: BREACHED_PASSWORD_REGISTRY,
       useClass: NoOpBreachedPasswordRegistry,
     },

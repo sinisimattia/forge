@@ -44,6 +44,20 @@ import type { IBreachedPasswordRegistry } from '__FORGE_SCOPE__/core/identities/
  *   touches the database, deliberately, so that a policy failure and an
  *   existing-address answer take the same time. A registry that blocks for ten
  *   seconds hands that timing back and adds a way to stall the process.
+ *
+ * ## Where it is consulted
+ *
+ * Every path that sets a password: registration, completing a recovery, and a
+ * deliberate change, all through `AuthService.refuseIfPublic`. Always *after*
+ * the policy judgement, so a secret that breaks a local rule costs no lookup and
+ * so `BREACHED` never arrives mixed with the other four violations.
+ *
+ * It was registration only, for one phase. That is worth knowing for two
+ * reasons: it is why `PasswordPolicyViolation` grew a `BREACHED` member — one
+ * error type carrying every reason a password was refused, instead of a
+ * transport-level special case that two of the three paths had simply never
+ * written — and it is the failure mode to watch for when a fourth such path is
+ * added.
  */
 export class NoOpBreachedPasswordRegistry implements IBreachedPasswordRegistry {
   /**

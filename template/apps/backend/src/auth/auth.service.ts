@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Repository } from 'typeorm';
@@ -132,18 +132,7 @@ export class AuthService implements IAuthService {
     const violations = evaluatePassword(input.secret, DEFAULT_PASSWORD_POLICY);
     if (violations.length > 0) throw new WeakPasswordError(violations);
 
-    if (await this.breached.isKnownBreached(input.secret)) {
-      // Not a `WeakPasswordError`: that error carries a list of
-      // `PasswordPolicyViolation`, and core's union has no member meaning "this
-      // secret is already public" — the question is deliberately a port rather
-      // than a policy knob (see `IBreachedPasswordRegistry`). Reported at the
-      // transport layer instead, which is where this backend already turns a
-      // refusal into a translated message. The template's own registry never
-      // answers `true`, so this branch is unreachable until somebody binds a
-      // real corpus; it is written out rather than left as a TODO because the
-      // person who binds that corpus should not also have to invent the refusal.
-      throw new BadRequestException({ messageKey: 'errors.auth.secret_is_public' });
-    }
+    await this.refuseIfPublic(input.secret);
 
     const email = normalizeEmail(input.email);
     const now = new Date();
@@ -461,6 +450,7 @@ export class AuthService implements IAuthService {
   public async resetPassword(credential: string, newSecret: string): Promise<void> {
     const violations = evaluatePassword(newSecret, DEFAULT_PASSWORD_POLICY);
     if (violations.length > 0) throw new WeakPasswordError(violations);
+    await this.refuseIfPublic(newSecret);
 
     const presentedHash = hashOpaqueToken(credential);
     const now = new Date();
@@ -522,6 +512,7 @@ export class AuthService implements IAuthService {
 
     const violations = evaluatePassword(newSecret, DEFAULT_PASSWORD_POLICY);
     if (violations.length > 0) throw new WeakPasswordError(violations);
+    await this.refuseIfPublic(newSecret);
 
     const now = new Date();
     await this.identities.replaceSecret(identity.id, newSecret);
@@ -596,6 +587,39 @@ export class AuthService implements IAuthService {
   }
 
   // -------------------------------------------------------------------- private
+
+  /**
+   * Refuses a secret the registry reports as already public.
+   *
+   * **Called on every path that sets a password — registration, recovery and a
+   * deliberate change — and the uniformity is the point.** It was called on
+   * registration alone, which made the control decorative exactly where it
+   * matters most: the likeliest reason somebody is completing a recovery is that
+   * they believe their credential is already in somebody else's hands, and that
+   * is the worst moment to accept a password out of a published corpus. A
+   * guarantee that holds on one path and not its sibling is the shape of defect
+   * this project has shipped before.
+   *
+   * Always **after** `evaluatePassword` and never before. Two reasons, and both
+   * are load-bearing. The policy judgement is free and local, so a secret that
+   * breaks it is refused without a lookup that may be slow or remote. And the
+   * order is what keeps `violations` legible: reaching this method at all means
+   * the other four judgements passed, so `BREACHED` is never mixed with them and
+   * the message a person is shown is about the one thing that is wrong.
+   *
+   * @param secret - the password a person proposes
+   * @throws WeakPasswordError carrying `BREACHED` when the registry says so
+   */
+  private async refuseIfPublic(secret: string): Promise<void> {
+    // The template's own registry answers `false` to everything (ADR-0008), so
+    // this branch is unreachable until somebody binds a real corpus. Written out
+    // rather than left as a TODO because the person who binds that corpus should
+    // not also have to invent the refusal — and because a seam whose far side
+    // has never been exercised is a seam that does not work.
+    if (await this.breached.isKnownBreached(secret)) {
+      throw new WeakPasswordError(['BREACHED']);
+    }
+  }
 
   /** Issues a verification credential and sends it. */
   private async sendVerification(userId: UserId, email: string, now: Date): Promise<void> {
