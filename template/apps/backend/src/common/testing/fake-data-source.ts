@@ -194,9 +194,17 @@ export class FakeDataSource {
         await yieldTurn();
         return detach(this.match(entity, options.where)[0] ?? null);
       },
+      // Ordered, like `findAndCount` below and unlike this method as first
+      // written. Dropping `order` here is not a harmless simplification: the
+      // only caller that asks for one is `SessionService.listActive`, whose
+      // whole promise is "newest first", and a fake that answered in insertion
+      // order made that promise unfalsifiable — 392 tests passed over it. The
+      // core conformance suite caught it on first contact, asserting that a
+      // fresh sign-in comes back ahead of a session the world seeded earlier.
       find: async (options) => {
         await yieldTurn();
-        return this.match(entity, options?.where ?? {}).map((found) => ({ ...found }));
+        const found = this.match(entity, options?.where ?? {});
+        return sortRows(found, options?.order).map((one) => ({ ...one }));
       },
       findAndCount: async (options) => {
         await yieldTurn();
@@ -333,7 +341,7 @@ export class FakeDataSource {
 /** The subset of `Repository<T>` this backend calls. See `FakeDataSource.getRepository`. */
 export interface FakeRepository {
   findOne(options: { where: Where }): Promise<Row | null>;
-  find(options?: { where?: Where }): Promise<Row[]>;
+  find(options?: { where?: Where; order?: Record<string, 'ASC' | 'DESC'> }): Promise<Row[]>;
   findAndCount(options?: PageOptions): Promise<[Row[], number]>;
   insert(values: Row): Promise<{ identifiers: { id: string }[] }>;
   update(criteria: Criteria, patch: Row): Promise<{ affected: number }>;
