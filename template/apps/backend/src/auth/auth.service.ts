@@ -37,6 +37,7 @@ import {
   buildVerifyEmailMessage,
   type IMailer,
 } from '../mail';
+import { toUserEntity } from '../users/to-user';
 import { UserRecord } from '../users/user-record.entity';
 import { EmailVerificationTokenRecord } from './entities/email-verification-token-record.entity';
 import { PasswordResetTokenRecord } from './entities/password-reset-token-record.entity';
@@ -271,9 +272,16 @@ export class AuthService implements IAuthService {
     const now = new Date();
     const user = await this.users.findOne({ where: { email: normalized } });
 
-    // An address with no account, and an account whose address is already
-    // proven, are both "nothing to send" — and both must look like a send.
-    if (user === null || user.emailVerifiedAt !== null) return;
+    // An address with no account, an account whose address is already proven,
+    // and an account its owner asked to be removed are all "nothing to send" —
+    // and all three must look like a send.
+    //
+    // The deleted case was added with the soft delete it belongs to: a person
+    // who closed their account and then asks for a link is asking a deployment
+    // that no longer has them, and mailing them anyway is the deployment
+    // ignoring the deletion in the one way they can see. It costs no extra work
+    // and so shows up in no timing either — the row was already read.
+    if (user === null || user.emailVerifiedAt !== null || user.deletedAt !== null) return;
 
     await this.sendVerification(user.id as UserId, normalized, now);
     await this.record(AuditAction.EMAIL_VERIFICATION_REQUESTED, user.id as UserId, {}, now);
@@ -412,7 +420,12 @@ export class AuthService implements IAuthService {
     const normalized = normalizeEmail(email);
     const now = new Date();
     const user = await this.users.findOne({ where: { email: normalized } });
-    if (user === null) return;
+    // A deleted account is treated as no account, for the reason
+    // {@link AuthService.resendVerification} gives — and with the same absence
+    // of any extra work, so the two remain indistinguishable in timing as well
+    // as in answer. Without it, closing an account leaves the deployment still
+    // mailing its former owner every time somebody types their address in.
+    if (user === null || user.deletedAt !== null) return;
 
     const generated = generateOpaqueToken();
     await this.resets.insert({
@@ -659,19 +672,16 @@ export class AuthService implements IAuthService {
     return AuthenticationRejectionReason.EMAIL_NOT_VERIFIED;
   }
 
-  /** Row to entity, asserting the branded id in one visible line. */
+  /**
+   * Row to entity.
+   *
+   * Delegates to `users/to-user.ts` rather than restating the mapping: three
+   * services read this table now, and a mapper copied into each of them is three
+   * chances for the copies to disagree about what a row means. Kept as a static
+   * here because it is part of this class's surface and callers name it.
+   */
   public static toUser(row: UserRecord): User {
-    return new User({
-      id: row.id as UserId,
-      email: row.email,
-      displayName: row.displayName,
-      status: row.status,
-      platformRole: row.platformRole,
-      emailVerifiedAt: row.emailVerifiedAt,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      deletedAt: row.deletedAt,
-    });
+    return toUserEntity(row);
   }
 
   /**

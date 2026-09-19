@@ -3,15 +3,9 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule, JwtModuleOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policies';
 import { AuditModule } from '../audit/audit.module';
-import {
-  BREACHED_PASSWORD_REGISTRY,
-  NoOpBreachedPasswordRegistry,
-} from '../identities/breached-passwords';
 import { AuthIdentityRecord } from '../identities/auth-identity-record.entity';
-import { Argon2PasswordHasher, PASSWORD_HASHER } from '../identities/hashing';
-import { IdentitiesService } from '../identities/identities.service';
+import { IdentitiesModule } from '../identities/identities.module';
 import { MailModule } from '../mail';
 import { UserRecord } from '../users/user-record.entity';
 import { AuthController } from './auth.controller';
@@ -58,11 +52,10 @@ export function accessTokenSigningOptions(config: ConfigService): JwtModuleOptio
 /**
  * Registration, authentication and the session lifecycle.
  *
- * Two ports are bound here rather than in modules of their own, and both are
- * ADR-0008 ports whose only consumer today is this module: the password hasher
- * and the breached-password registry. `MAILER` is not — it has its own module,
- * because a mailer's second consumer (anything that notifies anybody) arrives
- * with the first feature somebody adds.
+ * The password hasher and the breached-password registry were bound here while
+ * this was their only consumer. They are `IdentitiesModule`'s now, which owns
+ * the rows they write into and has a surface of its own — the same reason
+ * `MAILER` has always had its own module.
  *
  * `JwtAuthGuard` is provided here as an ordinary class and registered as the
  * application-wide guard in `app.module.ts`. It is deliberately **not**
@@ -75,6 +68,7 @@ export function accessTokenSigningOptions(config: ConfigService): JwtModuleOptio
   imports: [
     ConfigModule,
     AuditModule,
+    IdentitiesModule,
     MailModule,
     PassportModule,
     TypeOrmModule.forFeature([
@@ -92,30 +86,7 @@ export function accessTokenSigningOptions(config: ConfigService): JwtModuleOptio
     }),
   ],
   controllers: [AuthController],
-  providers: [
-    AuthService,
-    IdentitiesService,
-    SessionService,
-    RefreshTokenService,
-    JwtStrategy,
-    JwtAuthGuard,
-    {
-      // An explicit factory rather than `useClass`, because the adapter's one
-      // constructor parameter is a `PasswordPolicy` — an interface, with no
-      // runtime token for Nest to resolve. This is also the line a deployment
-      // changes to apply its own policy. See `Argon2PasswordHasher`'s own
-      // comment for why the class carries no `@Injectable()`.
-      provide: PASSWORD_HASHER,
-      useFactory: () => new Argon2PasswordHasher(DEFAULT_PASSWORD_POLICY),
-    },
-    {
-      // ADR-0008: the seam exists and answers `false`. Binding a real corpus is
-      // changing this one line — see `NoOpBreachedPasswordRegistry` for what
-      // such an implementation owes, and the trap it is walking into.
-      provide: BREACHED_PASSWORD_REGISTRY,
-      useClass: NoOpBreachedPasswordRegistry,
-    },
-  ],
+  providers: [AuthService, SessionService, RefreshTokenService, JwtStrategy, JwtAuthGuard],
   exports: [AuthService, SessionService, RefreshTokenService, JwtAuthGuard],
 })
 export class AuthModule {}

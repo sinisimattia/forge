@@ -20,6 +20,10 @@
   "tags": {
     "not_found": "Tag {tagId} not found"
   },
+  "users": {
+    "cannot_demote_self": "You cannot withdraw your own platform administration. Ask another administrator to do it",
+    "cannot_suspend_self": "You cannot suspend your own account"
+  },
   "auth": {
     "invalid_credentials": "That email address and password do not match an account",
     "secret_is_public": "That password appears in a public list of known passwords. Choose a different one",

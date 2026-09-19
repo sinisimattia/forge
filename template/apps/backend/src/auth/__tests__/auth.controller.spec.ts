@@ -1,6 +1,5 @@
 import { INestApplication } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { Test } from '@nestjs/testing';
@@ -13,13 +12,11 @@ import type { SessionId } from '__FORGE_SCOPE__/core/auth/types';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
-import { HttpExceptionFilter } from '../../common/filters';
-import { I18N } from '../../app.module';
+import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
 import { AuthController } from '../auth.controller';
 import { AuthService } from '../auth.service';
-import { JwtAuthGuard } from '../guards';
 import { REFRESH_COOKIE } from '../refresh-cookie';
-import { SESSION_TTL_SECONDS } from '../session/session.service';
+import { SESSION_TTL_SECONDS, SessionService } from '../session/session.service';
 import { RefreshTokenService } from '../session/refresh-token.service';
 import { JwtStrategy } from '../strategies';
 
@@ -53,6 +50,7 @@ const SIGNING_KEY = 'auth-controller-spec-signing-key';
  * `Argon2PasswordHasher.spec.ts` established the same idiom.
  */
 const PLAINTEXT = 'a correct horse battery staple';
+const OTHER_PLAINTEXT = 'an entirely different long phrase';
 const ISSUED_ACCESS = 'issued-access-credential';
 const ISSUED_RENEWAL = 'issued-renewal-credential';
 
@@ -89,10 +87,12 @@ describe('AuthController', () => {
   let jwt: JwtService;
   let rejectWith: AuthenticationRejectionReason | null;
   let logouts: { actorId: UserId; sessionId: SessionId }[];
+  let recovery: { method: string; args: unknown[] }[];
 
   beforeEach(async () => {
     rejectWith = null;
     logouts = [];
+    recovery = [];
 
     const auth = {
       register: async () => undefined,
@@ -117,6 +117,15 @@ describe('AuthController', () => {
       logout: async (actorId: UserId, sessionId: SessionId) => {
         logouts.push({ actorId, sessionId });
       },
+      requestPasswordReset: async (...args: unknown[]) => {
+        recovery.push({ method: 'requestPasswordReset', args });
+      },
+      resetPassword: async (...args: unknown[]) => {
+        recovery.push({ method: 'resetPassword', args });
+      },
+      changePassword: async (...args: unknown[]) => {
+        recovery.push({ method: 'changePassword', args });
+      },
     } as unknown as AuthService;
 
     const refresh = {
@@ -124,6 +133,16 @@ describe('AuthController', () => {
         throw new SessionNotFoundError('(none)');
       },
     } as unknown as RefreshTokenService;
+
+    // The controller re-issues for the caller after a password change, which is
+    // the only thing it uses this for. Every other route here leaves it untouched.
+    const sessions = {
+      begin: async () => ({
+        session: SESSION,
+        accessToken: ISSUED_ACCESS,
+        refreshToken: ISSUED_RENEWAL,
+      }),
+    } as unknown as SessionService;
 
     const moduleRef = await Test.createTestingModule({
       imports: [
@@ -139,17 +158,24 @@ describe('AuthController', () => {
       ],
       controllers: [AuthController],
       providers: [
+        // THE SHIPPED ARRAY, not a hand-assembled substitute for it. It used to
+        // be `{ provide: APP_GUARD, useClass: JwtAuthGuard }` plus a
+        // `useGlobalFilters` call below, which left this file unable to see the
+        // application's own validation pipe — so a body missing a required field
+        // reached a handler here and was refused in production, and a body
+        // carrying a field no DTO declares was accepted here and refused there.
+        // Both directions are assertions this file now makes.
+        ...GLOBAL_PROVIDERS,
         JwtStrategy,
         { provide: AuthService, useValue: auth },
         { provide: RefreshTokenService, useValue: refresh },
-        { provide: APP_GUARD, useClass: JwtAuthGuard },
+        { provide: SessionService, useValue: sessions },
       ],
     }).compile();
 
     app = moduleRef.createNestApplication();
     jwt = moduleRef.get(JwtService);
     app.use(cookieParser());
-    app.useGlobalFilters(new HttpExceptionFilter());
     await app.init();
   });
 
@@ -158,6 +184,12 @@ describe('AuthController', () => {
   });
 
   const bearer = (): string => `Bearer ${jwt.sign({ sub: ACTOR_ID, sid: SESSION_ID })}`;
+
+  /** The `Set-Cookie` header a request produced, as one string. */
+  const cookieFrom = (headers: Record<string, unknown>): string => {
+    const raw = headers['set-cookie'];
+    return Array.isArray(raw) ? raw.join('\n') : String(raw);
+  };
 
   describe('which routes are reachable without a credential', () => {
     // A missing `@Public()` on any of these three makes signing in impossible:
@@ -238,11 +270,79 @@ describe('AuthController', () => {
     });
   });
 
-  /** The `Set-Cookie` header a request produced, as one string. */
-  const cookieFrom = (headers: Record<string, unknown>): string => {
-    const raw = headers['set-cookie'];
-    return Array.isArray(raw) ? raw.join('\n') : String(raw);
-  };
+  describe('recovery', () => {
+    it('POST /auth/forgot-password is reachable with no credential', async () => {
+      // A caller asking for a recovery link has, by definition, no usable
+      // credential — that is why they are asking.
+      const response = await request(app.getHttpServer())
+        .post('/auth/forgot-password')
+        .send({ email: 'ada@example.test' });
+
+      expect(response.status).toBe(202);
+      expect(response.body).toEqual({ status: 'accepted' });
+      expect(recovery.map((call) => call.method)).toEqual(['requestPasswordReset']);
+    });
+
+    it('POST /auth/reset-password is reachable with no credential and spends the credential', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/reset-password')
+        .send({ credential: 'a-delivered-value', secret: PLAINTEXT });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ status: 'reset' });
+      expect(recovery[0]).toEqual({
+        method: 'resetPassword',
+        args: ['a-delivered-value', PLAINTEXT],
+      });
+    });
+
+    it('sets no renewal cookie on a completed reset', async () => {
+      // Recovery does not sign anybody in. Whoever completes one signs in with
+      // the secret they have just chosen, which is also the first proof they
+      // have it right.
+      const response = await request(app.getHttpServer())
+        .post('/auth/reset-password')
+        .send({ credential: 'a-delivered-value', secret: PLAINTEXT });
+
+      expect(response.headers['set-cookie']).toBeUndefined();
+    });
+
+    it('POST /auth/change-password is NOT reachable without a credential', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/change-password')
+        .send({ currentSecret: PLAINTEXT, newSecret: OTHER_PLAINTEXT })
+        .expect(401);
+    });
+
+    it('proves the current secret and re-issues for the caller it is serving', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/change-password')
+        .set('Authorization', bearer())
+        .send({ currentSecret: PLAINTEXT, newSecret: OTHER_PLAINTEXT })
+        .expect(200);
+
+      expect(recovery[0]).toEqual({
+        method: 'changePassword',
+        args: [ACTOR_ID, PLAINTEXT, OTHER_PLAINTEXT],
+      });
+      // The service ends every session, the caller's included. Without the
+      // re-issue the caller is signed out by their own password change, which
+      // reads as the change having failed.
+      expect(response.body.accessToken).toBe(ISSUED_ACCESS);
+      expect(cookieFrom(response.headers)).toContain(`${REFRESH_COOKIE.name}=${ISSUED_RENEWAL}`);
+    });
+
+    it('refuses a change body that omits the current secret', async () => {
+      // Without it the endpoint would let anybody holding a borrowed session
+      // replace the password and lock the owner out.
+      await request(app.getHttpServer())
+        .post('/auth/change-password')
+        .set('Authorization', bearer())
+        .send({ newSecret: OTHER_PLAINTEXT })
+        .expect(400);
+      expect(recovery).toEqual([]);
+    });
+  });
 
   describe('the renewal cookie', () => {
     it('is set on a successful sign-in, unreadable by script and scoped to /auth', async () => {

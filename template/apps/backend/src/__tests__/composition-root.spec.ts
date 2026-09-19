@@ -27,8 +27,11 @@ import { ACCESS_TOKEN_TTL_SECONDS, SessionService } from '../auth/session/sessio
 import { JwtStrategy } from '../auth/strategies';
 import { HealthModule } from '../health/health.module';
 import { AuthIdentityRecord } from '../identities/auth-identity-record.entity';
+import { IdentitiesModule } from '../identities/identities.module';
+import { IdentitiesService } from '../identities/identities.service';
 import { MailModule } from '../mail';
 import { UserRecord } from '../users/user-record.entity';
+import { UsersModule } from '../users/users.module';
 
 /**
  * # The composition root
@@ -64,6 +67,12 @@ import { UserRecord } from '../users/user-record.entity';
  * | `app.setup.ts`: `credentials: true` on CORS | `configureApp › lets a cross-origin caller send the renewal cookie` |
  * | `health.controller.ts`: `@Public()` | `health › is reachable with no credential` |
  * | `auth.module.ts`: `controllers: [AuthController]` | `AuthModule › registers the controller` |
+ * | `app.module.ts`: `UsersModule` from `imports` | `AppModule › imports UsersModule` |
+ * | `app.module.ts`: `IdentitiesModule` from `imports` | `AppModule › imports IdentitiesModule` |
+ * | `auth.module.ts`: `IdentitiesModule` from `imports` | `AuthModule › gets its identity service from one place` |
+ * | `users.module.ts`: `controllers`/`providers` | `users/__tests__/users.controller.spec.ts › UsersModule wires it` |
+ * | `audit.module.ts`: `controllers`/`providers` | `audit/__tests__/audit.controller.spec.ts › AuditModule wires it` |
+ * | `identities.module.ts`: `controllers`/`providers` | `identities/__tests__/identities.controller.spec.ts › IdentitiesModule wires it` |
  * | `auth.module.ts`: `getOrThrow` → a default | `access credentials › refuse to boot without a signing key` |
  * | `auth.module.ts`: `expiresIn` → a long lifetime | `access credentials › are short-lived` |
  * | `jwt.strategy.ts`: `getOrThrow` → a default | `global-guard.spec.ts › refuses to construct without a signing key` |
@@ -176,7 +185,9 @@ describe('the composition root', () => {
       ['HealthModule', HealthModule],
       ['MailModule', MailModule],
       ['AuditModule', AuditModule],
+      ['IdentitiesModule', IdentitiesModule],
       ['AuthModule', AuthModule],
+      ['UsersModule', UsersModule],
     ])('imports %s', (_name, imported) => {
       expect(moduleImports(AppModule)).toContain(imported);
     });
@@ -245,6 +256,17 @@ describe('the composition root', () => {
       // to exist separately: the fix for "the spec assembles its own module"
       // reintroduced that same blindness for this one provider.
       expect(moduleProviders(AuthModule)).toContain(JwtStrategy);
+    });
+
+    it('gets its identity service from one place rather than binding a second', () => {
+      // `IdentitiesService` and the two ports behind it used to be providers of
+      // this module. They are `IdentitiesModule`'s now, and this module imports
+      // it. Binding them in both would give the application two hashers and two
+      // registries — harmless while both are stateless, and exactly the kind of
+      // accident that stops being harmless the moment one holds a connection or
+      // a cache.
+      expect(moduleImports(AuthModule)).toContain(IdentitiesModule);
+      expect(moduleProviders(AuthModule)).not.toContain(IdentitiesService);
     });
 
     it('signs with the exported factory, not with one inlined in the module', () => {

@@ -20,8 +20,11 @@ import { ParseUuidParamPipe } from '../common/pipes';
 import { AuthService } from './auth.service';
 import { CurrentUser, Public } from './decorators';
 import {
+  ChangePasswordDto,
+  ForgotPasswordDto,
   LoginDto,
   RegisterDto,
+  ResetPasswordDto,
   VerifyEmailDto,
   type AuthResponseDto,
   type RegistrationAcceptedDto,
@@ -29,7 +32,7 @@ import {
 } from './dto';
 import { REFRESH_COOKIE } from './refresh-cookie';
 import { RefreshTokenService } from './session/refresh-token.service';
-import { ACCESS_TOKEN_TTL_SECONDS } from './session/session.service';
+import { ACCESS_TOKEN_TTL_SECONDS, SessionService } from './session/session.service';
 import type { AuthenticatedActor } from './strategies';
 
 /**
@@ -45,6 +48,7 @@ export class AuthController {
   public constructor(
     private readonly auth: AuthService,
     private readonly refresh: RefreshTokenService,
+    private readonly sessions: SessionService,
   ) {}
 
   /**
@@ -176,6 +180,83 @@ export class AuthController {
       }
       throw error;
     }
+  }
+
+  /**
+   * Begins password recovery.
+   *
+   * **`202` with a fixed body, in both cases, with no branch anywhere in this
+   * method** — the same arrangement, for the same reason, as
+   * {@link AuthController.register}. This is the second of the three endpoints
+   * that take an address without proving anything, and the one whose helpful
+   * version ("we have no account for that address") is most often asked for.
+   *
+   * The service knows whether an account existed and writes it down; this
+   * response does not carry the difference and must never be made to. What the
+   * person actually needs is at the address, where only its owner reads it.
+   *
+   * `__tests__/enumeration-safety.spec.ts` (D7) compares the whole response for
+   * a known and an unknown address rather than checking each against a literal,
+   * so a branch added here fails a comparison rather than needing somebody to
+   * have remembered to update two expectations.
+   */
+  @Public()
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.ACCEPTED)
+  public async forgotPassword(@Body() body: ForgotPasswordDto): Promise<RegistrationAcceptedDto> {
+    await this.auth.requestPasswordReset(body.email);
+    return { status: 'accepted' };
+  }
+
+  /**
+   * Spends a recovery credential on a new secret.
+   *
+   * Every session the account held is ended by the service — recovery is what
+   * somebody does when they believe somebody else has their password, and a
+   * session left alive leaves that person exactly where they were. Nothing is
+   * re-issued here: whoever completes a recovery signs in with the secret they
+   * have just chosen, which is also the first proof that they have it right.
+   */
+  @Public()
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  public async resetPassword(@Body() body: ResetPasswordDto): Promise<{ status: 'reset' }> {
+    await this.auth.resetPassword(body.credential, body.secret);
+    return { status: 'reset' };
+  }
+
+  /**
+   * Replaces the actor's own secret, proving the current one first.
+   *
+   * `AuthService.changePassword` ends **every** session, the caller's included,
+   * because it is given an actor and not a request and cannot tell which one is
+   * current. The transport can, so it re-issues here: a fresh session and a
+   * fresh pair of credentials for the caller it is serving, and nothing for
+   * anybody else who was signed in as that account.
+   *
+   * That ordering is the property. Re-issuing *before* the revocation would have
+   * the new session revoked along with the old ones, and the caller would be
+   * signed out by their own password change — which reads as the change having
+   * failed.
+   */
+  @Post('change-password')
+  @HttpCode(HttpStatus.OK)
+  public async changePassword(
+    @CurrentUser() actor: AuthenticatedActor,
+    @Body() body: ChangePasswordDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<AuthResponseDto> {
+    await this.auth.changePassword(actor.userId, body.currentSecret, body.newSecret);
+
+    const credentials = await this.sessions.begin(actor.userId, AuthController.clientOf(request));
+    REFRESH_COOKIE.set(response, credentials.refreshToken);
+    const user = await this.auth.userOf(actor.userId);
+    return {
+      user: user.toJSON(),
+      accessToken: credentials.accessToken,
+      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+    };
   }
 
   /**

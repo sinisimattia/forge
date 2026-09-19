@@ -5,8 +5,8 @@ import type { IAuditService } from '__FORGE_SCOPE__/core/audit/contracts';
 import { AuditEntry } from '__FORGE_SCOPE__/core/audit/entities';
 import type { AuditQuery, RecordAuditEntryInput } from '__FORGE_SCOPE__/core/audit/types';
 import type { AuditEntryId } from '__FORGE_SCOPE__/core/audit/types';
+import { can } from '__FORGE_SCOPE__/core/shared/policies';
 import type { PaginatedResult } from '__FORGE_SCOPE__/core/shared/types';
-import { PlatformRole } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { UserRecord } from '../users/user-record.entity';
 import { AuditEntryRecord } from './audit-entry-record.entity';
@@ -61,30 +61,25 @@ export class AuditService implements IAuditService {
   /**
    * Reads one page of the history on an actor's behalf, newest first.
    *
-   * Entitlement in this phase is platform administration and nothing else, and
-   * it is checked here rather than at the transport boundary because this is the
+   * Entitlement is decided by core's `can` (ADR-0006) and by nothing local. It
+   * is checked **here** as well as at the transport boundary because this is the
    * only way in: a later caller that reaches the service directly — a scheduled
-   * job, a console command — gets the same refusal a request would.
+   * job, a console command — gets the same refusal a request would, and does not
+   * depend on somebody having remembered a guard.
    *
-   * ## CARRY-FORWARD: this check is in the wrong place, and knows it
-   *
-   * ADR-0006 puts authorization in `__FORGE_SCOPE__/core` as a pure function.
-   * Nothing in core implements one yet — `shared/policies/` holds `assertNever`
-   * and `normalizeEmail` and nothing else — so when this method was written there
-   * was no policy to call and the alternatives were to invent this check or to
-   * leave the whole audit history readable by anybody. It is here because an
-   * unguarded audit query is worse, not because this is where it belongs.
-   *
-   * **Whoever builds platform administration replaces this with the core policy
-   * and deletes these paragraphs.** Two things make that easy to miss: nothing
-   * reaches this method over HTTP today — there is no audit controller — so the
-   * check is currently unreachable code, and an unmarked local check reads as
-   * intentional and survives for ever. The first audit endpoint added on top of
-   * it is the moment it becomes permanent.
+   * `ForbiddenException` here, where `PlatformAdminGuard` answers 404 for the
+   * same refusal, and the difference is deliberate in both directions. The
+   * guard's 404 is aimed at a stranger on the wire, to whom "you may not" and
+   * "there is nothing there" must be one answer. This is the answer a caller
+   * that has already been identified gets, and it is also what makes the guard's
+   * absence visible: delete `@UseGuards(PlatformAdminGuard)` from the audit
+   * endpoint and the refusal a non-administrator receives changes from 404 to
+   * 403, which `__tests__/audit.controller.spec.ts` asserts on.
    */
   public async query(actorId: UserId, query: AuditQuery): Promise<PaginatedResult<AuditEntry>> {
     const actor = await this.users.findOne({ where: { id: actorId } });
-    if (actor === null || actor.platformRole !== PlatformRole.PLATFORM_ADMIN) {
+    if (actor === null) throw new ForbiddenException();
+    if (!can({ userId: actor.id as UserId, platformRole: actor.platformRole }, 'audit:read')) {
       throw new ForbiddenException();
     }
 

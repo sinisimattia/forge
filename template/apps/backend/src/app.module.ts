@@ -16,8 +16,10 @@ import { SessionRecord } from './auth/entities/session-record.entity';
 import { PasswordResetTokenRecord } from './auth/entities/password-reset-token-record.entity';
 import { HealthModule } from './health/health.module';
 import { AuthIdentityRecord } from './identities/auth-identity-record.entity';
+import { IdentitiesModule } from './identities/identities.module';
 import { MailModule } from './mail';
 import { UserRecord } from './users/user-record.entity';
+import { UsersModule } from './users/users.module';
 
 /**
  * The database connection this application runs on.
@@ -176,7 +178,9 @@ export const GLOBAL_PROVIDERS: Provider[] = [
     HealthModule,
     MailModule,
     AuditModule,
+    IdentitiesModule,
     AuthModule,
+    UsersModule,
   ],
   providers: GLOBAL_PROVIDERS,
 })

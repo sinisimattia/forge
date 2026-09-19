@@ -6,6 +6,24 @@ type Row = Record<string, unknown>;
 /** Anything a row can be matched against: a value, or one of TypeORM's operators. */
 type Criteria = Record<string, unknown>;
 
+/**
+ * One criteria object, or several read as alternatives.
+ *
+ * TypeORM reads an array of `where` objects as a disjunction and a single object
+ * as a conjunction, and this fake has to model both or a search filter written
+ * as "this field OR that one" silently matches nothing here while working
+ * against the real store.
+ */
+type Where = Criteria | Criteria[];
+
+/** How a caller asks for a page: the same three options TypeORM takes. */
+interface PageOptions {
+  where?: Where;
+  order?: Record<string, 'ASC' | 'DESC'>;
+  skip?: number;
+  take?: number;
+}
+
 /** The entity classes this fake is keyed by. */
 type EntityClass = { name: string };
 
@@ -111,16 +129,25 @@ export class FakeDataSource {
     return {
       findOne: async (options) => {
         await yieldTurn();
-        return this.match(entity, options.where)[0] ?? null;
+        return detach(this.match(entity, options.where)[0] ?? null);
       },
       find: async (options) => {
         await yieldTurn();
-        return this.match(entity, options?.where ?? {});
+        return this.match(entity, options?.where ?? {}).map((found) => ({ ...found }));
       },
       findAndCount: async (options) => {
         await yieldTurn();
-        const found = this.match(entity, options?.where ?? {});
-        return [found, found.length];
+        // Ordered, then counted, then sliced — in that order, and every step
+        // matters. Counting after the slice makes `meta.total` equal to the page
+        // length, which is precisely the implementation bug a pagination test
+        // exists to catch; a fake that ignored `skip`/`take` would return every
+        // row on every page and make "page 2 is disjoint from page 1"
+        // unfailable.
+        const found = sortRows(this.match(entity, options?.where ?? {}), options?.order);
+        const total = found.length;
+        const from = options?.skip ?? 0;
+        const to = options?.take === undefined ? undefined : from + options.take;
+        return [found.slice(from, to).map((one) => ({ ...one })), total];
       },
       insert: async (values) => {
         await yieldTurn();
@@ -144,9 +171,14 @@ export class FakeDataSource {
     };
   }
 
-  /** Every row of `entity` matching `criteria`. */
-  public match(entity: EntityClass, criteria: Criteria): Row[] {
-    return this.all(entity).filter((row) => matches(row, criteria));
+  /**
+   * Every row of `entity` matching `criteria`.
+   *
+   * An array of criteria is a disjunction, which is what TypeORM does with one.
+   */
+  public match(entity: EntityClass, criteria: Where): Row[] {
+    const alternatives = Array.isArray(criteria) ? criteria : [criteria];
+    return this.all(entity).filter((row) => alternatives.some((one) => matches(row, one)));
   }
 
   /** Inserts a row, assigning an id, and answers the way TypeORM's `insert` does. */
@@ -189,9 +221,9 @@ export class FakeDataSource {
 
 /** The subset of `Repository<T>` this backend calls. See `FakeDataSource.getRepository`. */
 export interface FakeRepository {
-  findOne(options: { where: Criteria }): Promise<Row | null>;
-  find(options?: { where?: Criteria }): Promise<Row[]>;
-  findAndCount(options?: { where?: Criteria }): Promise<[Row[], number]>;
+  findOne(options: { where: Where }): Promise<Row | null>;
+  find(options?: { where?: Where }): Promise<Row[]>;
+  findAndCount(options?: PageOptions): Promise<[Row[], number]>;
   insert(values: Row): Promise<{ identifiers: { id: string }[] }>;
   update(criteria: Criteria, patch: Row): Promise<{ affected: number }>;
   delete(criteria: Criteria): Promise<{ affected: number }>;
@@ -215,7 +247,7 @@ export class FakeEntityManager {
     await yieldTurn();
 
     const found = this.source.match(entity, options.where)[0] ?? null;
-    if (options.lock?.mode !== 'pessimistic_write' || found === null) return found;
+    if (options.lock?.mode !== 'pessimistic_write' || found === null) return detach(found);
 
     this.source.lockedRows.push(`${entity.name}:${String(found.id)}`);
     if (!this.source.honoursLocks) return found;
@@ -226,12 +258,12 @@ export class FakeEntityManager {
     // re-evaluates the row after the lock is granted, so the waiter sees what the
     // winner committed rather than the snapshot it took before waiting. A fake
     // that returned `found` here would hide exactly the bug the lock prevents.
-    return this.source.match(entity, options.where)[0] ?? null;
+    return detach(this.source.match(entity, options.where)[0] ?? null);
   }
 
-  public async find(entity: EntityClass, options: { where: Criteria }): Promise<Row[]> {
+  public async find(entity: EntityClass, options: { where: Where }): Promise<Row[]> {
     await yieldTurn();
-    return this.source.match(entity, options.where);
+    return this.source.match(entity, options.where).map((found) => ({ ...found }));
   }
 
   public async insert(
@@ -252,6 +284,32 @@ export class FakeEntityManager {
   }
 }
 
+/**
+ * A copy of a stored row, which is what a read actually hands back.
+ *
+ * **A read returns a detached value, and modelling that is not pedantry.** The
+ * stored rows are the objects `update` mutates in place, so a fake that handed
+ * the live object to the code under test would let this sequence silently lie:
+ *
+ * ```
+ * const before = await repo.findOne(...);   // the stored object itself
+ * await repo.update(..., { status: NEW });  // mutates that same object
+ * audit(before.status)                      // reads NEW — the value it recorded
+ * ```
+ *
+ * against a real repository `before.status` is the old value, because the row
+ * was hydrated into a separate object. That difference was found by a test that
+ * asserted an audit entry carried both sides of a change: it failed here and
+ * would have passed in production, which is the worst direction for a fake to be
+ * wrong in.
+ *
+ * Shallow, because the rows this fake stores are flat. A nested value would be
+ * shared, and the day one exists this needs to deepen.
+ */
+function detach(row: Row | null): Row | null {
+  return row === null ? null : { ...row };
+}
+
 /** Whether one row satisfies every key of a criteria object. */
 function matches(row: Row, criteria: Criteria): boolean {
   return Object.entries(criteria).every(([name, expected]) => {
@@ -264,6 +322,14 @@ function matches(row: Row, criteria: Criteria): boolean {
           return (value as Date).getTime() > (expected.value as Date).getTime();
         case 'lessThan':
           return (value as Date).getTime() < (expected.value as Date).getTime();
+        case 'ilike': {
+          // The real one is SQL `ILIKE`, whose only wildcards are `%` and `_`.
+          // Only `%` is modelled, because only `%` is used; anything else would
+          // be a fake that quietly accepts a pattern the database would not.
+          const pattern = String(expected.value);
+          const body = pattern.split('%').map(escapeForPattern).join('.*');
+          return new RegExp(`^${body}$`, 'i').test(String(value));
+        }
         default:
           // Loudly, rather than by quietly matching everything: a criterion this
           // fake does not understand would otherwise silently widen a test's
@@ -272,6 +338,35 @@ function matches(row: Row, criteria: Criteria): boolean {
       }
     }
     return row[name] === expected;
+  });
+}
+
+/** Escapes everything a regular expression would otherwise read as syntax. */
+function escapeForPattern(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Sorts a copy by the same multi-key order TypeORM takes.
+ *
+ * A copy, because the arrays this fake hands out are the stored rows themselves
+ * and sorting in place would silently reorder the table for every later read.
+ * Keys are applied in declaration order and the first difference wins, which is
+ * what makes a tie-break key testable at all.
+ */
+function sortRows(rows: Row[], order?: Record<string, 'ASC' | 'DESC'>): Row[] {
+  if (order === undefined) return rows;
+  const keys = Object.entries(order);
+  return [...rows].sort((left, right) => {
+    for (const [key, direction] of keys) {
+      const a = left[key];
+      const b = right[key];
+      const value = a instanceof Date && b instanceof Date
+        ? a.getTime() - b.getTime()
+        : String(a).localeCompare(String(b));
+      if (value !== 0) return direction === 'DESC' ? -value : value;
+    }
+    return 0;
   });
 }
 

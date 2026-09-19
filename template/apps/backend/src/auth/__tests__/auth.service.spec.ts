@@ -6,7 +6,11 @@ import type { DataSource, ObjectLiteral, Repository } from 'typeorm';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import type { RecordAuditEntryInput } from '__FORGE_SCOPE__/core/audit/types';
 import { AuthenticationRejectionReason, AuthenticationStatus } from '__FORGE_SCOPE__/core/auth/enums';
-import { ConsumedTokenError, ExpiredTokenError } from '__FORGE_SCOPE__/core/auth/errors';
+import {
+  ConsumedTokenError,
+  ExpiredTokenError,
+  InvalidCredentialsError,
+} from '__FORGE_SCOPE__/core/auth/errors';
 import type { ClientContext } from '__FORGE_SCOPE__/core/auth/types';
 import type { IBreachedPasswordRegistry } from '__FORGE_SCOPE__/core/identities/contracts';
 import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
@@ -22,7 +26,11 @@ import type { IPasswordHasher, StoredSecret } from '../../identities/hashing';
 import { DUMMY_STORED_SECRET, IdentitiesService } from '../../identities/identities.service';
 import type { IMailer, OutboundMessage } from '../../mail';
 import { UserRecord } from '../../users/user-record.entity';
-import { AuthService } from '../auth.service';
+import {
+  AuthService,
+  EMAIL_VERIFICATION_TTL_SECONDS,
+  PASSWORD_RESET_TTL_SECONDS,
+} from '../auth.service';
 import { EmailVerificationTokenRecord } from '../entities/email-verification-token-record.entity';
 import { PasswordResetTokenRecord } from '../entities/password-reset-token-record.entity';
 import { RefreshTokenRecord } from '../entities/refresh-token-record.entity';
@@ -122,7 +130,7 @@ describe('AuthService', () => {
     const repo = <T extends ObjectLiteral>(entity: { name: string }): Repository<T> =>
       source.getRepository(entity) as unknown as Repository<T>;
 
-    identities = new IdentitiesService(repo<AuthIdentityRecord>(AuthIdentityRecord), hasher);
+    identities = new IdentitiesService(repo<AuthIdentityRecord>(AuthIdentityRecord), hasher, audit);
 
     const sessions = new SessionService(
       repo<SessionRecord>(SessionRecord),
@@ -419,6 +427,326 @@ describe('AuthService', () => {
       ]);
 
       expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+    });
+  });
+
+  /**
+   * ## Written as if the implementation were not there
+   *
+   * `requestPasswordReset`, `changePassword`, `resendVerification` and
+   * `revokeAllSessions` shipped complete and **entirely unexercised**: the class
+   * declares `implements IAuthService`, which obliged it to have them before
+   * anything wanted them. A complete untested implementation of
+   * security-critical code is more dangerous than a stub, because a stub
+   * announces that work remains and this reads as done — and the conformance
+   * suites in core are driven against this class, so untested behaviour here
+   * becomes a claim about the contract.
+   *
+   * So these were written from `IAuthService`'s own documentation rather than
+   * from the code, and each one asserts the thing the documentation promises
+   * rather than the thing the code happens to do.
+   */
+  describe('requestPasswordReset', () => {
+    it('resolves for an address nothing answers to, exactly as for one that does', async () => {
+      await registerAndVerify('ada@example.test');
+
+      await expect(auth.requestPasswordReset('nobody@example.test')).resolves.toBeUndefined();
+      await expect(auth.requestPasswordReset('ada@example.test')).resolves.toBeUndefined();
+    });
+
+    it('issues nothing, sends nothing and records nothing for an unknown address', async () => {
+      recorded.length = 0;
+
+      await auth.requestPasswordReset('nobody@example.test');
+
+      // All three, because each is a separate way the difference could escape:
+      // a row somebody with database access can see, a message, and an entry in
+      // a history an administrator reads.
+      expect(source.all(PasswordResetTokenRecord)).toEqual([]);
+      expect(sent).toEqual([]);
+      expect(recorded).toEqual([]);
+    });
+
+    it('issues exactly one credential for a known address, and records it', async () => {
+      await registerAndVerify('ada@example.test');
+      recorded.length = 0;
+      sent.length = 0;
+
+      await auth.requestPasswordReset('ada@example.test');
+
+      expect(source.all(PasswordResetTokenRecord)).toHaveLength(1);
+      expect(sent).toHaveLength(1);
+      expect(recorded.map((entry) => entry.action)).toEqual([
+        AuditAction.PASSWORD_RESET_REQUESTED,
+      ]);
+    });
+
+    it('stores only a hash of the credential, never the credential', async () => {
+      await registerAndVerify('ada@example.test');
+      await auth.requestPasswordReset('ada@example.test');
+      const credential = credentialFromLastLink();
+
+      const row = source.all(PasswordResetTokenRecord)[0];
+      expect(row.tokenHash).toBe(hashOpaqueToken(credential));
+      // A row that held the value itself would make read access to this table
+      // equivalent to holding every outstanding recovery link.
+      expect(JSON.stringify(row)).not.toContain(credential);
+    });
+
+    it('finds the account through an address typed in a different case', async () => {
+      await registerAndVerify('ada@example.test');
+
+      await auth.requestPasswordReset('  Ada@Example.TEST  ');
+
+      // Without normalization here this is silently the unknown-address branch:
+      // it resolves, sends nothing, and looks exactly like success.
+      expect(source.all(PasswordResetTokenRecord)).toHaveLength(1);
+    });
+
+    it('treats an account its owner deleted as no account at all', async () => {
+      await registerAndVerify('ada@example.test');
+      source.update(UserRecord, { email: 'ada@example.test' }, { deletedAt: new Date() });
+      sent.length = 0;
+      recorded.length = 0;
+
+      await auth.requestPasswordReset('ada@example.test');
+
+      // Somebody who closed their account and then has their address typed into
+      // this endpoint must not hear from the deployment again. Measured before
+      // the soft delete existed: it sent them a recovery link.
+      expect(sent).toEqual([]);
+      expect(recorded).toEqual([]);
+      expect(source.all(PasswordResetTokenRecord)).toEqual([]);
+    });
+
+    it('gives the credential a lifetime much shorter than a verification link', async () => {
+      await registerAndVerify('ada@example.test');
+      const before = Date.now();
+
+      await auth.requestPasswordReset('ada@example.test');
+
+      const row = source.all(PasswordResetTokenRecord)[0];
+      const life = (row.expiresAt as Date).getTime() - before;
+      expect(life).toBeLessThanOrEqual(PASSWORD_RESET_TTL_SECONDS * 1000);
+      // A literal ceiling as well as the constant, because this credential
+      // replaces a password without proving anything else and sits in a mailbox
+      // for as long as it stands.
+      expect(PASSWORD_RESET_TTL_SECONDS).toBeLessThanOrEqual(24 * 60 * 60);
+      expect(PASSWORD_RESET_TTL_SECONDS).toBeLessThan(EMAIL_VERIFICATION_TTL_SECONDS);
+    });
+  });
+
+  describe('changePassword', () => {
+    const actorId = (): UserId => source.all(UserRecord)[0].id as UserId;
+
+    beforeEach(async () => {
+      await registerAndVerify('ada@example.test');
+    });
+
+    it('replaces the secret, so the new one works and the old one stops', async () => {
+      await auth.changePassword(actorId(), PLAINTEXT, OTHER_PLAINTEXT);
+
+      await expect(
+        auth.authenticate({ email: 'ada@example.test', secret: OTHER_PLAINTEXT, client: CLIENT }),
+      ).resolves.toMatchObject({ status: AuthenticationStatus.AUTHENTICATED });
+      await expect(
+        auth.authenticate({ email: 'ada@example.test', secret: PLAINTEXT, client: CLIENT }),
+      ).resolves.toMatchObject({ status: AuthenticationStatus.REJECTED });
+    });
+
+    it('refuses a wrong current secret', async () => {
+      await expect(
+        auth.changePassword(actorId(), 'not the secret they chose', OTHER_PLAINTEXT),
+      ).rejects.toBeInstanceOf(InvalidCredentialsError);
+    });
+
+    it('leaves the secret alone when it refuses — a refusal that changed it is none', async () => {
+      const before = source.all(AuthIdentityRecord)[0].secretHash;
+
+      await auth
+        .changePassword(actorId(), 'not the secret they chose', OTHER_PLAINTEXT)
+        .catch(() => undefined);
+
+      expect(source.all(AuthIdentityRecord)[0].secretHash).toBe(before);
+      await expect(
+        auth.authenticate({ email: 'ada@example.test', secret: PLAINTEXT, client: CLIENT }),
+      ).resolves.toMatchObject({ status: AuthenticationStatus.AUTHENTICATED });
+    });
+
+    it('refuses a replacement that breaks the policy', async () => {
+      await expect(
+        auth.changePassword(actorId(), PLAINTEXT, TOO_SHORT_PLAINTEXT),
+      ).rejects.toBeInstanceOf(WeakPasswordError);
+      expect(
+        (await auth.authenticate({ email: 'ada@example.test', secret: PLAINTEXT, client: CLIENT }))
+          .status,
+      ).toBe(AuthenticationStatus.AUTHENTICATED);
+    });
+
+    it('refuses an actor with no password identity, indistinguishably from a wrong secret', async () => {
+      const stranger = '99999999-9999-4999-8999-999999999999' as UserId;
+
+      // The same error a wrong secret produces. Anything else — a not-found, a
+      // different status — is a way to test a user id for having a password.
+      await expect(
+        auth.changePassword(stranger, PLAINTEXT, OTHER_PLAINTEXT),
+      ).rejects.toBeInstanceOf(InvalidCredentialsError);
+    });
+
+    it('ends the sessions the account held', async () => {
+      await auth.signIn({ email: 'ada@example.test', secret: PLAINTEXT, client: CLIENT });
+      await auth.signIn({ email: 'ada@example.test', secret: PLAINTEXT, client: CLIENT });
+      expect(await auth.listSessions(actorId())).toHaveLength(2);
+
+      await auth.changePassword(actorId(), PLAINTEXT, OTHER_PLAINTEXT);
+
+      // Every one of them, including the caller's — this method is given an
+      // actor and not a request, so it cannot name the current session. The
+      // transport re-issues for the caller it is serving; see
+      // `AuthController.changePassword`.
+      expect(await auth.listSessions(actorId())).toHaveLength(0);
+    });
+
+    it('records the change', async () => {
+      recorded.length = 0;
+
+      await auth.changePassword(actorId(), PLAINTEXT, OTHER_PLAINTEXT);
+
+      expect(recorded.map((entry) => entry.action)).toContain(AuditAction.PASSWORD_CHANGED);
+    });
+
+    it('never writes either secret to the audit log', async () => {
+      recorded.length = 0;
+
+      await auth.changePassword(actorId(), PLAINTEXT, OTHER_PLAINTEXT);
+
+      const written = JSON.stringify(recorded);
+      expect(written).not.toContain(PLAINTEXT);
+      expect(written).not.toContain(OTHER_PLAINTEXT);
+    });
+  });
+
+  describe('resendVerification', () => {
+    it('resolves for an address nothing answers to, and sends nothing', async () => {
+      await registerAndVerify('ada@example.test');
+      sent.length = 0;
+      recorded.length = 0;
+
+      await expect(auth.resendVerification('nobody@example.test')).resolves.toBeUndefined();
+
+      expect(sent).toEqual([]);
+      expect(recorded).toEqual([]);
+    });
+
+    it('sends nothing for an address that has already been proven', async () => {
+      await registerAndVerify('ada@example.test');
+      sent.length = 0;
+
+      await auth.resendVerification('ada@example.test');
+
+      // Nothing to send, and it has to look exactly like a send: an address
+      // already proven and an address with no account are both "nothing
+      // happens", and telling them apart is the same oracle from a third side.
+      expect(sent).toEqual([]);
+    });
+
+    it('issues a fresh credential for an account still unproven, and records it', async () => {
+      await auth.register({ email: 'ada@example.test', displayName: 'Ada', secret: PLAINTEXT });
+      const first = credentialFromLastLink();
+      recorded.length = 0;
+
+      await auth.resendVerification('ada@example.test');
+
+      expect(credentialFromLastLink()).not.toBe(first);
+      expect(source.all(EmailVerificationTokenRecord)).toHaveLength(2);
+      expect(recorded.map((entry) => entry.action)).toEqual([
+        AuditAction.EMAIL_VERIFICATION_REQUESTED,
+      ]);
+    });
+
+    it('leaves the credential already issued usable', async () => {
+      await auth.register({ email: 'ada@example.test', displayName: 'Ada', secret: PLAINTEXT });
+      const first = credentialFromLastLink();
+
+      await auth.resendVerification('ada@example.test');
+
+      // Invalidating the earlier one would mean that asking for a second mail
+      // because the first had not arrived breaks the first the moment it does.
+      await expect(auth.verifyEmail(first)).resolves.toBeUndefined();
+    });
+
+    it('finds the account through an address typed in a different case', async () => {
+      await auth.register({ email: 'ada@example.test', displayName: 'Ada', secret: PLAINTEXT });
+      sent.length = 0;
+
+      await auth.resendVerification('  Ada@Example.TEST  ');
+
+      expect(sent).toHaveLength(1);
+    });
+
+    it('sends nothing to an account its owner deleted', async () => {
+      await auth.register({ email: 'ada@example.test', displayName: 'Ada', secret: PLAINTEXT });
+      source.update(UserRecord, { email: 'ada@example.test' }, { deletedAt: new Date() });
+      sent.length = 0;
+
+      await auth.resendVerification('ada@example.test');
+
+      expect(sent).toEqual([]);
+    });
+  });
+
+  describe('revokeAllSessions', () => {
+    it('ends every session the actor holds, including the one in use', async () => {
+      await registerAndVerify('ada@example.test');
+      await auth.signIn({ email: 'ada@example.test', secret: PLAINTEXT, client: CLIENT });
+      await auth.signIn({ email: 'ada@example.test', secret: PLAINTEXT, client: CLIENT });
+      const actorId = source.all(UserRecord)[0].id as UserId;
+
+      await auth.revokeAllSessions(actorId);
+
+      expect(await auth.listSessions(actorId)).toHaveLength(0);
+    });
+
+    it('kills the renewal credentials too, not only the sessions', async () => {
+      await registerAndVerify('ada@example.test');
+      await auth.signIn({ email: 'ada@example.test', secret: PLAINTEXT, client: CLIENT });
+      const actorId = source.all(UserRecord)[0].id as UserId;
+
+      await auth.revokeAllSessions(actorId);
+
+      // Ending the sessions alone leaves a renewal credential whose `used_at` is
+      // null, so a later presentation reads as a first use rather than as reuse
+      // and no SESSION_REUSE_DETECTED entry is ever written for it.
+      expect(source.all(RefreshTokenRecord).every((row) => row.usedAt !== null)).toBe(true);
+    });
+
+    it('records how many it ended', async () => {
+      await registerAndVerify('ada@example.test');
+      await auth.signIn({ email: 'ada@example.test', secret: PLAINTEXT, client: CLIENT });
+      await auth.signIn({ email: 'ada@example.test', secret: PLAINTEXT, client: CLIENT });
+      const actorId = source.all(UserRecord)[0].id as UserId;
+      recorded.length = 0;
+
+      await auth.revokeAllSessions(actorId);
+
+      const entry = recorded.find((written) => written.action === AuditAction.ALL_SESSIONS_REVOKED);
+      expect(entry).toBeDefined();
+      // The count, not merely that it happened: "two sessions were ended" and
+      // "no sessions were ended" are the same entry without it, and they mean
+      // very different things to whoever reads the history afterwards.
+      expect(entry!.metadata).toMatchObject({ ended: 2 });
+    });
+
+    it('leaves another account\'s sessions alone', async () => {
+      await registerAndVerify('ada@example.test');
+      await registerAndVerify('grace@example.test');
+      await auth.signIn({ email: 'grace@example.test', secret: PLAINTEXT, client: CLIENT });
+      const ada = source.all(UserRecord)[0].id as UserId;
+      const grace = source.all(UserRecord)[1].id as UserId;
+
+      await auth.revokeAllSessions(ada);
+
+      expect(await auth.listSessions(grace)).toHaveLength(1);
     });
   });
 

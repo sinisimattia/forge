@@ -1,9 +1,15 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
+import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
+import type { IIdentityService } from '__FORGE_SCOPE__/core/identities/contracts';
+import { AuthIdentity } from '__FORGE_SCOPE__/core/identities/entities';
 import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
+import { assertAtLeastOneIdentityRemains } from '__FORGE_SCOPE__/core/identities/policies';
+import type { AuthIdentityId } from '__FORGE_SCOPE__/core/identities/types';
 import { normalizeEmail } from '__FORGE_SCOPE__/core/shared/policies';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
+import { AuditService } from '../audit/audit.service';
 import { AuthIdentityRecord } from './auth-identity-record.entity';
 import { PASSWORD_HASHER, type IPasswordHasher, type StoredSecret } from './hashing';
 
@@ -20,13 +26,74 @@ import { PASSWORD_HASHER, type IPasswordHasher, type StoredSecret } from './hash
  * differently at each.
  */
 @Injectable()
-export class IdentitiesService {
+export class IdentitiesService implements IIdentityService {
   public constructor(
     @InjectRepository(AuthIdentityRecord)
     private readonly identities: Repository<AuthIdentityRecord>,
     @Inject(PASSWORD_HASHER)
     private readonly hasher: IPasswordHasher,
+    private readonly audit: AuditService,
   ) {}
+
+  // ------------------------------------------------------------ IIdentityService
+
+  /**
+   * The actor's own identities, as domain entities. There is no path to another
+   * user's: `actorId` is the filter, not a thing to check afterwards.
+   *
+   * @param actorId - the user on whose behalf the call is made
+   * @returns every identity the actor currently holds
+   */
+  public async listIdentities(actorId: UserId): Promise<AuthIdentity[]> {
+    const rows = await this.identities.find({ where: { userId: actorId } });
+    return rows.map((row) => IdentitiesService.toEntity(row));
+  }
+
+  /**
+   * Removes one of the actor's identities.
+   *
+   * **The rule is core's and is not restated here.**
+   * `assertAtLeastOneIdentityRemains` decides both refusals and decides them in
+   * the order core documents — not-found before last-one — so that a refusal
+   * never names a ground that was not the real one. A count query written here
+   * instead would be a second copy of a rule, and a second copy is one that can
+   * diverge from the webapp's answer to the same question.
+   *
+   * The whole list is loaded to ask it. That is the cost of expressing the rule
+   * as a pure function over the identities themselves rather than as a
+   * `COUNT(*)`, and it is a small one: nobody holds many ways of proving who
+   * they are.
+   *
+   * @param actorId - the user on whose behalf the call is made
+   * @param identityId - the identity to remove
+   * @throws LastIdentityRemovalError if it is the only one they have
+   * @throws IdentityNotFoundError if it is not theirs — indistinguishable from
+   *   not existing, so the call cannot be used to probe for other people's ids
+   */
+  public async unlinkIdentity(actorId: UserId, identityId: AuthIdentityId): Promise<void> {
+    const held = await this.listIdentities(actorId);
+    assertAtLeastOneIdentityRemains(held, identityId);
+
+    const removed = held.find((identity) => identity.id === identityId);
+    await this.identities.delete({ id: identityId, userId: actorId });
+    await this.audit.record({
+      organizationId: null,
+      actorId,
+      action: AuditAction.IDENTITY_UNLINKED,
+      resourceType: 'auth_identity',
+      resourceId: identityId,
+      // The provider, never the account identifier it names: for a password
+      // identity that identifier is the person's address, and an address written
+      // into a table nothing may correct is an address that cannot later be
+      // forgotten on request.
+      metadata: { provider: removed?.provider ?? null },
+      clientAddress: null,
+      clientLabel: null,
+      occurredAt: new Date(),
+    });
+  }
+
+  // ------------------------------------------------------- this backend's own
 
   /**
    * The password identity for an address, or `null`.
@@ -194,6 +261,25 @@ export class IdentitiesService {
    * row unupgraded forever, which is the same silence this mapper exists to
    * avoid.
    */
+  /**
+   * Row to entity, asserting the two branded ids in one visible line.
+   *
+   * The three secret columns have no counterpart on the entity and are dropped
+   * here — structurally, not by omission: `AuthIdentityProps` has no field they
+   * could go in (ADR-0005), so a serialized identity cannot carry a derivation
+   * however carelessly this mapper is edited.
+   */
+  private static toEntity(row: AuthIdentityRecord): AuthIdentity {
+    return new AuthIdentity({
+      id: row.id as AuthIdentityId,
+      userId: row.userId as UserId,
+      provider: row.provider,
+      providerAccountId: row.providerAccountId,
+      createdAt: row.createdAt,
+      lastUsedAt: row.lastUsedAt,
+    });
+  }
+
   private static toStoredSecret(row: AuthIdentityRecord): StoredSecret | null {
     if (row.secretHash === null || row.secretAlgorithm === null) return null;
 
