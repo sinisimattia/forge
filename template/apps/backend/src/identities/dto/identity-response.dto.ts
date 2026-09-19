@@ -16,3 +16,8 @@ import type { AuthIdentityJSON } from '__FORGE_SCOPE__/core/identities/types';
  * rather than shipping.
  */
 export type IdentityResponseDto = AuthIdentityJSON;
+
+/** The same compiler-enforced alias `UserResponseDto` carries; see it for why. */
+type ExtraKeys = Exclude<keyof IdentityResponseDto, keyof AuthIdentityJSON>;
+type NoExtraKeys = [ExtraKeys] extends [never] ? true : never;
+export const IDENTITY_WIRE_SHAPE_HAS_NO_FIELDS_OF_ITS_OWN: NoExtraKeys = true;

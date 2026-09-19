@@ -285,13 +285,26 @@ describe('UsersController', () => {
       expect(response.body.meta.total).toBe(3);
     });
 
-    it('lets an administrator read one account', async () => {
+    it('lets an administrator read one account, and records the override', async () => {
       const response = await request(app.getHttpServer())
         .get(`/users/${GRACE}`)
         .set('Authorization', bearer(ROOT))
         .expect(200);
 
       expect(response.body.id).toBe(GRACE);
+
+      // The override, asserted here and not only in the 404 table above, because
+      // this route is the one whose guard the table CANNOT see: `UsersService`
+      // answers an unentitled reader with `UserNotFoundError`, which is also a
+      // 404, so deleting `@UseGuards` from this route changes no status. What it
+      // does change is that an administrator reads somebody else's profile and
+      // nothing records it — which spec §9.5 requires and which was measured to
+      // stay green before this assertion existed.
+      const overrides = source
+        .all(AuditEntryRecord)
+        .filter((entry) => entry.action === AuditAction.PLATFORM_ADMIN_OVERRIDE);
+      expect(overrides).toHaveLength(1);
+      expect(String((overrides[0].metadata as { path: string }).path)).toContain(GRACE);
     });
 
     it('lets an administrator suspend and reinstate', async () => {

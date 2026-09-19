@@ -20,3 +20,18 @@ import type { UserJSON } from '__FORGE_SCOPE__/core/users/types';
  * that *contains* one of these, never in this one.
  */
 export type UserResponseDto = UserJSON;
+
+/**
+ * The alias, enforced by the compiler rather than by this file's prose.
+ *
+ * `npm run typecheck` fails the moment `UserResponseDto` names a key `UserJSON`
+ * does not — including an **optional** one, which is why this is a key-set
+ * comparison and not a mutual-assignability check. An optional extra field is
+ * assignable in both directions and populates nothing at runtime, so it is
+ * invisible to every test in this backend: injecting
+ * `interface UserResponseDto extends UserJSON { secretHash?: string }` left all
+ * 343 of them green. This line is what turns red.
+ */
+type ExtraKeys = Exclude<keyof UserResponseDto, keyof UserJSON>;
+type NoExtraKeys = [ExtraKeys] extends [never] ? true : never;
+export const WIRE_SHAPE_HAS_NO_FIELDS_OF_ITS_OWN: NoExtraKeys = true;
