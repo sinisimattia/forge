@@ -2,12 +2,11 @@ import { CanActivate, ExecutionContext, Injectable, NotFoundException } from '@n
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Request } from 'express';
 import { Repository } from 'typeorm';
-import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import { can } from '__FORGE_SCOPE__/core/authorization/policies';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
-import { AuditService } from '../../audit/audit.service';
 import { UserRecord } from '../../users/user-record.entity';
 import type { AuthenticatedActor } from '../strategies';
+import { PLATFORM_ADMIN_PASS, type PlatformAdminPass } from './platform-admin-override.interceptor';
 
 /**
  * Closes a route to everybody but a platform administrator, and records every
@@ -38,27 +37,24 @@ import type { AuthenticatedActor } from '../strategies';
  * ## Why the pass is recorded and the refusal is not
  *
  * Spec §9.5: `PLATFORM_ADMIN` passes everything, and every such pass is
- * audit-logged. That is what {@link AuditAction.PLATFORM_ADMIN_OVERRIDE} means —
- * a pass the ordinary rules would have refused, whose justification is not
- * visible anywhere in the request itself. A refusal is not an override; it is
- * already the ordinary answer, and recording one would let anybody fill the
- * audit log by asking for a route they cannot reach.
+ * audit-logged. That is what `AuditAction.PLATFORM_ADMIN_OVERRIDE` means — a
+ * pass the ordinary rules would have refused, whose justification is not visible
+ * anywhere in the request itself. A refusal is not an override; it is already
+ * the ordinary answer, and recording one would let anybody fill the audit log by
+ * asking for a route they cannot reach.
  *
- * ## What the record costs on a route that only reads
+ * ## This guard marks the pass; it does not write it
  *
- * `GET /audit` is guarded by this class, so every read of the history appends to
- * the history. That is correct — reading every account's events across the
- * deployment is exactly a platform-administrative pass — but it has a
- * consequence worth knowing before it surprises somebody: see
- * `audit/audit.controller.ts`, which documents what it does to an administrator
- * paging through results and what the fix would be.
+ * `PlatformAdminOverrideInterceptor` writes it, after the handler. The entry is
+ * owed either way, and writing it from here put it inside the page `GET /audit`
+ * was about to return. See that file, and `audit/audit.controller.ts` for the
+ * half of the problem an interceptor cannot fix.
  */
 @Injectable()
 export class PlatformAdminGuard implements CanActivate {
   public constructor(
     @InjectRepository(UserRecord)
     private readonly users: Repository<UserRecord>,
-    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -68,7 +64,11 @@ export class PlatformAdminGuard implements CanActivate {
    *   they are — which is the same answer, on purpose
    */
   public async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest<Request & { user?: AuthenticatedActor }>();
+    type GuardedRequest = Request & {
+      user?: AuthenticatedActor;
+      [PLATFORM_ADMIN_PASS]?: PlatformAdminPass;
+    };
+    const request = context.switchToHttp().getRequest<GuardedRequest>();
     const actor = request.user;
 
     // No actor means this guard is protecting a route the global guard let
@@ -91,20 +91,25 @@ export class PlatformAdminGuard implements CanActivate {
     );
     if (!permitted) throw new NotFoundException();
 
-    await this.audit.record({
-      organizationId: null,
-      actorId: row.id as UserId,
-      action: AuditAction.PLATFORM_ADMIN_OVERRIDE,
-      resourceType: 'platform',
-      resourceId: null,
+    // The pass is MARKED here and WRITTEN by
+    // `PlatformAdminOverrideInterceptor` once the handler has finished. The
+    // entry is owed either way — spec §9.5 — but writing it from a guard put it
+    // in the page that `GET /audit` was about to return, so the newest row of
+    // page 1 was always the request that had asked for it. See the
+    // interceptor's own comment for what that fixes and what it does not.
+    //
+    // The instant is taken here, not there: the moment worth recording is the
+    // moment the pass was decided, not the moment the row was inserted, which is
+    // the distinction `RecordAuditEntryInput.occurredAt` exists for.
+    request[PLATFORM_ADMIN_PASS] = {
+      actorId: row.id,
       // What was reached, so the entry says which power was used rather than
-      // only that one was. The path is the route template where the framework
-      // knows it, so an entry names `the accounts list` rather than one id.
+      // only that one was.
       metadata: { method: request.method, path: request.originalUrl ?? request.url },
       clientAddress: request.ip ?? null,
       clientLabel: request.get('user-agent')?.slice(0, 200) ?? null,
       occurredAt: new Date(),
-    });
+    };
 
     return true;
   }

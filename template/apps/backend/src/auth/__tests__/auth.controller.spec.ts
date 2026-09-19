@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { Test } from '@nestjs/testing';
+import { AuditService } from '../../audit/audit.service';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { AuthenticationRejectionReason, AuthenticationStatus } from '__FORGE_SCOPE__/core/auth/enums';
@@ -166,6 +167,17 @@ describe('AuthController', () => {
         // carrying a field no DTO declares was accepted here and refused there.
         // Both directions are assertions this file now makes.
         ...GLOBAL_PROVIDERS,
+        // `GLOBAL_PROVIDERS` now carries `PlatformAdminOverrideInterceptor`,
+        // which needs this. Nothing in this file passes through
+        // `PlatformAdminGuard`, so the interceptor never writes anything here —
+        // but it is constructed, which is the point: a probe application that
+        // registers the shipped array has to be able to build every provider in
+        // it, so a provider added there with an unsatisfiable dependency fails
+        // here rather than at start-up in production.
+        {
+          provide: AuditService,
+          useValue: { record: async () => undefined } as unknown as AuditService,
+        },
         JwtStrategy,
         { provide: AuthService, useValue: auth },
         { provide: RefreshTokenService, useValue: refresh },

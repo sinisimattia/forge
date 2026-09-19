@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, IsNull, Repository } from 'typeorm';
+import { FindOptionsWhere, IsNull, LessThanOrEqual, Repository } from 'typeorm';
 import type { IAuditService } from '__FORGE_SCOPE__/core/audit/contracts';
 import { AuditEntry } from '__FORGE_SCOPE__/core/audit/entities';
 import type { AuditQuery, RecordAuditEntryInput } from '__FORGE_SCOPE__/core/audit/types';
@@ -92,6 +92,10 @@ export class AuditService implements IAuditService {
     const where: FindOptionsWhere<AuditEntryRecord> = {};
     if (query.actorId !== undefined) where.actorUserId = query.actorId;
     if (query.action !== undefined) where.action = query.action;
+    // Inclusive, so a bound taken from an entry's own instant includes that
+    // entry — which is what lets a caller read the newest entry off page 1 and
+    // use it as the bound for the rest of the traversal without losing it.
+    if (query.asOf !== undefined) where.occurredAt = LessThanOrEqual(query.asOf);
     if (query.organizationId !== undefined) {
       // An explicit `null` narrows to the entries that belonged to no tenant.
       // `AuditQuery` says outright that this filter's semantics are not pinned by

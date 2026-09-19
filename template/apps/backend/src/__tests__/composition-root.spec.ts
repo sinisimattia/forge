@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { Test } from '@nestjs/testing';
+import { AuditService } from '../audit/audit.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { IsString } from 'class-validator';
 import type { Request } from 'express';
@@ -356,7 +357,21 @@ describe('the composition root', () => {
         controllers: [ProbeController],
         // THE SHIPPED ARRAY. Not a copy: removing an entry from `app.module.ts`
         // removes it from here.
-        providers: [...GLOBAL_PROVIDERS, JwtStrategy],
+        providers: [
+          ...GLOBAL_PROVIDERS,
+          JwtStrategy,
+          // `GLOBAL_PROVIDERS` now carries `PlatformAdminOverrideInterceptor`,
+          // which needs this. Nothing in this file passes through
+          // `PlatformAdminGuard`, so the interceptor never writes anything here —
+          // but it is constructed, which is the point: a probe application that
+          // registers the shipped array has to be able to build every provider in
+          // it, so a provider added there with an unsatisfiable dependency fails
+          // here rather than at start-up in production.
+          {
+            provide: AuditService,
+            useValue: { record: async () => undefined } as unknown as AuditService,
+          },
+        ],
       }).compile();
 
       app = moduleRef.createNestApplication();

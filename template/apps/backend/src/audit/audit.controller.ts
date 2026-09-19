@@ -1,6 +1,6 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import { IsDate, IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import type { AuditEntryJSON } from '__FORGE_SCOPE__/core/audit/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
@@ -43,6 +43,21 @@ export class AuditQueryDto {
   @IsOptional()
   @IsEnum(AuditAction)
   readonly action?: AuditAction;
+
+  /**
+   * Only entries that had already happened at this instant.
+   *
+   * A caller does not invent this value: it takes `meta.asOf` off the first
+   * page and sends it back with every later one, which is what holds a whole
+   * traversal to one world. `@Type(() => Date)` because a query string carries
+   * text and `AuditQuery.asOf` is a `Date`; `@IsDate` then refuses text that is
+   * not one, rather than letting an `Invalid Date` reach the store and narrow to
+   * nothing without saying so.
+   */
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  readonly asOf?: Date;
 }
 
 /**
@@ -62,28 +77,31 @@ export class AuditQueryDto {
  * thing being read is the log itself" — would be the one exception nobody
  * auditing the deployment would think to look for.
  *
- * **What it costs, stated so that nobody discovers it from a bug report.** Three
- * things, each asserted in `__tests__/audit.controller.spec.ts` rather than left
- * as prose:
+ * **What it cost, and what each remedy actually fixed.** Three consequences, all
+ * three measured rather than deduced, and each now asserted in
+ * `__tests__/audit.controller.spec.ts`:
  *
- * 1. The guard runs before the handler, so **a read's own entry is in the page
- *    that read returns**. The newest row of page 1 is always the request that
- *    asked for it.
- * 2. The page/limit window is an offset into a list ordered newest-first, and
- *    each read inserts a row at the top of that list, so an administrator
- *    reading page 1 and then page 2 **sees the last row of page 1 again** at the
- *    top of page 2 — once per intervening read. Nothing is wrong with the
- *    paging: offset paging over a table that is being appended to is unstable,
- *    and here the reader is the one appending.
- * 3. Anything that polls this endpoint writes to it at the polling rate, for
- *    ever, into a table nothing is permitted to prune.
+ * 1. **A read's own entry was in the page that read returned** — the newest row
+ *    of page 1 was always the request that had asked for it. Found as a test
+ *    expecting three entries and receiving four. **Fixed** by moving the write
+ *    from `PlatformAdminGuard` to `PlatformAdminOverrideInterceptor`, which runs
+ *    after the handler. Nothing about what is recorded changed.
+ * 2. **Page 2 repeated the last row of page 1**, once per intervening read. The
+ *    interceptor does not fix this and cannot: a traversal spans several
+ *    requests, and each one appends before the next one asks. **Fixed** by
+ *    `AuditQuery.asOf`, an upper bound every page of one traversal shares —
+ *    which also makes the sequence stable against any *other* concurrent writer,
+ *    which the interceptor could never have done. This endpoint echoes the bound
+ *    back as `meta.asOf` so a caller has something to send, rather than having to
+ *    invent an instant and hope it is the right one.
+ * 3. **Anything that polls this endpoint writes to it at the polling rate**, for
+ *    ever, into a table whose role has `DELETE` revoked. Not fixed, and not
+ *    fixable here: it is a retention question, and retention on an append-only
+ *    table is a decision about the deployment rather than about this route.
  *
- * The fix is not a special case here. It is an upper bound on the window —
- * `AuditQuery` gaining an "as of this instant" field that every page of one
- * traversal shares — which makes the sequence stable against *any* concurrent
- * write and not only against the reader's own. That is a change to core's
- * contract and to `runIAuditServiceContract`, so it belongs to whoever next owns
- * that contract rather than to this file.
+ * The two remedies are for two different problems and neither replaces the
+ * other. A caller that pages without `asOf` still sees a repeated row; a caller
+ * that uses it sees a stable window whoever else is writing.
  */
 @Controller('audit')
 @UseGuards(PlatformAdminGuard)
@@ -106,17 +124,55 @@ export class AuditController {
   public async list(
     @CurrentUser() actor: AuthenticatedActor,
     @Query() query: AuditQueryDto,
-  ): Promise<PaginatedResponse<AuditEntryJSON>> {
+  ): Promise<PaginatedResponse<AuditEntryJSON> & { meta: { asOf: string } }> {
     const page = await this.audit.query(actor.userId, {
       page: query.page,
       limit: query.limit,
       // Spread would put `actorId: undefined` on the object for an omitted
       // filter, and an explicit `undefined` is not the same as an absent key to
       // the store underneath. Built key by key instead.
+      ...(query.asOf === undefined ? {} : { asOf: query.asOf }),
       ...(query.actorId === undefined ? {} : { actorId: query.actorId as UserId }),
       ...(query.action === undefined ? {} : { action: query.action }),
     });
 
-    return { data: page.data.map((entry) => entry.toJSON()), meta: page.meta };
+    return {
+      data: page.data.map((entry) => entry.toJSON()),
+      // Echoed back, as an instant on the wire. It is `meta` and not a header
+      // because it is part of the answer: "this is the world these totals were
+      // counted in", and a caller that drops it gets a different world next page.
+      meta: { ...page.meta, asOf: AuditController.boundFor(query, page.data).toISOString() },
+    };
+  }
+
+  /**
+   * The bound a caller should send with the rest of their traversal.
+   *
+   * A caller who brought one keeps it — a traversal is one world, and a bound
+   * that moved between pages would be no bound at all.
+   *
+   * A caller who did not gets **the instant of the newest entry on this page**,
+   * and that choice is the whole of why this works. The obvious default is "now",
+   * and "now" is wrong here in a way that is easy to miss: this request records
+   * its own `PLATFORM_ADMIN_OVERRIDE`, stamped when the guard passed, which is
+   * *before* any "now" the handler could read. So the traversal's own first entry
+   * would fall inside its own bound, appear on page 2, and push exactly the row
+   * the bound existed to hold still. Measured — page 3 of 3 came back with a
+   * duplicate and a total of 4.
+   *
+   * Taking it from the data invents no instant, needs no arbitrary offset, and is
+   * exact rather than probabilistic: everything this traversal goes on to record
+   * is newer than every row it has already been shown, so all of it is outside.
+   *
+   * An empty page has no newest entry, and nothing to page through either, so the
+   * request instant is as good an answer as any and the caller will not use it.
+   *
+   * @param query - what the caller asked for
+   * @param data - the entries this page answered with, newest first
+   * @returns the bound to echo
+   */
+  private static boundFor(query: AuditQueryDto, data: { occurredAt: Date }[]): Date {
+    if (query.asOf !== undefined) return query.asOf;
+    return data.length === 0 ? new Date() : data[0].occurredAt;
   }
 }

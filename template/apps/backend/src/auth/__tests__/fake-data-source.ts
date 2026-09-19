@@ -322,6 +322,10 @@ function matches(row: Row, criteria: Criteria): boolean {
           return (value as Date).getTime() > (expected.value as Date).getTime();
         case 'lessThan':
           return (value as Date).getTime() < (expected.value as Date).getTime();
+        case 'lessThanOrEqual':
+          // Inclusive, which is what `AuditQuery.asOf` means: a bound taken from
+          // an entry's own instant has to include that entry.
+          return (value as Date).getTime() <= (expected.value as Date).getTime();
         case 'ilike': {
           // The real one is SQL `ILIKE`, whose only wildcards are `%` and `_`.
           // Only `%` is modelled, because only `%` is used; anything else would

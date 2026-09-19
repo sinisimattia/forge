@@ -183,12 +183,13 @@ describe('AuditController', () => {
         .set('Authorization', bearer(ROOT))
         .expect(200);
 
-      // Four, not three: the guard records this very read before the handler
-      // runs, so the page contains the entry the request itself caused. See the
-      // block below, which is where that is asserted as a property rather than
-      // discovered as an off-by-one.
-      expect(response.body.data).toHaveLength(4);
-      expect(response.body.meta).toMatchObject({ total: 4, page: 1, limit: 20 });
+      // Three, not four. The override this very read produces is written by
+      // `PlatformAdminOverrideInterceptor` AFTER the handler, so it is not in
+      // the page the handler returned. It was four while the guard wrote it, and
+      // that is how this was found — as a test expecting three and receiving
+      // four, rather than as a deduction.
+      expect(response.body.data).toHaveLength(3);
+      expect(response.body.meta).toMatchObject({ total: 3, page: 1, limit: 20 });
     });
 
     it('records nothing when it refuses', async () => {
@@ -224,46 +225,102 @@ describe('AuditController', () => {
       expect(String((entry.metadata as { path: string }).path)).toContain('/audit');
     });
 
-    it('is a read that appends to the thing being read, and says so in its own answer', async () => {
-      // Stated as an assertion rather than only in prose, because it is
-      // surprising and because somebody will eventually decide it is a bug. It
-      // is not: spec §9.5 requires every platform-administrative pass to be
-      // logged and this is one. `audit.controller.ts` documents what it costs an
-      // administrator paging through results, and what the fix would be.
-      //
-      // The guard runs before the handler, so a read's own entry is in the page
-      // that read returns — the history grows by one on every look at it.
+    it('appends to the thing being read, but never inside the page it returns', async () => {
+      // Both halves matter. The pass is still recorded — spec §9.5 — so the
+      // history really does grow by one on every look at it. What changed is
+      // WHEN: after the handler, so a reader never sees the request they just
+      // made sitting at the top of their own results.
       const first = await request(app.getHttpServer())
         .get('/audit')
         .set('Authorization', bearer(ROOT))
         .expect(200);
-      expect(first.body.meta.total).toBe(4);
-      expect(first.body.data[0].action).toBe(AuditAction.PLATFORM_ADMIN_OVERRIDE);
+      expect(first.body.meta.total).toBe(3);
+      expect(first.body.data.map((entry: { action: string }) => entry.action)).not.toContain(
+        AuditAction.PLATFORM_ADMIN_OVERRIDE,
+      );
+
+      // And it really was written — by the time the response was delivered, not
+      // at some point afterwards. The interceptor awaits the write, so this is
+      // an ordering fact rather than a race that usually goes the right way.
+      expect(overrides()).toHaveLength(1);
 
       const second = await request(app.getHttpServer())
         .get('/audit')
         .set('Authorization', bearer(ROOT))
         .expect(200);
-      expect(second.body.meta.total).toBe(5);
+      expect(second.body.meta.total).toBe(4);
+    });
+  });
+
+  describe('paging through a history the reader is appending to', () => {
+    it('repeats a row across three pages when the caller drops the bound', async () => {
+      // The consequence the interceptor cannot fix, pinned so that the reason
+      // `asOf` exists is visible rather than asserted. THREE pages, because two
+      // cannot show a drift: a page that shifts by one still holds everything
+      // the first page left, so the repeat only becomes visible on the third.
+      const seen: string[] = [];
+      for (const page of [1, 2, 3]) {
+        const answered = await request(app.getHttpServer())
+          .get(`/audit?page=${page}&limit=1`)
+          .set('Authorization', bearer(ROOT))
+          .expect(200);
+        seen.push(...answered.body.data.map((entry: { id: string }) => entry.id));
+      }
+
+      expect(seen).toHaveLength(3);
+      expect(new Set(seen).size).toBeLessThan(3);
     });
 
-    it('pushes the last row of page 1 onto page 2, which is what that costs', async () => {
-      // The concrete consequence, pinned so nobody has to rediscover it from a
-      // bug report: offset paging over a table the reader is appending to is
-      // unstable, and here the reader is the one appending. The fix is an upper
-      // bound on the window shared by every page of one traversal, which is a
-      // change to core's `AuditQuery` — see `audit.controller.ts`.
+    it('answers three disjoint pages when every page carries the same bound', async () => {
       const first = await request(app.getHttpServer())
-        .get('/audit?limit=2')
-        .set('Authorization', bearer(ROOT))
-        .expect(200);
-      const second = await request(app.getHttpServer())
-        .get('/audit?page=2&limit=2')
+        .get('/audit?page=1&limit=1')
         .set('Authorization', bearer(ROOT))
         .expect(200);
 
-      const lastOfFirst = first.body.data[first.body.data.length - 1].id;
-      expect(second.body.data.map((entry: { id: string }) => entry.id)).toContain(lastOfFirst);
+      // The bound comes off the first response. A caller does not invent it —
+      // which is the point of echoing it back rather than expecting one.
+      const asOf = first.body.meta.asOf;
+      expect(typeof asOf).toBe('string');
+
+      const seen: string[] = [...first.body.data.map((entry: { id: string }) => entry.id)];
+      for (const page of [2, 3]) {
+        const answered = await request(app.getHttpServer())
+          .get(`/audit?page=${page}&limit=1&asOf=${encodeURIComponent(asOf)}`)
+          .set('Authorization', bearer(ROOT))
+          .expect(200);
+        expect(answered.body.meta.asOf).toBe(asOf);
+        seen.push(...answered.body.data.map((entry: { id: string }) => entry.id));
+      }
+
+      expect(seen).toHaveLength(3);
+      expect(new Set(seen).size).toBe(3);
+      // And none of them is an entry the traversal itself caused.
+      expect(seen.sort()).toEqual(['entry-1', 'entry-2', 'entry-3']);
+    });
+
+    it('holds meta.total to the bounded world too, not just the rows', async () => {
+      // A total counted without the bound would tell a caller there are more
+      // pages than their own traversal can reach, which is the same defect
+      // wearing a different hat.
+      const first = await request(app.getHttpServer())
+        .get('/audit?limit=50')
+        .set('Authorization', bearer(ROOT))
+        .expect(200);
+      const asOf = first.body.meta.asOf;
+
+      const again = await request(app.getHttpServer())
+        .get(`/audit?limit=50&asOf=${encodeURIComponent(asOf)}`)
+        .set('Authorization', bearer(ROOT))
+        .expect(200);
+
+      expect(again.body.meta.total).toBe(3);
+    });
+
+    it('refuses a bound that is not an instant', async () => {
+      await request(app.getHttpServer())
+        .get('/audit?asOf=whenever')
+        .set('Authorization', bearer(ROOT))
+        .expect(400);
     });
   });
 

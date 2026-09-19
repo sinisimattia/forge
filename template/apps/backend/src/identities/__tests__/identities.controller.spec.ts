@@ -14,7 +14,7 @@ import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
 import type { AuthIdentityId } from '__FORGE_SCOPE__/core/identities/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
-import type { AuditService } from '../../audit/audit.service';
+import { AuditService } from '../../audit/audit.service';
 import { FakeDataSource } from '../../auth/__tests__/fake-data-source';
 import { JwtStrategy } from '../../auth/strategies';
 import { AuthIdentityRecord } from '../auth-identity-record.entity';
@@ -119,6 +119,13 @@ describe('IdentitiesController', () => {
       controllers: [IdentitiesController],
       providers: [
         ...GLOBAL_PROVIDERS,
+        // `GLOBAL_PROVIDERS` carries `PlatformAdminOverrideInterceptor`, which
+        // needs this. Nothing in this file passes through `PlatformAdminGuard`,
+        // so the interceptor never writes anything here — but it is constructed,
+        // which is the point: a probe application registering the shipped array
+        // has to be able to build every provider in it, so one added there with
+        // an unsatisfiable dependency fails here rather than at start-up.
+        { provide: AuditService, useValue: audit },
         JwtStrategy,
         { provide: IdentitiesService, useValue: identities },
       ],

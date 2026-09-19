@@ -33,4 +33,28 @@ export interface AuditQuery {
   actorId?: UserId;
   /** Only entries recording this kind of action. */
   action?: AuditAction;
+  /**
+   * Only entries that had already happened at this instant.
+   *
+   * **An upper bound on the window, and the only thing that makes paging
+   * through this table stable.** Every other filter narrows *what* is returned;
+   * this one fixes *when* the list was taken. Without it, `page` and `limit` are
+   * an offset into a list that grows at the top while a caller is reading it, so
+   * each entry recorded between two requests pushes one row from the end of a
+   * page onto the start of the next — a row the caller sees twice, and, at the
+   * far end, a row they never see at all.
+   *
+   * That is not a hypothetical concurrent writer. Reading this history is itself
+   * an audited action wherever platform administration is the reason it is
+   * permitted, so a caller paging through it is the one appending to it. The
+   * remedy is for every page of one traversal to carry the same bound: take it
+   * from the first response and send it back with each subsequent page.
+   *
+   * Inclusive, so a bound taken from an entry's own `occurredAt` includes that
+   * entry. Instants are supplied by the caller who recorded them
+   * ({@link RecordAuditEntryInput}), so two entries can share one and an
+   * implementation must keep its own total order within an instant — see the
+   * ordering note on {@link IAuditService.query}.
+   */
+  asOf?: Date;
 }

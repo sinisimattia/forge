@@ -350,6 +350,82 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
         const repeated = second.data.filter((entry) => firstIds.includes(String(entry.id)));
         expect.equal(repeated.length, 0, 'page 2 must not repeat a record from page 1');
       });
+
+      // `asOf` is pinned here, unlike `organizationId`, and the difference is
+      // not inconsistency. `organizationId` has no world this suite can build
+      // that would tell two readings of it apart, so pinning one would fix a
+      // decision before anything can make it. `asOf` has the opposite problem:
+      // a caller cannot page through this table safely without it, so an
+      // implementation free to ignore it is one a caller cannot use and would
+      // not know not to trust.
+      describe('asOf, the bound that makes paging stable', () => {
+        it('excludes an entry recorded after the bound was taken', async () => {
+          const { service, readerId, seeded, freshAction } = await makeContext();
+          const asOf = seeded[0].occurredAt;
+
+          await service.record(
+            recording(freshAction, readerId, { occurredAt: new Date(asOf.getTime() + 1000) }),
+          );
+
+          const bounded = await service.query(readerId, { page: 1, limit: 50, asOf });
+          expect.equal(
+            bounded.meta.total,
+            seeded.length,
+            'a bounded read must not see an entry recorded after the bound',
+          );
+
+          const unbounded = await service.query(readerId, { page: 1, limit: 50 });
+          expect.equal(
+            unbounded.meta.total,
+            seeded.length + 1,
+            'and the same read without the bound must see it — or the bound proved nothing',
+          );
+        });
+
+        it('includes an entry recorded exactly at the bound', async () => {
+          // Inclusive, so a caller can take the bound from the newest entry of
+          // page 1 and not lose that entry from its own traversal.
+          const { service, readerId, seeded } = await makeContext();
+          const asOf = seeded[0].occurredAt;
+
+          const page = await service.query(readerId, { page: 1, limit: 50, asOf });
+
+          expect.equal(
+            page.data.filter((entry) => String(entry.id) === String(seeded[0].id)).length,
+            1,
+            'the entry whose instant is the bound must be inside it',
+          );
+        });
+
+        it('holds every page of one traversal to the same world', async () => {
+          // The property the bound exists for, over three pages — two cannot
+          // show a drift, because a page that shifts by one still holds
+          // everything the first page left.
+          const { service, readerId, seeded, freshAction } = await makeContext();
+          expect.ok(seeded.length >= 3, 'the world must hold three entries to page three times');
+          const asOf = seeded[0].occurredAt;
+
+          const seen: string[] = [];
+          for (const page of [1, 2, 3]) {
+            const answered = await service.query(readerId, { page, limit: 1, asOf });
+            // A write between every read, which is what a caller reading an
+            // audited history really does to it.
+            await service.record(
+              recording(freshAction, readerId, { occurredAt: new Date(asOf.getTime() + 1000) }),
+            );
+            seen.push(...answered.data.map((entry) => String(entry.id)));
+          }
+
+          expect.equal(seen.length, 3, 'three pages of one must answer three entries');
+          expect.equal(new Set(seen).size, 3, 'no entry may be answered twice across one traversal');
+          const promised = seeded.map((entry) => String(entry.id));
+          expect.equal(
+            seen.filter((id) => !promised.includes(id)).length,
+            0,
+            'and none of them may be an entry the traversal itself caused',
+          );
+        });
+      });
     });
 
     describe('wire shape', () => {

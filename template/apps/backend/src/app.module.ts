@@ -9,7 +9,7 @@ import { I18nResponseInterceptor } from './common/interceptors';
 import { AuditEntryRecord } from './audit/audit-entry-record.entity';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
-import { JwtAuthGuard } from './auth/guards';
+import { JwtAuthGuard, PlatformAdminOverrideInterceptor } from './auth/guards';
 import { EmailVerificationTokenRecord } from './auth/entities/email-verification-token-record.entity';
 import { RefreshTokenRecord } from './auth/entities/refresh-token-record.entity';
 import { SessionRecord } from './auth/entities/session-record.entity';
@@ -149,6 +149,14 @@ export const GLOBAL_PROVIDERS: Provider[] = [
 
   // Turns a `messageKey` on a success payload into translated `message` text.
   { provide: APP_INTERCEPTOR, useClass: I18nResponseInterceptor },
+
+  // Writes the `PLATFORM_ADMIN_OVERRIDE` entry a platform-administrative pass
+  // owes, AFTER the handler. Global rather than per-controller because it must
+  // apply wherever `PlatformAdminGuard` does and nowhere else — it does nothing
+  // at all unless that guard marked the request — and pairing it with the guard
+  // by hand on each controller is a pairing somebody eventually forgets, which
+  // would silently stop recording passes on one route. Spec §9.5.
+  { provide: APP_INTERCEPTOR, useClass: PlatformAdminOverrideInterceptor },
 ];
 
 /**
