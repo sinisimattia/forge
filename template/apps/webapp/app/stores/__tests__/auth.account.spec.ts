@@ -89,26 +89,19 @@ describe('the auth store, for account management', () => {
 
     // The world's last issue, not the store's own report of it.
     expect(store.accessToken).toBe(backend.issuedCredentials().at(-1));
+    // This is state and not behaviour, and it is as far as this suite can go.
+    // The stub resolves the actor from `ApiRequest.actor` and not from a bearer
+    // credential — it has to, because the credential travels in a header that
+    // `createApiClient` writes and this transport never sees — so **no spec
+    // driving it can observe a stale access credential being refused**. A store
+    // that dropped the reissue below goes on working here; measured, by removing
+    // the line and watching a "the backend is still reachable" assertion pass.
+    // What catches that in the real world is the end-to-end walk.
+
     // And it is a *different* one: the backend ended every session, the caller's
     // included, so a store that kept the old value is presenting a dead
     // credential and will find out one request later.
     expect(store.accessToken).not.toBe(before);
-  });
-
-  it('is still able to reach the backend afterwards', async () => {
-    // The assertion the one above cannot make: that the value it took up is the
-    // one the server now accepts. A store that stored some other string would
-    // satisfy neither, but a store that stored the right string and failed to
-    // hand it to the transport would satisfy the first.
-    const store = useAuthStore();
-    store.adoptTransport(backend.client);
-    await store.login(ACTOR.email, PLAINTEXT);
-
-    await store.changePassword(PLAINTEXT, NEXT_PLAINTEXT);
-
-    await expect(
-      new AuthHttpService(store.authenticatedClient()).listSessions(ACTOR_ID),
-    ).resolves.toHaveLength(1);
   });
 
   it('does NOT change the secret when the current one is refused', async () => {
