@@ -19,6 +19,7 @@ import { AuthController } from '../auth.controller';
 import { AuthService } from '../auth.service';
 import { JwtAuthGuard } from '../guards';
 import { REFRESH_COOKIE } from '../refresh-cookie';
+import { SESSION_TTL_SECONDS } from '../session/session.service';
 import { RefreshTokenService } from '../session/refresh-token.service';
 import { JwtStrategy } from '../strategies';
 
@@ -237,13 +238,13 @@ describe('AuthController', () => {
     });
   });
 
-  describe('the renewal cookie', () => {
-    /** The `Set-Cookie` header a request produced, as one string. */
-    const cookieFrom = (headers: Record<string, unknown>): string => {
-      const raw = headers['set-cookie'];
-      return Array.isArray(raw) ? raw.join('\n') : String(raw);
-    };
+  /** The `Set-Cookie` header a request produced, as one string. */
+  const cookieFrom = (headers: Record<string, unknown>): string => {
+    const raw = headers['set-cookie'];
+    return Array.isArray(raw) ? raw.join('\n') : String(raw);
+  };
 
+  describe('the renewal cookie', () => {
     it('is set on a successful sign-in, unreadable by script and scoped to /auth', async () => {
       const response = await request(app.getHttpServer())
         .post('/auth/login')
@@ -257,6 +258,30 @@ describe('AuthController', () => {
       // Not `Secure` here: NODE_ENV is `test`, and a `Secure` cookie is refused
       // by a browser over the plain HTTP that local development runs on.
       expect(cookie).not.toContain('Secure');
+    });
+
+    it('tells the browser to keep it for the session\'s own lifetime, and no longer', () => {
+      // Read off the header the browser actually receives, not off
+      // `REFRESH_COOKIE.maxAgeMs`. A constant is a configuration; what the
+      // browser is told is the behaviour, and `res.cookie` is free to translate
+      // one into the other however it likes — or to be handed something else by
+      // a call site.
+      expect(REFRESH_COOKIE.maxAgeMs).toBe(SESSION_TTL_SECONDS * 1000);
+      // A literal ceiling as well, so raising the constant is a decision
+      // somebody takes here rather than one that slips through: a renewal
+      // credential the browser keeps for a year is a year of not signing in
+      // again, which is the one thing that reliably evicts a copied credential.
+      expect(SESSION_TTL_SECONDS).toBeLessThanOrEqual(60 * 60 * 24 * 90);
+    });
+
+    it('emits that lifetime on the wire', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: 'ada@example.test', secret: PLAINTEXT });
+
+      const maxAge = /Max-Age=(\d+)/.exec(cookieFrom(response.headers));
+      expect(maxAge).not.toBeNull();
+      expect(Number(maxAge![1])).toBe(SESSION_TTL_SECONDS);
     });
 
     it('is cleared on sign-out with the same name and path it was set with', async () => {

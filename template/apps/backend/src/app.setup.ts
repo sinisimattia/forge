@@ -21,10 +21,21 @@ import cookieParser from 'cookie-parser';
  * calls **this function** — not a copy of it — against a probe application, so
  * deleting a line here turns a test red.
  *
- * The one line still beyond reach is `configureApp(app)` inside `main.ts`
- * itself. That is the whole of what `main.ts` now does besides creating the
- * application and listening; it cannot be reduced further without starting the
- * real `AppModule`, which needs a database.
+ * ## What this does NOT do, stated precisely because the loose version is wrong
+ *
+ * It does not make `main.ts` safe. `main.ts` is excluded from coverage outright
+ * (`jest.config.ts`: `'!main.ts'`) and no spec imports it, so **nothing notices
+ * anything added to `bootstrap()`** — measured: dropping `{ rawBody: true }`,
+ * changing the `PORT` default, deleting `app.listen(port)` entirely, and adding
+ * a second `app.enableCors({ origin: true, credentials: true })` *after* the
+ * call below (which silently widens CORS to every origin) each leave the whole
+ * suite green.
+ *
+ * What moving the configuration here bought is a much smaller untested surface,
+ * not a protected one: the four things that used to live in `bootstrap()` are
+ * now assertable, and what remains there is three lines. Anyone adding a fourth
+ * is adding it somewhere no test looks — which is the reason to put it here
+ * instead.
  *
  * @param app - the application to configure, before it starts listening
  */

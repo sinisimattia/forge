@@ -107,10 +107,23 @@ named `<Thing>Record` because `__FORGE_SCOPE__/core` already exports `User`,
   `dist/apps/backend/src/main.js`; `nest start` (what `start:dev` and therefore the dev
   container run) otherwise looks for `dist/main` and dies with `MODULE_NOT_FOUND` **after
   reporting a clean compile**, so the container reports "Up", never healthy, and everything
-  waiting on `service_healthy` stalls. `start:prod` and `migration:run:prod` name the same
-  layout in `package.json`; this is the third consumer of it.
+  waiting on `service_healthy` stalls.
 
-  The `assets` `outDir` is the fourth. Without it the `i18n/**/*` files are copied to
+  **Five places name that layout, and every one of them has to agree:**
+
+  1. `package.json` → `start:prod`
+  2. `package.json` → `migration:run:prod`
+  3. `nest-cli.json` → `entryFile` (added after the dev container had been unable to boot
+     for 60 commits)
+  4. `Dockerfile` → the prod `CMD`. It repeats the literal rather than calling `start:prod`
+     on purpose: `node` as PID 1 receives `SIGTERM` from `docker stop`, where `npm run`
+     would sit in between and not forward it.
+  5. `nest-cli.json` → `outDir` on the `assets` entry
+
+  Two of the five were missed when `rootDir` was pinned, and both failures were invisible
+  to every fast tier. Adding a sixth consumer means adding it to this list.
+
+  Without (5) the `i18n/**/*` files are copied to
   `dist/i18n/`, while `app.module.js` — which resolves them with `join(__dirname, 'i18n')`
   — sits in `dist/apps/backend/src/`. The build succeeds and then **the production image
   does not boot at all**: `nestjs-i18n` throws `I18nError: i18n path (...) cannot be found`

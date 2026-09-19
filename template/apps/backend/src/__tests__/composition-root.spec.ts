@@ -1,7 +1,7 @@
 import { Body, Controller, Get, INestApplication, Post, Req, Type } from '@nestjs/common';
 import { MODULE_METADATA } from '@nestjs/common/constants';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { JwtModule } from '@nestjs/jwt';
+import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { Test } from '@nestjs/testing';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -9,6 +9,8 @@ import { IsString } from 'class-validator';
 import type { Request } from 'express';
 import request from 'supertest';
 import { ConsumedTokenError } from '__FORGE_SCOPE__/core/auth/errors';
+import type { SessionId } from '__FORGE_SCOPE__/core/auth/types';
+import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { AppModule, GLOBAL_PROVIDERS, I18N, typeOrmOptions } from '../app.module';
 import { configureApp } from '../app.setup';
 import { AuditEntryRecord } from '../audit/audit-entry-record.entity';
@@ -21,7 +23,7 @@ import { PasswordResetTokenRecord } from '../auth/entities/password-reset-token-
 import { RefreshTokenRecord } from '../auth/entities/refresh-token-record.entity';
 import { SessionRecord } from '../auth/entities/session-record.entity';
 import { REFRESH_COOKIE } from '../auth/refresh-cookie';
-import { ACCESS_TOKEN_TTL_SECONDS } from '../auth/session/session.service';
+import { ACCESS_TOKEN_TTL_SECONDS, SessionService } from '../auth/session/session.service';
 import { JwtStrategy } from '../auth/strategies';
 import { HealthModule } from '../health/health.module';
 import { AuthIdentityRecord } from '../identities/auth-identity-record.entity';
@@ -82,6 +84,9 @@ const DB_URL = 'postgresql://probe:probe@127.0.0.1:1/probe';
 /** The origin the probe application is configured to allow. */
 const CORS_ORIGIN_UNDER_TEST = 'http://localhost:3001';
 
+const ACTOR = '11111111-1111-4111-8111-111111111111' as UserId;
+const SESSION = '22222222-2222-4222-8222-222222222222' as SessionId;
+
 /** The configuration a fully-configured deployment would have. */
 const complete = (): ConfigService =>
   new ConfigService({ JWT_SECRET: SIGNING_KEY, DATABASE_URL: DB_URL });
@@ -89,6 +94,10 @@ const complete = (): ConfigService =>
 /** Reads a module's `imports` off its own decorator, without instantiating it. */
 const moduleImports = (target: Type<unknown>): unknown[] =>
   Reflect.getMetadata(MODULE_METADATA.IMPORTS, target) ?? [];
+
+/** Reads a module's `providers` the same way. */
+const moduleProviders = (target: Type<unknown>): unknown[] =>
+  Reflect.getMetadata(MODULE_METADATA.PROVIDERS, target) ?? [];
 
 /** Reads a module's `controllers` the same way. */
 const moduleControllers = (target: Type<unknown>): unknown[] =>
@@ -224,6 +233,20 @@ describe('the composition root', () => {
       expect(moduleControllers(AuthModule)).toContain(AuthController);
     });
 
+    it('provides the strategy the global guard resolves', () => {
+      // Without this provider passport has no `jwt` strategy registered, and the
+      // shape of the failure is the worst in this file: `@Public()` routes still
+      // answer, so `GET /health` returns 200 and the container reports HEALTHY,
+      // while every authenticated route in the application fails. A deployment
+      // looks entirely well and nobody can sign in.
+      //
+      // The probe application below registers `JwtStrategy` itself — it has to,
+      // to exercise the guard at all — which is exactly why this assertion has
+      // to exist separately: the fix for "the spec assembles its own module"
+      // reintroduced that same blindness for this one provider.
+      expect(moduleProviders(AuthModule)).toContain(JwtStrategy);
+    });
+
     it('signs with the exported factory, not with one inlined in the module', () => {
       expect(usesFactory(dynamicImport(AuthModule, JwtModule), accessTokenSigningOptions)).toBe(
         true,
@@ -239,7 +262,7 @@ describe('the composition root', () => {
       expect(() => accessTokenSigningOptions(new ConfigService({}))).toThrow();
     });
 
-    it('are short-lived, because nothing is looked up when one is presented', () => {
+    it('are configured to be short-lived', () => {
       expect(accessTokenSigningOptions(complete()).signOptions?.expiresIn).toBe(
         ACCESS_TOKEN_TTL_SECONDS,
       );
@@ -247,6 +270,29 @@ describe('the composition root', () => {
       // constant the code wrote cannot fail whatever it is changed to. This is
       // the window in which a revoked session keeps working.
       expect(ACCESS_TOKEN_TTL_SECONDS).toBeLessThanOrEqual(60 * 60);
+    });
+
+    it('ACTUALLY expire that soon — read off a credential the service minted', () => {
+      // The assertion above pins the module's DEFAULT, and a default is not a
+      // guarantee: `this.jwt.sign(claims, { expiresIn: '365d' })` at the one call
+      // site that mints overrides it, and every assertion in this file that reads
+      // the options object stays green. That is fault F12 again, reached from the
+      // other end.
+      //
+      // So this reads `exp` off a credential `SessionService` really produced,
+      // signed by a `JwtService` really configured by the shipped factory. The
+      // three repositories and the data source are `null` because minting touches
+      // none of them; if that ever stops being true this line fails loudly rather
+      // than quietly testing something else.
+      const jwt = new JwtService(accessTokenSigningOptions(complete()));
+      const sessions = new SessionService(null as never, null as never, jwt, null as never);
+
+      const claims = jwt.decode(sessions.mintAccessToken(ACTOR, SESSION)) as {
+        iat: number;
+        exp: number;
+      };
+
+      expect(claims.exp - claims.iat).toBe(ACCESS_TOKEN_TTL_SECONDS);
     });
   });
 

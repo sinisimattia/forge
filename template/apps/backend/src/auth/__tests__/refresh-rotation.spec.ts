@@ -183,6 +183,21 @@ describe('D8: renewal, and a credential presented twice', () => {
       );
     });
 
+    it('issues a successor that dies no later than the session does', () => {
+      // `issueRefreshToken` takes the expiry as a PARAMETER, so the bound its
+      // caller's comment claims ("never later than the session's own end") is a
+      // property of the call site and not of the helper. A successor that
+      // outlived its session would be a credential with nothing to renew.
+      const successor = source
+        .all(RefreshTokenRecord)
+        .find((row) => row.tokenHash === hashOpaqueToken(current));
+      const session = source.byId(SessionRecord, SESSION_ID);
+
+      expect((successor?.expiresAt as Date).getTime()).toBeLessThanOrEqual(
+        (session?.expiresAt as Date).getTime(),
+      );
+    });
+
     it('leaves the session usable and bumps when it was last used', () => {
       const session = source.byId(SessionRecord, SESSION_ID);
 

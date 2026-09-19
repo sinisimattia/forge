@@ -47,4 +47,9 @@ COPY --from=build /app/libs/core/dist ./libs/core/dist
 COPY --from=build /app/apps/backend/dist ./apps/backend/dist
 WORKDIR /app/apps/backend
 EXPOSE 3000
+# The same path `package.json`'s `start:prod` names, repeated rather than delegated: `node`
+# as PID 1 receives `SIGTERM` from `docker stop` directly, where `npm run start:prod` would
+# sit between them and not forward it. This is one of FIVE places the `dist/apps/backend/src`
+# layout is written down — `apps/backend/CLAUDE.md` enumerates them, and records what went
+# wrong the two times one of them was missed.
 CMD ["node", "dist/apps/backend/src/main"]
