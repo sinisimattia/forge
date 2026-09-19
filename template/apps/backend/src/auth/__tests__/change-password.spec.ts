@@ -27,7 +27,7 @@ import { REFRESH_COOKIE } from '../refresh-cookie';
 import { RefreshTokenService } from '../session/refresh-token.service';
 import { SessionService } from '../session/session.service';
 import { JwtStrategy } from '../strategies';
-import { FakeDataSource } from './fake-data-source';
+import { FakeDataSource } from '../../common/testing';
 
 /**
  * # Changing a password: the composed property

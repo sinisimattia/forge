@@ -10,7 +10,7 @@ import { RefreshTokenRecord } from '../entities/refresh-token-record.entity';
 import { SessionRecord } from '../entities/session-record.entity';
 import { RefreshTokenService } from '../session/refresh-token.service';
 import { SessionService } from '../session/session.service';
-import { FakeDataSource } from './fake-data-source';
+import { FakeDataSource } from '../../common/testing';
 
 /**
  * # D8 — a renewal credential presented twice revokes the whole family

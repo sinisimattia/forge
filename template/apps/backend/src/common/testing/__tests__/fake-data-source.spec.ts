@@ -1,4 +1,4 @@
-import { FakeDataSource } from './fake-data-source';
+import { FakeDataSource } from '../fake-data-source';
 
 /**
  * The fake's own rollback, which nothing else can test.

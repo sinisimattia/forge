@@ -35,7 +35,7 @@ import { PasswordResetTokenRecord } from '../entities/password-reset-token-recor
 import { RefreshTokenRecord } from '../entities/refresh-token-record.entity';
 import { SessionRecord } from '../entities/session-record.entity';
 import { SessionService } from '../session/session.service';
-import { FakeDataSource } from './fake-data-source';
+import { FakeDataSource } from '../../common/testing';
 
 /**
  * Registration, verification and sign-in.

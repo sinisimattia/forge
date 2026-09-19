@@ -17,7 +17,7 @@ import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
 import { AuditEntryRecord } from '../../audit/audit-entry-record.entity';
 import { AuditService } from '../../audit/audit.service';
-import { FakeDataSource } from '../../auth/__tests__/fake-data-source';
+import { FakeDataSource } from '../../common/testing';
 import { RefreshTokenRecord } from '../../auth/entities/refresh-token-record.entity';
 import { SessionRecord } from '../../auth/entities/session-record.entity';
 import { PlatformAdminGuard } from '../../auth/guards';

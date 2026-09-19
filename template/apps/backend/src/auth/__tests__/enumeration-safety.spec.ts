@@ -25,7 +25,7 @@ import { SessionRecord } from '../entities/session-record.entity';
 import { RefreshTokenService } from '../session/refresh-token.service';
 import { SessionService } from '../session/session.service';
 import { JwtStrategy } from '../strategies';
-import { FakeDataSource } from './fake-data-source';
+import { FakeDataSource } from '../../common/testing';
 
 /**
  * # D7 — a known address and an unknown one are indistinguishable
