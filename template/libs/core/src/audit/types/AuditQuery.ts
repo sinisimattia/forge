@@ -1,3 +1,4 @@
+import type { OrganizationId } from '../../organizations/types/OrganizationId';
 import type { UserId } from '../../users/types/UserId';
 import type { AuditAction } from '../enums/AuditAction';
 
@@ -17,18 +18,13 @@ export interface AuditQuery {
   /**
    * Only entries recorded against this tenant.
    *
-   * Declared now because the reason the field exists on the entry at all applies
-   * to reading it too: Phase 3 gives organization administrators a view of their
-   * own organization's history, and that view is this filter.
-   *
-   * Its semantics are deliberately not pinned yet, exactly as `UserQuery.search`
-   * is not: the conformance suite asserts nothing about it, because no world it
-   * can build holds two tenants to tell apart until an organization exists.
-   * Anything relying on a particular behaviour — including what an explicit
-   * `null` means as against an omitted filter — must first make that behaviour
-   * an assertion in `runIAuditServiceContract`, not assume it.
+   * An omitted filter does not narrow. An explicit `null` narrows to the entries
+   * that belong to no tenant — platform-level events like a sign-in, which
+   * happens before any organization is in play. Those are different questions and
+   * the suite now asserts both, which it could not do in Phase 2 because no world
+   * it could build held a tenant to tell apart.
    */
-  organizationId?: string | null;
+  organizationId?: OrganizationId | null;
   /** Only entries this person is recorded as the actor of. */
   actorId?: UserId;
   /** Only entries recording this kind of action. */

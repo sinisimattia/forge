@@ -7,6 +7,7 @@ import { Session } from '__FORGE_SCOPE__/core/auth/entities';
 import type { ClientContext, SessionId } from '__FORGE_SCOPE__/core/auth/types';
 import { AuthIdentity } from '__FORGE_SCOPE__/core/identities/entities';
 import type { AuthIdentityId } from '__FORGE_SCOPE__/core/identities/types';
+import type { OrganizationId } from '__FORGE_SCOPE__/core/organizations/types';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { AuditService } from '../../audit/audit.service';
@@ -323,7 +324,7 @@ export function makeIdentityWorld(): IdentityWorld {
       const row = rowOf(AuditEntryRecord, entryId);
       return new AuditEntry({
         id: row.id as AuditEntryId,
-        organizationId: row.organizationId as string | null,
+        organizationId: row.organizationId as OrganizationId | null,
         actorId: row.actorUserId as UserId | null,
         action: row.action as AuditEntry['action'],
         resourceType: row.resourceType as string | null,

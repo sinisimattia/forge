@@ -1,3 +1,4 @@
+import type { OrganizationId } from '../../organizations/types/OrganizationId';
 import type { UserId } from '../../users/types/UserId';
 import type { AuditAction } from '../enums/AuditAction';
 import type { AuditEntryId } from '../types/AuditEntryId';
@@ -38,11 +39,10 @@ export class AuditEntry {
   /**
    * The tenant it happened in, or `null` when it belonged to none.
    *
-   * A plain string until Phase 3, which makes it a branded `OrganizationId`.
    * See {@link AuditEntryProps.organizationId} for why it is here before there
    * is anything to put in it.
    */
-  readonly organizationId: string | null;
+  readonly organizationId: OrganizationId | null;
   /** Who did it, or `null` when nobody was identified. */
   readonly actorId: UserId | null;
   /** What happened. */

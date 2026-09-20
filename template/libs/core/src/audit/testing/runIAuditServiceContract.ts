@@ -314,6 +314,47 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
         expect.equal(String(page.data[0].id), String(wanted.id), 'and it must be the entry that names them');
       });
 
+      // Three different questions, only askable now that an organization
+      // exists to make them failable. Phase 2 could build no world holding two
+      // tenants to tell apart, so `AuditQuery.organizationId`'s semantics were
+      // deliberately left unpinned; this suite is that world.
+      describe('organizationId, the tenant filter', () => {
+        it('does not narrow when omitted', async () => {
+          const { service, readerId, seeded } = await makeContext();
+          const page = await service.query(readerId, wholeHistory());
+          expect.equal(page.meta.total, seeded.length, 'an omitted filter must not narrow at all');
+        });
+
+        it('narrows to entries belonging to no tenant when given explicit null', async () => {
+          const { service, readerId, seeded } = await makeContext();
+          const platformLevel = seeded.filter((entry) => entry.organizationId === null);
+          expect.ok(
+            platformLevel.length > 0 && platformLevel.length < seeded.length,
+            'the world must seed at least one entry with a tenant and at least one without, or this filter cannot be told apart from an omitted one',
+          );
+
+          const page = await service.query(readerId, wholeHistory({ organizationId: null }));
+          expect.equal(
+            page.meta.total,
+            platformLevel.length,
+            'an explicit null must match exactly the entries that belong to no tenant, such as a platform-level sign-in',
+          );
+          const gotATenant = page.data.filter((entry) => entry.organizationId !== null);
+          expect.equal(gotATenant.length, 0, 'and must not match an entry that belongs to a tenant');
+        });
+
+        it('narrows to the named tenant when given a value', async () => {
+          const { service, readerId, seeded, organizationId } = await makeContext();
+          const wanted = seeded.filter((entry) => entry.organizationId === organizationId);
+          expect.ok(wanted.length > 0, 'the world must seed at least one entry against the promised tenant');
+
+          const page = await service.query(readerId, wholeHistory({ organizationId }));
+          expect.equal(page.meta.total, wanted.length, 'a tenant one entry carries must match exactly that entry');
+          const otherTenant = page.data.filter((entry) => entry.organizationId !== organizationId);
+          expect.equal(otherTenant.length, 0, 'and must not match an entry recorded against no tenant or another one');
+        });
+      });
+
       // Nothing else pins this. Each filter above is satisfied by an
       // implementation that applies whichever one it happens to read first, or
       // that treats the two as alternatives — and every world where the filters
@@ -351,13 +392,12 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
         expect.equal(repeated.length, 0, 'page 2 must not repeat a record from page 1');
       });
 
-      // `asOf` is pinned here, unlike `organizationId`, and the difference is
-      // not inconsistency. `organizationId` has no world this suite can build
-      // that would tell two readings of it apart, so pinning one would fix a
-      // decision before anything can make it. `asOf` has the opposite problem:
-      // a caller cannot page through this table safely without it, so an
-      // implementation free to ignore it is one a caller cannot use and would
-      // not know not to trust.
+      // `asOf` is pinned here for a different reason than `organizationId` is
+      // pinned above: a caller cannot page through this table safely without
+      // it, so an implementation free to ignore it is one a caller cannot use
+      // and would not know not to trust. `organizationId`'s filter semantics
+      // are pinned separately below, now that an organization exists to make
+      // them failable.
       describe('asOf, the bound that makes paging stable', () => {
         it('excludes an entry recorded after the bound was taken', async () => {
           const { service, readerId, seeded, freshAction } = await makeContext();
@@ -442,7 +482,8 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
       // advance. Handing back a raw store row fails a line earlier, on
       // `instanceof`.
       it('carries every field of a promised entry out through the wire shape', async () => {
-        const { service, readerId, seeded } = await makeContext();
+        const context = await makeContext();
+        const { service, readerId, seeded } = context;
         const promised = seeded[0];
         const expected = promised.toJSON();
 
@@ -461,13 +502,27 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
         // actually catches an id the implementation lost is the `ok(fetched)`
         // above, where the entry simply never comes back.
         expect.equal(actual.id, expected.id, field('id'));
+        // Three of the ten comparisons below were `null === null` until this
+        // task, which is an assertion about nothing — measured in Phase 2:
+        // dropping `organizationId` from the backend's mapper left the entire
+        // suite green. Each of the three is now guarded by an `ok` that the
+        // promised entry actually carries a value, before the `equal` that
+        // would otherwise pass vacuously if it did not.
+        expect.ok(expected.organizationId !== null, 'the promised entry must carry a tenant');
+        expect.equal(
+          expected.organizationId,
+          context.organizationId,
+          'the promised entry must carry the tenant the world promised',
+        );
         expect.equal(actual.organizationId, expected.organizationId, field('organizationId'));
         expect.equal(actual.actorId, expected.actorId, field('actorId'));
         expect.equal(actual.action, expected.action, field('action'));
         expect.equal(actual.resourceType, expected.resourceType, field('resourceType'));
         expect.equal(actual.resourceId, expected.resourceId, field('resourceId'));
         expect.equal(canonical(actual.metadata), canonical(expected.metadata), field('metadata'));
+        expect.ok(expected.clientAddress !== null, 'the promised entry must carry a client address');
         expect.equal(actual.clientAddress, expected.clientAddress, field('clientAddress'));
+        expect.ok(expected.clientLabel !== null, 'the promised entry must carry a client label');
         expect.equal(actual.clientLabel, expected.clientLabel, field('clientLabel'));
         expect.equal(actual.occurredAt, expected.occurredAt, field('occurredAt'));
       });

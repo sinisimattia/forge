@@ -1,3 +1,4 @@
+import type { OrganizationId } from '../../organizations/types/OrganizationId';
 import type { UserId } from '../../users/types/UserId';
 import type { AuditAction } from '../enums/AuditAction';
 import type { AuditEntryId } from './AuditEntryId';
@@ -15,7 +16,7 @@ export interface AuditEntryJSON {
   /** The entry's identifier. */
   id: AuditEntryId;
   /** The tenant it happened in, or `null` when it belonged to none. */
-  organizationId: string | null;
+  organizationId: OrganizationId | null;
   /** Who did it, or `null` when nobody was identified. */
   actorId: UserId | null;
   /** What happened. */

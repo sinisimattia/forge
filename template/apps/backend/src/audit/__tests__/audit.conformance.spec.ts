@@ -1,6 +1,7 @@
 import { runIAuditServiceContract } from '__FORGE_SCOPE__/core/audit/testing';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import type { AuditEntryId } from '__FORGE_SCOPE__/core/audit/types';
+import type { OrganizationId } from '__FORGE_SCOPE__/core/organizations/types';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { adaptJestToConformanceExpect, makeIdentityWorld } from '../../common/testing';
@@ -68,6 +69,9 @@ const READER_ID = 'fake-UserRecord-reader' as UserId;
 /** The actor the suite narrows by. Named by exactly one entry, and not the newest. */
 const FILTER_ACTOR_ID = 'fake-UserRecord-filtered' as UserId;
 
+/** The tenant the newest seeded entry belongs to, and no other. */
+const TENANT_ID = 'fake-OrganizationRecord-tenant' as OrganizationId;
+
 runIAuditServiceContract({
   describe,
   it,
@@ -115,12 +119,15 @@ runIAuditServiceContract({
     ];
     world.source.seed(AuditEntryRecord, rows.map((row) => ({
       ...row,
-      organizationId: null,
+      // Every field the wire-shape test compares is non-null on the newest
+      // row, and only the newest row — see that test's comment on why a
+      // null-on-both-sides comparison is no comparison at all.
+      organizationId: row.id === 'fake-AuditEntryRecord-newest' ? TENANT_ID : null,
       resourceType: 'user',
       resourceId: String(row.actorUserId),
       metadata: { seeded: true },
-      clientAddress: null,
-      clientLabel: null,
+      clientAddress: row.id === 'fake-AuditEntryRecord-newest' ? '203.0.113.9' : null,
+      clientLabel: row.id === 'fake-AuditEntryRecord-newest' ? 'a seeded client' : null,
     })));
 
     return {
@@ -133,6 +140,7 @@ runIAuditServiceContract({
       // Carried by no seeded entry, so a narrowed query finds exactly what the
       // suite itself wrote and nothing the world came with.
       freshAction: AuditAction.SESSION_REUSE_DETECTED,
+      organizationId: TENANT_ID,
     };
   },
 });

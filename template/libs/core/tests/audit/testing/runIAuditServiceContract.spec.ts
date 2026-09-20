@@ -3,6 +3,7 @@ import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import type { AuditServiceContractContext } from '__FORGE_SCOPE__/core/audit/testing';
 import { makeAuditEntryJSON, runIAuditServiceContract } from '__FORGE_SCOPE__/core/audit/testing';
 import type { AuditEntryId } from '__FORGE_SCOPE__/core/audit/types';
+import type { OrganizationId } from '__FORGE_SCOPE__/core/organizations/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { jestConformanceExpect } from '../../shared/testing/jestConformanceExpect';
 import { InMemoryAuditService } from './InMemoryAuditService';
@@ -10,6 +11,9 @@ import { InMemoryAuditService } from './InMemoryAuditService';
 const READER = 'user-ada' as UserId;
 const FILTER_ACTOR = 'user-hopper' as UserId;
 const OTHER_ACTOR = 'user-grace' as UserId;
+// Carried by the newest seeded entry and by no other: what makes narrowing to a
+// tenant distinguishable from narrowing to none.
+const TENANT = 'org-seeded' as OrganizationId;
 
 // Carried by exactly one seeded entry, and by an entry FILTER_ACTOR did not do —
 // the pair is what lets the suite tell narrowing by both filters from narrowing
@@ -37,6 +41,7 @@ async function makeContext(): Promise<AuditServiceContractContext> {
 
   const newest = makeAuditEntryJSON({
     id: 'audit-newest' as AuditEntryId,
+    organizationId: TENANT,
     actorId: READER,
     action: AuditAction.LOGIN_SUCCEEDED,
     resourceType: 'Article',
@@ -78,6 +83,7 @@ async function makeContext(): Promise<AuditServiceContractContext> {
     filterAction: FILTER_ACTION,
     filterActorId: FILTER_ACTOR,
     freshAction: FRESH_ACTION,
+    organizationId: TENANT,
   };
 }
 

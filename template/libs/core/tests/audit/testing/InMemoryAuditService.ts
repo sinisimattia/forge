@@ -78,6 +78,12 @@ export class InMemoryAuditService implements IAuditService {
   private static matches(row: AuditEntryJSON, query: AuditQuery): boolean {
     if (query.action !== undefined && row.action !== query.action) return false;
     if (query.actorId !== undefined && String(row.actorId) !== String(query.actorId)) return false;
+    // An explicit null narrows to the entries that belong to no tenant; an
+    // omitted filter (checked by `!== undefined`, not truthiness) narrows
+    // nothing at all — the same distinction `actorId` and `action` draw above.
+    if (query.organizationId !== undefined && row.organizationId !== query.organizationId) {
+      return false;
+    }
     // Inclusive, so a bound taken from an entry's own instant includes that entry.
     if (query.asOf !== undefined && Date.parse(row.occurredAt) > query.asOf.getTime()) return false;
     return true;

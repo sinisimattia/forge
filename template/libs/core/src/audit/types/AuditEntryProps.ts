@@ -1,3 +1,4 @@
+import type { OrganizationId } from '../../organizations/types/OrganizationId';
 import type { UserId } from '../../users/types/UserId';
 import type { AuditAction } from '../enums/AuditAction';
 import type { AuditEntryId } from './AuditEntryId';
@@ -18,15 +19,13 @@ export interface AuditEntryProps {
    * The tenant the recorded action happened in, or `null` when it belonged to
    * no tenant.
    *
-   * Typed as a plain string because no organization exists yet; it becomes a
-   * branded `OrganizationId` in Phase 3, which is a one-line widening at a
-   * handful of call sites. The field is here now rather than then because this
-   * table is append-only: adding a column later means backfilling rows the
-   * application is not permitted to update. Every entry written in this phase
-   * carries `null`, and `null` is a fact — "this belonged to no tenant" — not a
-   * value that has gone missing (ADR-0007).
+   * A branded `OrganizationId` now that Phase 3 has organizations to brand it
+   * against. The field was here before there was anything to put in it because
+   * this table is append-only: adding a column later means backfilling rows the
+   * application is not permitted to update. `null` is a fact — "this belonged to
+   * no tenant" — not a value that has gone missing (ADR-0007).
    */
-  organizationId: string | null;
+  organizationId: OrganizationId | null;
   /**
    * Who did it, or `null` when nobody was identified.
    *

@@ -1,3 +1,4 @@
+import type { OrganizationId } from '../../organizations/types/OrganizationId';
 import type { ConformanceExpect } from '../../shared/testing/ConformanceExpect';
 import type { UserId } from '../../users/types/UserId';
 import type { IAuditService } from '../contracts/IAuditService';
@@ -88,6 +89,20 @@ export interface AuditServiceContractContext {
    * ordering property it is elsewhere trying to test.
    */
   freshAction: AuditAction;
+
+  /**
+   * A tenant {@link AuditServiceContractContext.seeded}'s newest entry carries.
+   *
+   * The host cannot seed `null` for this one, unlike every other nullable field
+   * on a seeded entry: the wire-shape test compares the newest entry field by
+   * field, and a `null` on both sides of that comparison is `null === null` —
+   * an assertion about nothing, which is exactly the finding that provoked this
+   * field's existence (measured in Phase 2: dropping `organizationId` from a
+   * mapper left an entire conformance suite green). A world that seeded `null`
+   * here would silently disarm the one comparison this field exists to make
+   * failable.
+   */
+  organizationId: OrganizationId;
 }
 
 /** Runner primitives + the world factory the shared suite needs. */

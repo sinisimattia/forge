@@ -7,6 +7,7 @@ import { AuditEntry } from '__FORGE_SCOPE__/core/audit/entities';
 import type { AuditQuery, RecordAuditEntryInput } from '__FORGE_SCOPE__/core/audit/types';
 import type { AuditEntryId } from '__FORGE_SCOPE__/core/audit/types';
 import { can } from '__FORGE_SCOPE__/core/authorization/policies';
+import type { OrganizationId } from '__FORGE_SCOPE__/core/organizations/types';
 import type { PaginatedResult } from '__FORGE_SCOPE__/core/shared/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { UserRecord } from '../users/user-record.entity';
@@ -165,12 +166,16 @@ export class AuditService implements IAuditService {
 
   /**
    * Row to entity. The branded ids are asserted here, in one visible line, which
-   * is the convention every mapper in this backend follows (see `UserRecord`).
+   * is the convention every mapper in this backend follows (see `UserRecord`
+   * and `toUserEntity`'s comment on why the mapper is the right and only place
+   * for that claim). `AuditEntryRecord.organizationId` is a plain `string` —
+   * deliberately no foreign key, see that class's own comment — so the brand is
+   * asserted here rather than inherited from the column's type.
    */
   private static toEntity(row: AuditEntryRecord): AuditEntry {
     return new AuditEntry({
       id: row.id as AuditEntryId,
-      organizationId: row.organizationId,
+      organizationId: row.organizationId as OrganizationId | null,
       actorId: row.actorUserId === null ? null : (row.actorUserId as UserId),
       action: row.action,
       resourceType: row.resourceType,
