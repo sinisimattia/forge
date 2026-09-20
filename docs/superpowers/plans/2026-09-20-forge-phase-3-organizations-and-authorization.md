@@ -1069,7 +1069,7 @@ export interface Resource {
 export const ROLE_PERMISSIONS: Record<OrgRole, readonly Permission[]>;
 ```
 
-`OwnedResource` is **renamed** to `Resource` and gains `organizationId`. Every existing call site changes; `PlatformAdminGuard` is the only shipped one.
+`OwnedResource` is **renamed** to `Resource` and gains `organizationId`. Every existing call site changes. **Corrected during execution: there are FOUR inline `Principal` literals in the backend, not one** — `auth/guards/platform-admin.guard.ts`, `audit/audit.service.ts`, and `users/users.service.ts` twice. All four take `memberships: []` with a comment saying why an empty array is correct rather than an oversight. Task 7 makes `grants` required and must update the same four, plus every `Principal` literal in this task's two spec files.
 
 - [ ] **Step 1: Write the failing tests**
 
