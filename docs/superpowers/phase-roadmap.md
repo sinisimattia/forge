@@ -64,6 +64,16 @@ fix round to find; see `phase-2-decision-log.md` for the evidence behind them.
   feature task.
 - **ADR-0006's actual rule is cited by no review dimension in any package.** Phase 3 ships
   `can()` behind a guard and owes it a row.
+- **Take the access credential out of the SSR payload.** Ruled on 2026-09-20 after Mattia read
+  the trade: Phase 2 ships with the exposure documented, Phase 3 removes it, because Phase 3
+  reopens the renewal path for tenancy anyway and the change lands beside work rather than on
+  top of working code. Four things are owed, and none of them needs re-deriving —
+  `phase-2-decision-log.md` §6 has the mechanism and the cost. In short: seed `status` and the
+  user but not the credential; add `app/plugins/auth-init.client.ts`; handle the
+  `presented() === null` 401 that `createAuthFetch` today rethrows *without* renewing, on
+  purpose, because that is what stops a mistyped password signing the visitor out; and get the
+  second renewal race right, or reuse detection revokes the family. The no-flash behaviour is
+  not at risk — the three-state `status` is what prevents the flash, not the token.
 
 ## What Phase 3 inherits, already built
 

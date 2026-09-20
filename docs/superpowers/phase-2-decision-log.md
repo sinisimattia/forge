@@ -618,6 +618,26 @@ security trade is worse than no estimate.
 has been done, in the store's own TSDoc and in the plugin's comment. Overrule it by deleting
 the credential from the seeded state and adding the client plugin.
 
+### Ruled, 2026-09-20: carried to Phase 3
+
+Mattia read the trade and chose to **remove the credential from the SSR payload in Phase 3**,
+rather than keep it permanently or block Phase 2's merge on it. Phase 2 therefore ships as
+described above, with the exposure documented rather than hidden.
+
+The reasoning that decided it: Phase 3 reopens the auth plumbing anyway for tenancy and
+authorization, so the client plugin lands in a phase that is already touching the renewal
+path instead of as a standalone change to working code. The exposure it leaves open in the
+meantime is bounded — a 15-minute credential, on a page the person is already authenticated
+on, reachable only through artifact persistence rather than over the wire.
+
+**What Phase 3 owes, so this does not have to be re-derived:** delete the credential from the
+seeded state; add `app/plugins/auth-init.client.ts` to renew on hydration; handle the
+`presented() === null` 401 in `createAuthFetch`, which today deliberately rethrows without
+renewing because that is Task 16's fix for the bug that signed a visitor out for a mistyped
+password; and get the second renewal race right — SSR's `Set-Cookie` must land before the
+client renews, or reuse detection revokes the family. The no-flash behaviour is *not* at risk:
+the three-state `status` is what prevents the flash, not the token.
+
 ---
 
 ## 7. Documented, not fixed
@@ -652,6 +672,8 @@ stated reason.
 - **`AuditQuery.organizationId` and `UserQuery.search` are deliberately unpinned.** No world
   can hold two tenants until Phase 3, and `search`'s semantics need a persistence-backed
   implementation to force the question.
+- **The access credential in the SSR payload** — ruled on 2026-09-20 and carried to Phase 3;
+  the mechanism, the cost and the four things Phase 3 owes are in §6, already worked out.
 - **Audit retention**, per the `audit_entries` row in §7.
 - **D9 (tenant isolation), D12 (grant revocation) and D15 (last owner)** need organizations —
   Phase 3. **D11** (OAuth email-match linking) needs Phase 4. **D10** (MFA challenge) needs
