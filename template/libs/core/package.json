@@ -84,6 +84,10 @@
       "types": "./dist/identities/types/index.d.ts",
       "default": "./dist/identities/types/index.js"
     },
+    "./organizations/contracts": {
+      "types": "./dist/organizations/contracts/index.d.ts",
+      "default": "./dist/organizations/contracts/index.js"
+    },
     "./organizations/entities": {
       "types": "./dist/organizations/entities/index.d.ts",
       "default": "./dist/organizations/entities/index.js"
@@ -95,6 +99,10 @@
     "./organizations/errors": {
       "types": "./dist/organizations/errors/index.d.ts",
       "default": "./dist/organizations/errors/index.js"
+    },
+    "./organizations/testing": {
+      "types": "./dist/organizations/testing/index.d.ts",
+      "default": "./dist/organizations/testing/index.js"
     },
     "./organizations/types": {
       "types": "./dist/organizations/types/index.d.ts",
