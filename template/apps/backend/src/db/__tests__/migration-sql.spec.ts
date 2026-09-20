@@ -42,7 +42,14 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  * retires, is documented on `canonicalize` itself.
  *
  * The normalizer is the single point of failure this buys: a bug in it
- * weakens every guard at once, silently. Two things answer that. It is tested
+ * weakens every guard at once, silently. That is not hypothetical — it
+ * happened, in round 5, and the shape is worth keeping in view. The lexer had
+ * no branch for Postgres dollar-quoting, so a `DO $do$ … $do$` body containing
+ * an odd number of apostrophes put the single-quote branch into a literal that
+ * ran to the end of the `query()` argument. Whatever followed the block was
+ * never lower-cased and never split at `;`, and five guards reported clean on
+ * an empty corpus. The raw-text regex this canonical form replaced had matched
+ * it. Two things answer that. It is tested
  * in its own right — `the canonical form of a statement` asserts that each
  * spelling reduces to the *same* canonical string, so a normalizer that
  * stopped collapsing something fails there rather than quietly widening four
@@ -67,9 +74,18 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  * A textual guard over SQL embedded in TypeScript still cannot be made
  * complete, and saying which shapes get past these ones is more useful than
  * implying none do. Each bullet below was constructed and confirmed open
- * before being written here, because this list has twice been wrong in the
- * other direction — once naming a case that was already covered, once omitting
- * one that was live.
+ * before being written here, because this list has been wrong three times —
+ * once naming a case that was already covered, once omitting one that was
+ * live, and once (round 5) omitting a regression the canonical form itself had
+ * introduced, because nobody had thought to ask which of SQL's lexical
+ * constructs the lexer actually knew about. The answer to that last question
+ * is now written out on `canonicalize`, construct by construct, and each one
+ * is pinned by a test.
+ *
+ * Both bullets are about the *extractor's reach*, not the guards: the
+ * statement never reaches a guard as text. Anything that does reach one — any
+ * spelling of any statement — is the canonical form's problem, and that is
+ * where the effort goes.
  *
  * - **SQL that is not a literal at the call.** `sqlStatements` reads the
  *   string written at `queryRunner.query(…)` / `exec(queryRunner, …)`. A
@@ -155,6 +171,83 @@ function sqlStatements(source: string): string[] {
 }
 
 /**
+ * The index just past the single-quoted literal starting at `at`, or -1 when
+ * that literal is never closed.
+ *
+ * Returning -1 rather than "the end of the argument" is the whole point. An
+ * unterminated literal is not valid SQL — Postgres refuses the statement — so
+ * the only question is what the *guards* should be able to see, and the answer
+ * is everything. Swallowing the remainder would hide whatever followed the
+ * stray apostrophe from every guard at once; leaving it as ordinary text can
+ * at worst produce a noisy failure on SQL that could never have run.
+ *
+ * @param raw - the argument being scanned
+ * @param at - the index of the opening apostrophe
+ * @returns the index just past the closing apostrophe, or -1
+ */
+function endOfStringLiteral(raw: string, at: number): number {
+  let end = at + 1;
+  while (end < raw.length) {
+    if (raw[end] === '\'' && raw[end + 1] === '\'') {
+      end += 2;
+      continue;
+    }
+    if (raw[end] === '\'') return end + 1;
+    end += 1;
+  }
+  return -1;
+}
+
+/**
+ * The index just past the dollar-quoted literal starting at `at`, or -1 when
+ * `at` does not open one or it is never closed.
+ *
+ * `$tag$ … $tag$`, where the tag may be empty (`$$ … $$`) and the body is
+ * opaque: no escape processing happens inside it, and it ends only at the
+ * exact matching tag. A *different* tag within the body is ordinary text, so
+ * this does not recurse — it finds the matching close and stops.
+ *
+ * This branch is here because its absence was a regression, found in round 5
+ * of this file's review. The guard this file's canonical form replaced ran a
+ * regex over raw statement text and matched straight through a dollar-quoted
+ * body; the lexer did not, so a body containing an odd number of apostrophes
+ * —
+ *
+ *   DO $do$ BEGIN RAISE NOTICE $m$it's fine$m$; END $do$; ALTER TABLE …
+ *
+ * — put the single-quote branch into a literal that ran to the end of the
+ * argument. Whatever followed was never lower-cased and never split at `;`,
+ * so five guards read an empty corpus and reported clean. That is the risk
+ * of one lexer under every guard, arriving: the failure is not one guard
+ * being lenient, it is all of them being blind at once.
+ *
+ * There is an irony in the construct. `AppRoleAndDefaultPrivileges` used to
+ * wrap its `CREATE ROLE` in a `DO $do$ … $do$` block and that block was
+ * deleted, because a password containing the literal text `$do$` broke out of
+ * it — demonstrated by dropping a canary table. Two phases later the same
+ * construct reappeared as a blind spot in the guard protecting that same
+ * table, from the other direction.
+ *
+ * @param raw - the argument being scanned
+ * @param at - the index that may open a dollar quote
+ * @returns the index just past the closing tag, or -1
+ */
+function endOfDollarLiteral(raw: string, at: number): number {
+  if (raw[at] !== '$') return -1;
+  let tagEnd = at + 1;
+  while (tagEnd < raw.length && /[A-Za-z0-9_]/.test(raw[tagEnd])) tagEnd += 1;
+  if (raw[tagEnd] !== '$') return -1;
+  // A tag follows the rules for an unquoted identifier, so it cannot begin
+  // with a digit: `$1$` is the bind parameter `$1` followed by a `$`, not an
+  // opener. Reading it as one would swallow everything up to the next `$1$`,
+  // which is a way to hide a statement rather than a way to write one.
+  if (/^\$[0-9]/.test(raw.slice(at, tagEnd + 1))) return -1;
+  const tag = raw.slice(at, tagEnd + 1);
+  const close = raw.indexOf(tag, tagEnd + 1);
+  return close === -1 ? -1 : close + tag.length;
+}
+
+/**
  * The statements of one `query()` argument, each in the single spelling every
  * guard in this file is written against.
  *
@@ -169,6 +262,18 @@ function sqlStatements(source: string): string[] {
  *   `COMMENT ON COLUMN audit_entries.actor_user_id` this schema ships contains
  *   the words "foreign key", and the guard that must not fire on it relies on
  *   reading its real leading keyword.
+ * - **Dollar-quoted bodies are lifted out the same way**, `$$ … $$` and
+ *   `$tag$ … $tag$` alike, before comments are stripped and before the split
+ *   at `;`. A body with an odd number of apostrophes in it otherwise runs the
+ *   single-quote branch off the end of the argument and takes every statement
+ *   after it out of view — the regression `endOfDollarLiteral` exists to fix,
+ *   and the sharpest illustration of what one shared lexer costs when it is
+ *   wrong.
+ * - **An unterminated literal, of either kind, is not treated as a literal at
+ *   all.** Its opening character becomes ordinary text and scanning carries
+ *   on, so nothing after it is hidden. Such a statement is not valid SQL and
+ *   Postgres would refuse it, so the choice is only about what the guards can
+ *   see, and more is the safe answer.
  * - **Quoted identifiers are unquoted and folded**, so `"audit_entries"`,
  *   `"AUDIT_ENTRIES"` and `audit_entries` are one name (rounds 1–2).
  * - **Everything outside a literal is lower-cased**, so no guard needs an `i`
@@ -208,27 +313,30 @@ function canonicalize(raw: string): string[] {
   let text = '';
   let index = 0;
 
+  const lift = (end: number): void => {
+    literals.push(raw.slice(index, end));
+    text += `@@${literals.length - 1}@@`;
+    index = end;
+  };
+
   while (index < raw.length) {
     const here = raw[index];
     const next = raw[index + 1];
 
-    if (here === '\'') {
-      let end = index + 1;
-      while (end < raw.length) {
-        if (raw[end] === '\'' && raw[end + 1] === '\'') {
-          end += 2;
-          continue;
-        }
-        if (raw[end] === '\'') {
-          end += 1;
-          break;
-        }
-        end += 1;
-      }
-      literals.push(raw.slice(index, end));
-      text += `@@${literals.length - 1}@@`;
-      index = end;
+    const dollar = endOfDollarLiteral(raw, index);
+    if (dollar !== -1) {
+      lift(dollar);
       continue;
+    }
+
+    if (here === '\'') {
+      const end = endOfStringLiteral(raw, index);
+      if (end !== -1) {
+        lift(end);
+        continue;
+      }
+      // Unterminated. Falls through to ordinary text on purpose — see the
+      // TSDoc above for why that is the safe direction.
     }
 
     if (here === '"') {
@@ -247,7 +355,23 @@ function canonicalize(raw: string): string[] {
         identifier += raw[end];
         end += 1;
       }
-      text += identifier.toLowerCase();
+      if (text.endsWith('u&')) {
+        // `U&"…"` is a Unicode-escaped identifier: what is between the quotes
+        // is an escape sequence, not a name, so `U&"\0061udit_entries"` names
+        // `audit_entries` and canonicalizing it would mean decoding — with an
+        // escape character that a trailing `UESCAPE 'x'` clause can itself
+        // redefine. This does not decode it. It marks it, and
+        // `no migration writes a Unicode-escaped identifier` refuses the whole
+        // construct, which is complete without understanding any of it.
+        //
+        // Matched only where the `&` abuts the quote, because that is the only
+        // place Postgres accepts it: `U& "audit_entries"` with a space is not
+        // this syntax and not any other, it is a syntax error, so it is not a
+        // spelling of anything.
+        text = `${text.slice(0, -2)}unicode_escaped_identifier`;
+      } else {
+        text += identifier.toLowerCase();
+      }
       index = end;
       continue;
     }
@@ -524,6 +648,27 @@ function grantStatements(statements: readonly Tagged[]): string[] {
  */
 function wholesaleOwnershipStatements(statements: readonly Tagged[]): string[] {
   return statementsMatching(/\breassign owned\b|\ball in tablespace\b/, statements);
+}
+
+/**
+ * Statements naming a table through a Unicode-escaped identifier.
+ *
+ * `ALTER TABLE U&"\0061udit_entries" OWNER TO app` names `audit_entries` and
+ * matches no guard here, because the canonical form cannot fold an escape
+ * sequence into the name it denotes without decoding it — and the escape
+ * character is redefinable by a `UESCAPE` clause, so a decoder would be a
+ * second lexer with a second set of blind spots. Refusing the construct
+ * outright is complete without decoding anything, and costs nothing: this
+ * schema writes plain identifiers, and a Unicode-escaped one in a migration is
+ * either a mistake or an attempt to spell a table name past a text guard.
+ * Either way a person should look at it.
+ *
+ * Found while auditing the lexer in round 5. It is not the dollar-quote
+ * regression and was never covered — rounds 1–3's `"?audit_entries"?` regexes
+ * missed it too.
+ */
+function unicodeEscapedIdentifiers(statements: readonly Tagged[]): string[] {
+  return statementsMatching(/\bunicode_escaped_identifier\b/, statements);
 }
 
 describe('the audit migration', () => {
@@ -841,6 +986,73 @@ describe('the canonical form of a statement', () => {
     ]);
   });
 
+  it('lifts a dollar-quoted body out whole, however many apostrophes are in it', () => {
+    // The round-5 regression, as a unit. An odd apostrophe inside `$do$ … $do$`
+    // used to put the single-quote branch into a literal that ran to the end of
+    // the argument, taking the `ALTER TABLE` after it out of view for every
+    // guard at once.
+    expect(canonicalize(
+      'DO $do$ BEGIN RAISE NOTICE $m$it\'s fine$m$; END $do$;'
+      + ' ALTER TABLE audit_entries OWNER TO app',
+    )).toEqual([
+      'do $do$ BEGIN RAISE NOTICE $m$it\'s fine$m$; END $do$',
+      OWNER_TO,
+    ]);
+  });
+
+  it('handles the empty dollar tag', () => {
+    expect(canonicalize('DO $$ SELECT 1 $$; ALTER TABLE audit_entries OWNER TO app'))
+      .toEqual(['do $$ SELECT 1 $$', OWNER_TO]);
+  });
+
+  it('does not fragment a dollar-quoted body around what is inside it', () => {
+    // Everything the lexer reacts to, inside one opaque body: a statement
+    // separator, both comment forms, an unbalanced apostrophe, and a second,
+    // different dollar tag — which is ordinary text, not a nested quote.
+    const body = '$do$ a; b -- c\n /* d */ e\'f $m$ g $m$ $do$';
+    expect(canonicalize(`SELECT ${body}; ALTER TABLE audit_entries OWNER TO app`))
+      .toEqual([`select ${body}`, OWNER_TO]);
+  });
+
+  it('an unterminated dollar quote is not a literal, so what follows stays visible', () => {
+    // Fails closed, deliberately. Postgres refuses an unterminated dollar quote
+    // outright, so no valid migration contains one and nothing legitimate is
+    // affected; what the choice decides is whether an *invalid* one can be used
+    // to hide the statement after it. It cannot.
+    expect(canonicalize('SELECT $q$ unterminated; ALTER TABLE audit_entries OWNER TO app'))
+      .toEqual(['select $q$ unterminated', OWNER_TO]);
+  });
+
+  it('an unterminated string literal is not a literal either, for the same reason', () => {
+    expect(canonicalize('SELECT \'unterminated; ALTER TABLE audit_entries OWNER TO app'))
+      .toEqual(['select \'unterminated', OWNER_TO]);
+  });
+
+  it('does not mistake a numbered bind parameter for a dollar tag', () => {
+    // A tag follows the rules for an unquoted identifier and so cannot begin
+    // with a digit: `$1$` is the parameter `$1` followed by a `$`. Reading it
+    // as an opener would swallow everything up to the next `$1$` — which is
+    // this statement's entire point.
+    expect(canonicalize('SELECT $1$; ALTER TABLE audit_entries OWNER TO app; $1$'))
+      .toEqual(['select $1$', OWNER_TO, '$1$']);
+  });
+
+  it('marks a Unicode-escaped identifier rather than pretending to read it', () => {
+    // Not folded to `audit_entries` — folding it would mean decoding — and not
+    // left looking like an ordinary name either. The marker is what its guard
+    // matches.
+    expect(canonicalize('ALTER TABLE U&"\\0061udit_entries" OWNER TO app'))
+      .toEqual(['alter table unicode_escaped_identifier owner to app']);
+    expect(canonicalize('ALTER TABLE "audit_entries" OWNER TO app')).toEqual([OWNER_TO]);
+  });
+
+  it('leaves the parameterized helper query alone', () => {
+    // The one place this codebase writes `$n` at all. A lexer that treated
+    // `$1::text, $2` as a dollar quote would swallow the rest of the argument.
+    expect(canonicalize('SELECT format($1::text, $2::text) AS sql'))
+      .toEqual(['select format ( $1::text , $2::text ) as sql']);
+  });
+
   it('leaves audit_entries alone where it is the qualifier rather than the qualified', () => {
     // Dropping a schema qualifier must not drop a table qualifier. If it did,
     // every `COMMENT ON COLUMN audit_entries.…` would stop naming the table
@@ -990,6 +1202,65 @@ describe('the guards refuse every spelling that voids D13', () => {
     expect(wholesaleOwnershipStatements(corpus(sql))).not.toEqual([]);
   });
 
+  // Round 5. Every one of these was green — silently, with the guards reading
+  // an empty corpus rather than reading and permitting — until the lexer grew
+  // a dollar-quote branch. Kept as one case per guard, because the failure was
+  // never guard-specific: one lexer sits under all of them.
+  const DO_BLOCK = 'DO $do$ BEGIN RAISE NOTICE $m$it\'s fine$m$; END $do$';
+
+  it.each([
+    `${DO_BLOCK}; ALTER TABLE audit_entries OWNER TO app`,
+    `${DO_BLOCK}; ALTER TABLE audit_entries DROP COLUMN metadata`,
+  ])('the ALTER TABLE allow-list refuses %p behind a dollar quote', (sql) => {
+    const found = alterTableStatements(corpus(sql));
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.filter((statement) => PERMITTED_ALTERS.includes(statement))).toEqual([]);
+  });
+
+  it('the grant allow-list refuses a GRANT behind a dollar quote', () => {
+    const found = grantStatements(
+      corpus(`${DO_BLOCK}; GRANT UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app`),
+    );
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.filter((statement) => PERMITTED_GRANTS.includes(statement))).toEqual([]);
+  });
+
+  it('the wholesale-ownership guard refuses a REASSIGN behind a dollar quote', () => {
+    expect(wholesaleOwnershipStatements(corpus(`${DO_BLOCK}; REASSIGN OWNED BY owner TO app`)))
+      .not.toEqual([]);
+  });
+
+  it('the CREATE TABLE body guard refuses an inline foreign key behind a dollar quote', () => {
+    expect(createTableForeignKeyOffenders(corpus(
+      `${DO_BLOCK}; CREATE TABLE audit_entries (id uuid, user_id uuid REFERENCES users(id))`,
+    ))).not.toEqual([]);
+  });
+
+  it('the reverse REFERENCES guard refuses a foreign key behind a dollar quote', () => {
+    expect(referencesAuditOffenders(corpus(
+      `${DO_BLOCK}; ALTER TABLE users ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES audit_entries (id)`,
+    ))).not.toEqual([]);
+  });
+
+  it.each([
+    'ALTER TABLE U&"audit_entries" OWNER TO app',
+    'ALTER TABLE U&"\\0061udit_entries" OWNER TO app',
+    'ALTER TABLE u&"\\0061udit_entries" UESCAPE \'!\' OWNER TO app',
+    'ALTER TABLE users ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES U&"audit_entries" (id)',
+  ])('the Unicode-escaped-identifier guard refuses %p', (sql) => {
+    expect(unicodeEscapedIdentifiers(corpus(sql))).not.toEqual([]);
+  });
+
+  it('and refuses a statement sandwiched between two dollar-quoted bodies', () => {
+    // The second shape the review constructed: the offending statement is not
+    // at the end, and the apostrophe that used to break the lexer is inside the
+    // first body rather than after it.
+    const found = alterTableStatements(corpus(
+      'SELECT $q$ he said \'hi $q$; ALTER TABLE audit_entries OWNER TO app; SELECT $q$ \' $q$',
+    ));
+    expect(found).toEqual(['alter table audit_entries owner to app']);
+  });
+
   it('the created-once guard sees a rebuild however it is spelled', () => {
     // `CREATE TABLE IF NOT EXISTS` beside `DROP TABLE IF EXISTS` is the
     // ordinary way somebody writes a rebuild by hand, and it was this file's
@@ -1054,6 +1325,11 @@ describe('each guard fails, rather than passes, when what it examines is absent'
 
   it('the wholesale-ownership guard: its corpus-size check is what refuses an empty corpus', () => {
     expect(wholesaleOwnershipStatements(NOTHING)).toEqual([]);
+    expect(NOTHING.length).not.toBeGreaterThan(0);
+  });
+
+  it('the Unicode-identifier guard: its corpus-size check is what refuses an empty corpus', () => {
+    expect(unicodeEscapedIdentifiers(NOTHING)).toEqual([]);
     expect(NOTHING.length).not.toBeGreaterThan(0);
   });
 
@@ -1183,6 +1459,12 @@ describe('audit_entries never has its privileges handed back', () => {
     const statements = allCanonicalStatements();
     expect(statements.length).toBeGreaterThan(0);
     expect(wholesaleOwnershipStatements(statements)).toEqual([]);
+  });
+
+  it('and no migration writes a Unicode-escaped identifier', () => {
+    const statements = allCanonicalStatements();
+    expect(statements.length).toBeGreaterThan(0);
+    expect(unicodeEscapedIdentifiers(statements)).toEqual([]);
   });
 });
 
