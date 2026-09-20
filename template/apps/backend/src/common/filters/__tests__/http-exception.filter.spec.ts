@@ -1,4 +1,12 @@
-import { ArgumentsHost, BadRequestException, HttpStatus, NotFoundException } from '@nestjs/common';
+import {
+  ArgumentsHost,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  HttpStatus,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { I18nContext, I18nValidationException } from 'nestjs-i18n';
 import { ConsumedTokenError, ExpiredTokenError, SessionNotFoundError } from '__FORGE_SCOPE__/core/auth/errors';
 import { readFileSync } from 'node:fs';
@@ -7,7 +15,12 @@ import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policie
 import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/types';
 import { WeakPasswordError } from '__FORGE_SCOPE__/core/identities/errors';
 import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
-import { DOMAIN_ERROR_CODES, HttpExceptionFilter } from '../http-exception.filter';
+import { InvalidCredentialsError } from '__FORGE_SCOPE__/core/auth/errors';
+import {
+  DOMAIN_ERROR_CODES,
+  HttpExceptionFilter,
+  UNAUTHORIZED_DOMAIN_ERROR_CODES,
+} from '../http-exception.filter';
 
 /**
  * Every member of `PasswordPolicyViolation`, kept honest by the compiler.
@@ -321,6 +334,51 @@ describe('HttpExceptionFilter', () => {
     // the one thing `code` exists to stop.
     it('names each code once', () => {
       expect(new Set(DOMAIN_ERROR_CODES).size).toBe(DOMAIN_ERROR_CODES.length);
+    });
+
+    /**
+     * The two invariants the webapp's transport rests on.
+     *
+     * `createAuthFetch` renews a session on a `401` and must not renew for a
+     * `401` that answers the request. It tells them apart by whether the
+     * envelope carries a `code` at all — which is right only while a framework
+     * refusal carries none and the domain names exactly one 401. Both were
+     * greppable and neither was asserted; a rule resting on an unasserted
+     * invariant is the same defect one level down.
+     */
+    it('carries no domain code on a framework refusal, whatever its status', () => {
+      // Every status the webapp's transport reacts to, raised the way the
+      // framework raises it — a guard, a pipe, Nest's own 404. None of them is a
+      // `DomainError`, so none of them reaches the table above, so none carries
+      // a code. The 401 is the load-bearing one: it is what the JWT guard throws
+      // for a lapsed credential and what sign-in throws for a refusal.
+      for (const exception of [
+        new UnauthorizedException(),
+        new ForbiddenException(),
+        new NotFoundException(),
+        new ConflictException(),
+        new BadRequestException(),
+      ]) {
+        jsonMock.mockClear();
+        filter.catch(exception, host);
+        expect(body().code).toBeUndefined();
+      }
+    });
+
+    it('names exactly one 401 in the domain, and it is the wrong-secret one', () => {
+      // Written out rather than computed, for the reason the list above gives.
+      // A second 401 added to the table makes this red, which is the point: it
+      // is the moment somebody has to look at what the webapp does with it.
+      expect(UNAUTHORIZED_DOMAIN_ERROR_CODES).toEqual(['INVALID_CREDENTIALS']);
+    });
+
+    it('really does emit that one, with that status and that code', () => {
+      // Without this the assertion above could pass against a table entry that
+      // never reaches a response — it would be a claim about a constant rather
+      // than about what this API answers.
+      filter.catch(new InvalidCredentialsError(), host);
+      expect(statusMock).toHaveBeenCalledWith(HttpStatus.UNAUTHORIZED);
+      expect(body().code).toBe('INVALID_CREDENTIALS');
     });
   });
 

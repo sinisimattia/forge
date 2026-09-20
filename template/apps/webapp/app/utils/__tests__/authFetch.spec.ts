@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '~/fetchers';
-import type { ApiClient, ApiRequest } from '~/types';
+import type { ApiClient, ApiErrorCode, ApiRequest } from '~/types';
 import { createAuthFetch } from '~/utils/authFetch';
 
 /**
@@ -13,9 +13,17 @@ import { createAuthFetch } from '~/utils/authFetch';
  * was asked, which the transport records rather than the wrapper reporting.
  */
 
-/** A refusal with the status the backend would use. */
+/** A refusal with the status the backend would use, and no domain code. */
 function refusal(status: number): ApiError {
   return new ApiError(status, { error: 'Unauthorized', message: 'errors.http.unauthorized' });
+}
+
+/**
+ * A refusal the **domain** named — the shape the backend's filter emits when its
+ * `DOMAIN_ERRORS` table matches.
+ */
+function namedRefusal(status: number, code: ApiErrorCode): ApiError {
+  return new ApiError(status, { error: 'Unauthorized', message: 'errors.auth.invalid_credentials', code });
 }
 
 /** The transport, plus what it was asked. */
@@ -185,5 +193,59 @@ describe('createAuthFetch', () => {
 
     await expect(client(REQUEST)).rejects.toThrow(TypeError);
     expect(renewals).toBe(0);
+  });
+
+  it('does NOT renew for a 401 the domain named, and does NOT re-send it', async () => {
+    // A wrong *current* password is `InvalidCredentialsError` — a 401 carrying
+    // `INVALID_CREDENTIALS`. It is an answer about the request, not about the
+    // credential, and it used to be renewed and retried: the recorded paths for
+    // one mistyped password were
+    // `['/auth/change-password', '/auth/refresh', '/auth/change-password']`.
+    //
+    // The re-send is the damaging half. Anything on the backend counting failed
+    // attempts sees two for one, so a lockout fires after half as many tries as
+    // it advertises. Asserting the transport was asked **once** is what catches
+    // that; asserting only "no renewal" would pass for a version that skipped
+    // the renewal and retried anyway.
+    const world = scripted([namedRefusal(401, 'INVALID_CREDENTIALS')]);
+    const renewals: number[] = [];
+
+    const client = createAuthFetch({
+      inner: world.client,
+      presented: () => 'held',
+      renew: async () => {
+        renewals.push(1);
+        return true;
+      },
+    });
+
+    await expect(client({ method: 'POST', path: '/auth/change-password' })).rejects.toThrow();
+
+    expect(renewals).toEqual([]);
+    expect(world.seen).toHaveLength(1);
+  });
+
+  it('still renews for a 401 that named nothing, which is what a lapse looks like', async () => {
+    // The other half, and the one that stops the rule above from being written as
+    // "never renew". The JWT guard's refusal is a framework `UnauthorizedException`
+    // and carries no `code`; that is the only thing that distinguishes it, and a
+    // version that refused to renew for any 401 would leave every page unable to
+    // recover from an ordinary lapse.
+    const world = scripted([refusal(401), { ok: true }]);
+    const renewals: number[] = [];
+
+    const client = createAuthFetch({
+      inner: world.client,
+      presented: () => 'held',
+      renew: async () => {
+        renewals.push(1);
+        return true;
+      },
+    });
+
+    await expect(client(REQUEST)).resolves.toEqual({ ok: true });
+
+    expect(renewals).toEqual([1]);
+    expect(world.seen).toHaveLength(2);
   });
 });

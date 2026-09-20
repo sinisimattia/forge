@@ -173,6 +173,27 @@ export const DOMAIN_ERROR_CODES: readonly string[] = DOMAIN_ERRORS
   .map((entry) => entry.code)
   .sort((left, right) => left.localeCompare(right));
 
+/**
+ * The codes this API emits **with a `401`**.
+ *
+ * Derived rather than written out, and exported for one reason: the webapp's
+ * `createAuthFetch` renews a session on a `401` and must not do so for a `401`
+ * that answers the *request* rather than the credential. It tells them apart by
+ * `code !== undefined`, which is correct only while two things hold — a
+ * framework `401` carries no code (it takes this filter's generic branch), and
+ * the domain names exactly one 401. Neither was asserted anywhere, and a rule
+ * resting on an unasserted invariant is the same defect one level down: the next
+ * 401 added to the table above would silently change what the webapp's transport
+ * does to it.
+ *
+ * So this list exists to be pinned, in this file's own spec, against a literal.
+ * It is the only reason it is exported.
+ */
+export const UNAUTHORIZED_DOMAIN_ERROR_CODES: readonly string[] = DOMAIN_ERRORS
+  .filter((entry) => entry.status === HttpStatus.UNAUTHORIZED)
+  .map((entry) => entry.code)
+  .sort((left, right) => left.localeCompare(right));
+
 /** Generic fallback translation key for framework-originated HTTP statuses. */
 const HTTP_STATUS_FALLBACK_KEY: Record<number, I18nKey> = {
   [HttpStatus.BAD_REQUEST]: 'errors.http.bad_request',

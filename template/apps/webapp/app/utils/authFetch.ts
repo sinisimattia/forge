@@ -34,22 +34,18 @@ export interface AuthFetchOptions {
    * rotation, not a reuse, so it is wasteful and not dangerous — and the retry
    * is refused a second time and stops.
    *
-   * That case now has a caller (`app/pages/account/security.vue`) and two
-   * consequences worth naming, both observed rather than reasoned about —
-   * `stores/__tests__/auth.account.spec.ts` drives them:
+   * That case had a caller (`app/pages/account/security.vue`) and it cost more
+   * than one renewal: the retry re-sent the same body, so a **wrong secret
+   * reached the backend twice for one attempt**. Anything on that side counting
+   * failed attempts — a lockout, a rate limit — saw two, and a person was locked
+   * out after half as many tries as the limit said. Measured, not reasoned
+   * about: the recorded request paths for one mistyped password were
+   * `['/auth/change-password', '/auth/refresh', '/auth/change-password']`.
    *
-   * - the session really is rotated by a mistyped password, so the store has to
-   *   take up the renewed credential or it presents a spent one afterwards. It
-   *   does, because `renew` writes through `accept`; the assertion exists so
-   *   that stays true.
-   * - the wrong secret reaches the backend **twice** for one attempt, because
-   *   the retry re-sends the same body. Anything on that side counting failed
-   *   attempts — a lockout, a rate limit — sees two, and a person is locked out
-   *   after half as many tries as the limit says. Narrowing the retry to
-   *   requests that carry no secret would fix it, and would mean this file
-   *   knowing something about which request it is wrapping, which is the
-   *   property it is written to avoid. It is recorded here rather than traded
-   *   away silently.
+   * That is fixed below, by the domain `code` rather than by this file learning
+   * which request it wraps. What remains true is the narrower original
+   * statement: a `401` with no domain code and a non-null credential is treated
+   * as a lapse, which is right for the guard and is all sign-in ever produces.
    */
   readonly presented: () => string | null;
   /**
@@ -111,6 +107,23 @@ export function createAuthFetch(options: AuthFetchOptions): ApiClient {
       // Only a lapsed credential. A `403`, a `404` and a `409` are answers about
       // the request, and renewing changes none of them.
       if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      // **A `401` the domain named is an answer about the request too.** The
+      // backend's filter attaches `code` only for an exception its `DOMAIN_ERRORS`
+      // table matches; a framework `401` — the JWT guard's, and the bare one
+      // sign-in throws for a refusal — takes the generic branch and carries none.
+      // So "the envelope names a domain error" is exactly "this is not a lapsed
+      // credential", said without this file learning anything about which request
+      // it is wrapping.
+      //
+      // `!== undefined` rather than a named code, deliberately: a 401 domain error
+      // added later is then covered in the safe direction, rather than silently
+      // acquiring a renewal and a retry.
+      //
+      // Two invariants hold this up, and both are asserted rather than greppable —
+      // in the backend's own filter spec, which is where they are facts:
+      // *the wire vocabulary this API emits* → `no framework refusal carries a
+      // domain code` and `INVALID_CREDENTIALS is the only 401 the domain names`.
+      if (error.body.code !== undefined) throw error;
       if (options.presented() === null) throw error;
       if (!(await options.renew())) throw error;
       return options.inner<T>(request);

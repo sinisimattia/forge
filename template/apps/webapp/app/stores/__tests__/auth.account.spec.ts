@@ -119,25 +119,37 @@ describe('the auth store, for account management', () => {
     await expect(store.changePassword(PLAINTEXT, NEXT_PLAINTEXT)).resolves.toBeUndefined();
   });
 
-  it('is left holding the world\'s current credential after a refused change', async () => {
-    // A refused change **rotates the session**, and the store must keep up.
+  it('does NOT re-send a refused secret, or rotate the session for it', async () => {
+    // **The measurement this replaced an assertion about.** A refused change used
+    // to cost a renewal and a second attempt: `createAuthFetch` could not tell
+    // "your credential lapsed" from "that is not your current password", because
+    // both are a `401`, so it renewed and retried — and the retry re-sent the
+    // same body. The recorded paths for one mistyped password were
+    // `['/auth/change-password', '/auth/refresh', '/auth/change-password']`.
     //
-    // `createAuthFetch` cannot tell "your credential lapsed" from "that is not
-    // your current password": both are a bare `401` with no code, by the
-    // backend's design. It therefore renews once and retries — a cost its own
-    // documentation names. What that documentation does not say, and what this
-    // assertion pins, is the consequence for the store: the renewal issues a new
-    // credential, and a store that did not take it up would be presenting a
-    // spent one on the next request, having done nothing but mistype a password.
+    // Two attempts for one is the damaging half: anything on the backend counting
+    // failed attempts sees double, so a lockout fires after half as many tries as
+    // it advertises. `createAuthFetch` now stops at a `401` the domain named.
+    //
+    // Counting the requests rather than watching the credential, because the
+    // credential is state and this is behaviour: a version that skipped the
+    // renewal and retried anyway would leave the credential untouched and still
+    // be wrong.
+    const seen: string[] = [];
     const store = useAuthStore();
-    store.adoptTransport(backend.client);
+    store.adoptTransport(<T>(request: ApiRequest): Promise<T> => {
+      seen.push(request.path);
+      return backend.client<T>(request);
+    });
     await store.login(ACTOR.email, PLAINTEXT);
     const before = store.accessToken;
+    seen.length = 0;
 
     await expect(store.changePassword(NEXT_PLAINTEXT, NEXT_PLAINTEXT)).rejects.toThrow();
 
-    expect(store.accessToken).toBe(backend.issuedCredentials().at(-1));
-    expect(store.accessToken).not.toBe(before);
+    expect(seen.filter((path) => path === '/auth/change-password')).toHaveLength(1);
+    expect(seen).not.toContain('/auth/refresh');
+    expect(store.accessToken).toBe(before);
   });
 
   it('refuses to change a secret for nobody', async () => {
