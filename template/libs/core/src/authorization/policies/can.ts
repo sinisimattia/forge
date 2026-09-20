@@ -1,7 +1,8 @@
 import { assertNever } from '../../shared/policies/assertNever';
 import { PlatformRole } from '../../users/enums/PlatformRole';
 import type { Permission } from '../types/Permission';
-import type { OwnedResource, Principal } from '../types/Principal';
+import type { Principal, Resource } from '../types/Principal';
+import { ROLE_PERMISSIONS } from './ROLE_PERMISSIONS';
 
 /**
  * The one access decision in this project (ADR-0006).
@@ -12,7 +13,7 @@ import type { OwnedResource, Principal } from '../types/Principal';
  * on a domain in turn. No cycle resulted, because every edge in both directions
  * is a deep path rather than a barrel, but nothing enforced that and an
  * inversion in a folder named `shared` is the kind of thing the next person
- * copies. It is also the module a second consumer imports by name: the webapp
+ * copies. It is also the module a second consumer imports by name: a client
  * calls this same function to decide what to render, so the subpath it imports
  * is worth being `authorization` rather than `shared/policies`.
  *
@@ -31,11 +32,11 @@ import type { OwnedResource, Principal } from '../types/Principal';
  * ## What it evaluates, and what it does not yet
  *
  * ADR-0006 describes three layers in order: platform role, organization role,
- * resource grant. **Only the first and the ownership half of the third exist
- * here**, because organizations do not exist yet. That is written as a short
- * function rather than as a scaffold with two empty layers in it: an empty
- * layer is a branch no test can fail and a shape the next phase is obliged to
- * keep whether or not it fits.
+ * resource grant. **The first two exist here, and the ownership half of the
+ * third**; the grant half arrives with grants themselves. That is still written
+ * as a short function rather than as a scaffold with an empty layer in it: an
+ * empty layer is a branch no test can fail and a shape the next phase is obliged
+ * to keep whether or not it fits.
  *
  * `PLATFORM_ADMIN` passing everything is the first layer, and it is the reason
  * every such pass is recorded: it is a pass the ordinary rules would have
@@ -50,7 +51,7 @@ import type { OwnedResource, Principal } from '../types/Principal';
 export function can(
   principal: Principal,
   permission: Permission,
-  resource?: OwnedResource,
+  resource?: Resource,
 ): boolean {
   // Layer one. Deliberately ahead of the switch and not a case in it: it is not
   // a rule about any one permission, it is the statement that this principal
@@ -58,18 +59,59 @@ export function can(
   // including the ones added after this line was written.
   if (principal.platformRole === PlatformRole.PLATFORM_ADMIN) return true;
 
+  // Layer two — organization role (ADR-0006, spec §9.5).
+  //
+  // The membership consulted is the one for the RESOURCE's organization. Reading
+  // "the principal's role" without saying which organization it is in would give
+  // a person their strongest role everywhere they belong, which is a cross-tenant
+  // escalation wearing the shape of a convenience.
+  //
+  // A resource with no `organizationId` skips this layer rather than failing it:
+  // `user:read` is about a person, not a tenant, and the switch below is where it
+  // is answered.
+  if (resource?.organizationId !== undefined) {
+    const membership = principal.memberships.find(
+      (m) => m.organizationId === resource.organizationId,
+    );
+    // No membership means no organization-role answer at all — not a weaker one.
+    // This is the core half of tenant isolation.
+    if (membership === undefined) return false;
+    if (ROLE_PERMISSIONS[membership.role].includes(permission)) return true;
+  }
+
   switch (permission) {
     case 'platform:administer':
+      // Nothing below layer one grants it, and no organization role appears
+      // above with it either — `ROLE_PERMISSIONS` is asserted against that.
+      return false;
     case 'audit:read':
-      // Nothing below platform administration grants either, today. When
-      // organizations arrive, `audit:read` gains an organization-scoped answer
-      // here and `platform:administer` does not — see `Permission`.
+    case 'organization:read':
+    case 'organization:update':
+    case 'organization:delete':
+    case 'member:read':
+    case 'member:invite':
+    case 'member:update':
+    case 'member:remove':
+    case 'invitation:read':
+    case 'invitation:revoke':
+    case 'grant:read':
+    case 'grant:create':
+    case 'grant:revoke':
+      // Every member here is answered by layer two when it can be answered at
+      // all, so reaching this line means one of exactly two things: the ask named
+      // no organization, or it named one whose role does not carry the
+      // permission. Both are refusals. An ask with no organization is refused
+      // rather than read as "any organization I belong to", which is the same
+      // judgement `user:read` makes for a missing owner — and for `audit:read`
+      // it is the difference between one organization's entries and the
+      // deployment's whole history, which only layer one answers.
       return false;
     case 'user:read':
       // A profile is readable by the person it is about. `resource === undefined`
       // is a caller that asked whether somebody may read "a profile" without
       // saying whose, which is not a question with an answer — so it is refused
-      // rather than treated as "their own".
+      // rather than treated as "their own". A resource that names an owner of
+      // `undefined` is refused by the same comparison.
       return resource !== undefined && resource.ownerId === principal.userId;
     default:
       // Reachable only from outside the type system. The compiler rejects a new

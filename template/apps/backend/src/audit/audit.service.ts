@@ -107,7 +107,13 @@ export class AuditService implements IAuditService {
   public async query(actorId: UserId, query: AuditQuery): Promise<PaginatedResult<AuditEntry>> {
     const actor = await this.users.findOne({ where: { id: actorId } });
     if (actor === null) throw new ForbiddenException();
-    if (!can({ userId: actor.id as UserId, platformRole: actor.platformRole }, 'audit:read')) {
+    // No memberships, and no resource either: this is the deployment-wide
+    // history, which only layer one answers. An organization administrator
+    // reading their own organization's entries is the same permission asked
+    // *with* an organization, and it is a different call this endpoint does not
+    // make yet.
+    const principal = { userId: actor.id as UserId, platformRole: actor.platformRole, memberships: [] };
+    if (!can(principal, 'audit:read')) {
       throw new ForbiddenException();
     }
 

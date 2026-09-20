@@ -250,10 +250,18 @@ export class UsersService implements IUserService {
     return row;
   }
 
-  /** The actor as core's `can` wants them: two facts, read from the row. */
+  /**
+   * The actor as core's `can` wants them, read from the row.
+   *
+   * No memberships. Every question this service asks is about a person or about
+   * the deployment — never about a record inside an organization — so layer two
+   * is never consulted and hydrating them would be a second query for an answer
+   * that cannot depend on it. `PermissionsGuard` (Task 13) is what builds a full
+   * principal for the callers that do ask organization-scoped questions.
+   */
   private async principalOf(actorId: UserId): Promise<Principal> {
     const row = await this.require(actorId);
-    return { userId: row.id as UserId, platformRole: row.platformRole };
+    return { userId: row.id as UserId, platformRole: row.platformRole, memberships: [] };
   }
 
   /**
@@ -269,7 +277,10 @@ export class UsersService implements IUserService {
     // somebody else's id — which is what the caller would otherwise report.
     const row = await this.users.findOne({ where: { id: actorId } });
     if (row === null) throw new ForbiddenException();
-    if (!can({ userId: row.id as UserId, platformRole: row.platformRole }, 'platform:administer')) {
+    // No memberships: `platform:administer` is layer one's alone and no
+    // organization role carries it, so there is nothing for layer two to read.
+    const principal = { userId: row.id as UserId, platformRole: row.platformRole, memberships: [] };
+    if (!can(principal, 'platform:administer')) {
       throw new ForbiddenException();
     }
   }

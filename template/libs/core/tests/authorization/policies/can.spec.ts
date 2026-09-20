@@ -1,13 +1,26 @@
-import { can } from '__FORGE_SCOPE__/core/authorization/policies';
+import { ROLE_PERMISSIONS, can } from '__FORGE_SCOPE__/core/authorization/policies';
 import type { Permission, Principal } from '__FORGE_SCOPE__/core/authorization/types';
+import { OrgRole } from '__FORGE_SCOPE__/core/organizations/enums';
+import type { OrganizationId } from '__FORGE_SCOPE__/core/organizations/types';
 import { PlatformRole } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 
 const ADA = 'user-ada' as UserId;
 const GRACE = 'user-grace' as UserId;
 
-const administrator: Principal = { userId: ADA, platformRole: PlatformRole.PLATFORM_ADMIN };
-const ordinary: Principal = { userId: ADA, platformRole: PlatformRole.PLATFORM_USER };
+const ORG_1 = 'org-1' as OrganizationId;
+const ORG_2 = 'org-2' as OrganizationId;
+
+const administrator: Principal = {
+  userId: ADA,
+  platformRole: PlatformRole.PLATFORM_ADMIN,
+  memberships: [],
+};
+const ordinary: Principal = {
+  userId: ADA,
+  platformRole: PlatformRole.PLATFORM_USER,
+  memberships: [],
+};
 
 /**
  * Every member of {@link Permission}, listed rather than derived.
@@ -17,7 +30,23 @@ const ordinary: Principal = { userId: ADA, platformRole: PlatformRole.PLATFORM_U
  * a member without deciding what an administrator and an ordinary principal get
  * from it leaves this list short, and the count says so.
  */
-const EVERY_PERMISSION: Permission[] = ['platform:administer', 'audit:read', 'user:read'];
+const EVERY_PERMISSION: Permission[] = [
+  'platform:administer',
+  'audit:read',
+  'user:read',
+  'organization:read',
+  'organization:update',
+  'organization:delete',
+  'member:read',
+  'member:invite',
+  'member:update',
+  'member:remove',
+  'invitation:read',
+  'invitation:revoke',
+  'grant:read',
+  'grant:create',
+  'grant:revoke',
+];
 
 describe('can', () => {
   describe('the platform layer', () => {
@@ -66,12 +95,89 @@ describe('can', () => {
     });
   });
 
+  describe('layer two — organization role', () => {
+    // The membership consulted is the one for the RESOURCE's organization, not
+    // the first one the principal happens to hold. A principal belonging to two
+    // organizations with different roles is the only shape that can tell those
+    // apart, so it is the shape this test uses.
+    it('reads the role from the membership for the resource\'s organization', () => {
+      const principal: Principal = {
+        userId: ADA,
+        platformRole: PlatformRole.PLATFORM_USER,
+        memberships: [
+          { organizationId: ORG_1, role: OrgRole.VIEWER },
+          { organizationId: ORG_2, role: OrgRole.ADMIN },
+        ],
+      };
+      expect(can(principal, 'organization:update', { organizationId: ORG_1 })).toBe(false);
+      expect(can(principal, 'organization:update', { organizationId: ORG_2 })).toBe(true);
+    });
+
+    // A resource in an organization the principal does not belong to is refused,
+    // and this is the assertion tenant isolation rests on in the domain. The
+    // server-side half — that the refusal is indistinguishable from "no such
+    // thing" — is D9 and lives in the backend suite.
+    it('refuses a resource in an organization the principal does not belong to', () => {
+      const principal: Principal = {
+        userId: ADA,
+        platformRole: PlatformRole.PLATFORM_USER,
+        memberships: [{ organizationId: ORG_1, role: OrgRole.OWNER }],
+      };
+      expect(can(principal, 'organization:read', { organizationId: ORG_2 })).toBe(false);
+    });
+
+    // An organization permission asked without naming an organization has no
+    // answer, so it is refused rather than treated as "any of mine" — the same
+    // judgement `user:read` already makes for a missing owner.
+    it('refuses an organization permission asked without a resource', () => {
+      const principal: Principal = {
+        userId: ADA,
+        platformRole: PlatformRole.PLATFORM_USER,
+        memberships: [{ organizationId: ORG_1, role: OrgRole.OWNER }],
+      };
+      expect(can(principal, 'organization:update')).toBe(false);
+    });
+
+    // Layer one is unconditional and runs before layer two, so a platform
+    // administrator passes for an organization they have no membership in. That
+    // is spec §9.5's first layer and the reason every such pass is recorded.
+    it('lets a platform administrator through with no membership at all', () => {
+      const principal: Principal = {
+        userId: ADA,
+        platformRole: PlatformRole.PLATFORM_ADMIN,
+        memberships: [],
+      };
+      expect(can(principal, 'organization:delete', { organizationId: ORG_2 })).toBe(true);
+    });
+
+    // Every permission the map grants a role is answered by this layer, and the
+    // ones it does not grant are refused. Asserted against the map rather than
+    // against a hand-copied list, because a second list of what an OWNER may do
+    // is a second place for the answer to be wrong.
+    it.each(Object.values(OrgRole))('grants %s exactly what the map says', (role) => {
+      const principal: Principal = {
+        userId: ADA,
+        platformRole: PlatformRole.PLATFORM_USER,
+        memberships: [{ organizationId: ORG_1, role }],
+      };
+      const granted = new Set<Permission>(ROLE_PERMISSIONS[role]);
+      for (const permission of EVERY_PERMISSION) {
+        // `user:read` is the one member with an answer below layer two, and this
+        // resource names no owner — so it is refused there, which is what makes
+        // the map the only source of a `true` in this loop.
+        expect(can(principal, permission, { organizationId: ORG_1 })).toBe(
+          granted.has(permission),
+        );
+      }
+    });
+  });
+
   describe('exhaustiveness', () => {
     it('lists every permission the suite claims to cover', () => {
       // The list above is hand-maintained; this is what makes forgetting to
       // extend it visible. A literal, not `EVERY_PERMISSION.length` compared
       // against itself.
-      expect(EVERY_PERMISSION.length).toBe(3);
+      expect(EVERY_PERMISSION.length).toBe(15);
       expect(new Set(EVERY_PERMISSION).size).toBe(EVERY_PERMISSION.length);
     });
 

@@ -1,2 +1,2 @@
 export type { Permission } from './Permission';
-export type { OwnedResource, Principal } from './Principal';
+export type { Principal, PrincipalMembership, Resource } from './Principal';

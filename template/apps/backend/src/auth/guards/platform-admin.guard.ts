@@ -86,7 +86,15 @@ export class PlatformAdminGuard implements CanActivate {
     if (row === null) throw new NotFoundException();
 
     const permitted = can(
-      { userId: row.id as UserId, platformRole: row.platformRole },
+      {
+        userId: row.id as UserId,
+        platformRole: row.platformRole,
+        // No memberships: this guard asks only layer one, which never reads them.
+        // Hydrating them here would be a database read for an answer that cannot
+        // depend on it. `PermissionsGuard` (Task 13) is what hydrates a full
+        // principal, and it is the only thing that needs one.
+        memberships: [],
+      },
       'platform:administer',
     );
     if (!permitted) throw new NotFoundException();
