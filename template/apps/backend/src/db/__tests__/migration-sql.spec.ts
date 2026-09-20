@@ -22,36 +22,74 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  * D13 quietly stop being true, and a schema migration is exactly the kind of
  * file somebody edits months later without knowing which line was load-bearing.
  *
+ * ## One canonical spelling, because chasing spellings does not converge
+ *
+ * Four rounds of review each found a different *spelling* of the same table
+ * reference walking past a guard that named it: the quoted identifier
+ * `"audit_entries"`; the schema-qualified `public.audit_entries`; a
+ * `CREATE TABLE audit_entries (… REFERENCES …)` hidden behind a leading
+ * `COMMENT ON …;` in one `query()` call; and then the same thing again spelled
+ * `CREATE TABLE IF NOT EXISTS`. Each round closed one spelling in one guard,
+ * and each was followed by the discovery of another. That is not four
+ * oversights, it is one design error: a guard written against raw SQL text
+ * makes every way of writing a table reference a separate bypass, and the
+ * supply of spellings is not finite.
+ *
+ * So no guard below reads raw SQL. `canonicalStatements` reduces a `query()`
+ * argument to a canonical form first, and every guard is written against that
+ * one form — which is why a fifth spelling closes itself rather than becoming
+ * a fifth round. What canonicalization does, and each of the bypasses it
+ * retires, is documented on `canonicalize` itself.
+ *
+ * The normalizer is the single point of failure this buys: a bug in it
+ * weakens every guard at once, silently. Two things answer that. It is tested
+ * in its own right — `the canonical form of a statement` asserts that each
+ * spelling reduces to the *same* canonical string, so a normalizer that
+ * stopped collapsing something fails there rather than quietly widening four
+ * guards. And `the guards refuse every spelling that voids D13` runs the
+ * guard predicates against a constructed offender in every spelling, so
+ * "refuses" is a property this suite checks rather than one a reader infers
+ * from a regex.
+ *
+ * Canonicalization deliberately does **not** erase what a guard needs to see.
+ * String literals survive verbatim, which is why `audit_entries is never given
+ * a foreign key` still has to exclude statements that open `COMMENT ON`: the
+ * column comment this schema ships says, in prose, "Deliberately not a foreign
+ * key", and a guard scanning that text would fire on the comment explaining
+ * why there is no foreign key. Its sibling, the `CREATE TABLE` check, must not
+ * take the same exclusion — it is anchored on structure rather than on a
+ * leading keyword, precisely so that a `COMMENT ON` prefix has nothing to hide
+ * behind. Two guards over one table, opposite treatment of the same prefix,
+ * both deliberate.
+ *
  * ## What these guards do not catch
  *
- * A textual guard over SQL embedded in TypeScript cannot be made complete, and
- * saying which shapes get past these ones is more useful than implying none do.
- * A review attacked them with twelve variants; three got through. Two are
- * named here rather than patched, because a guard that grows a special case
- * per adversarial variant gets harder to read without getting meaningfully
- * harder to defeat. The third — a foreign key smuggled into `audit_entries`'s
- * own `CREATE TABLE` behind a leading `COMMENT ON …;` in the same `query()`
- * call — was closed rather than disclosed in round 3 of this file's review,
- * after an earlier version of this list named the wrong composed statement as
- * the open one; see `audit_entries is never given a foreign key › and no
- * migration creates it with a foreign key inside its own CREATE TABLE` for
- * what actually closes it and why. Quoting and schema-qualification of
- * `audit_entries` itself — `"audit_entries"`, `public.audit_entries` — are
- * closed too, in every guard that names the table (round 2).
+ * A textual guard over SQL embedded in TypeScript still cannot be made
+ * complete, and saying which shapes get past these ones is more useful than
+ * implying none do. Each bullet below was constructed and confirmed open
+ * before being written here, because this list has twice been wrong in the
+ * other direction — once naming a case that was already covered, once omitting
+ * one that was live.
  *
- * - **`IF EXISTS` / `IF NOT EXISTS`.** `DROP TABLE IF EXISTS audit_entries`
- *   and `CREATE TABLE IF NOT EXISTS audit_entries` are invisible to
- *   `audit_entries is created once and never rebuilt`, and that spelling is the
- *   ordinary way somebody writes a rebuild by hand.
- * - **SQL hoisted into a variable.** `sqlStatements` reads a literal at the
- *   call; `const sql = '…'; await queryRunner.query(sql)` yields nothing, so
- *   every "no statement does X" assertion passes over it.
+ * - **SQL that is not a literal at the call.** `sqlStatements` reads the
+ *   string written at `queryRunner.query(…)` / `exec(queryRunner, …)`. A
+ *   hoisted `const sql = '…'; await queryRunner.query(sql)` yields nothing at
+ *   all; `'ALTER TABLE ' + table + ' OWNER TO app'` yields only the first
+ *   fragment; a `${}` interpolation of a variable yields text with the
+ *   variable's name in it where the table's name should be. All three pass
+ *   every "no statement does X" assertion in this file.
+ * - **Schema changes made through TypeORM's QueryRunner API rather than SQL.**
+ *   `queryRunner.createForeignKey('audit_entries', …)` adds exactly the
+ *   foreign key this file exists to forbid, and leaves no SQL text anywhere
+ *   for a guard to read. The migrations here use `query()` and `exec()`
+ *   throughout; nothing in the type system requires the next one to.
  *
- * None of these is a way to weaken the database. They are ways to weaken this
- * file, and what stands behind it is D13: Task 19 runs the real statement
- * against the real Postgres, and its fault injections include the foreign-key
- * bypass. If a change to the audit table cannot be made obvious in the text,
- * that is a reason to be suspicious of the change, not of the test.
+ * Neither is a way to weaken the database that a reviewer reading the
+ * migration could not see, and what stands behind all of it is D13: Task 19
+ * runs the real statement against the real Postgres, and its fault injections
+ * include the foreign-key bypass. If a change to the audit table cannot be
+ * made obvious in the text, that is a reason to be suspicious of the change,
+ * not of the test.
  */
 
 const MIGRATIONS_DIR = join(__dirname, '..', 'migrations');
@@ -85,10 +123,18 @@ const allMigrations: readonly (readonly [string, string])[] = readdirSync(MIGRAT
  * `audit_entries` may also say `REFERENCES`" is true however the key is
  * written, and false the moment one exists.
  *
- * This reads the two shapes this backend's migrations use — a literal passed to
+ * This reads the shapes this backend's migrations use — a literal passed to
  * `queryRunner.query(...)`, and a `format()` template passed to a migration's
- * local `exec(queryRunner, ...)`. A third shape is invisible to it — see "What
- * these guards do not catch" at the top of this file.
+ * local `exec(queryRunner, ...)` — in all three of TypeScript's string
+ * delimiters. The double-quoted form reads nothing today, because this
+ * codebase writes single quotes; it is here because a round of review injected
+ * a fault in a double-quoted argument and the suite stayed green for a reason
+ * that had nothing to do with the guard under test. An extractor that reads
+ * two of the three delimiters is a bypass in its own right, and a silent one:
+ * the injected statement is not refused, it is simply never seen.
+ *
+ * A shape that remains invisible — SQL that is not a literal at the call at
+ * all — is disclosed at the top of this file.
  *
  * The `yields the SQL of %s` cases below are a weaker guard than that gap
  * needs, and it is worth being exact about which: each fires when its migration
@@ -98,20 +144,180 @@ const allMigrations: readonly (readonly [string, string])[] = readdirSync(MIGRAT
  * fine, which is exactly what hoisting one query into a `const` produces.
  */
 function sqlStatements(source: string): string[] {
-  const call = /(?:queryRunner\.query|exec)\(\s*(?:queryRunner\s*,\s*)?(?:`([^`]*)`|'((?:[^'\\]|\\.)*)')/g;
+  const call = /(?:queryRunner\.query|exec)\(\s*(?:queryRunner\s*,\s*)?(?:`([^`]*)`|'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")/g;
   const statements: string[] = [];
   let match: RegExpExecArray | null = call.exec(source);
   while (match !== null) {
-    statements.push(match[1] ?? match[2] ?? '');
+    statements.push(match[1] ?? match[2] ?? match[3] ?? '');
     match = call.exec(source);
   }
   return statements;
 }
 
-/** Every statement of every migration, tagged with the file it came from. */
-function allStatements(): (readonly [string, string])[] {
+/**
+ * The statements of one `query()` argument, each in the single spelling every
+ * guard in this file is written against.
+ *
+ * ## What it does, and which bypass each part retires
+ *
+ * - **SQL comments are stripped** — `-- …` to end of line, and slash-star block
+ *   comments, nested ones included. An `ALTER TABLE` with a block comment
+ *   between the keyword and the table name is otherwise a table reference no
+ *   `ALTER\s+TABLE\s+audit_entries` regex can see.
+ * - **String literals are lifted out and put back verbatim**, `''` escapes
+ *   included. Nothing below rewrites prose — which matters because the
+ *   `COMMENT ON COLUMN audit_entries.actor_user_id` this schema ships contains
+ *   the words "foreign key", and the guard that must not fire on it relies on
+ *   reading its real leading keyword.
+ * - **Quoted identifiers are unquoted and folded**, so `"audit_entries"`,
+ *   `"AUDIT_ENTRIES"` and `audit_entries` are one name (rounds 1–2).
+ * - **Everything outside a literal is lower-cased**, so no guard needs an `i`
+ *   flag and none can be defeated by case. Guards are therefore written in
+ *   lower case, and a keyword appearing *inside* a literal is deliberately not
+ *   matched by them.
+ * - **`IF NOT EXISTS` / `IF EXISTS` are elided**, which is what round 4 was
+ *   opened for, and which also retires the rebuild spelling this file used to
+ *   disclose as an open gap in `audit_entries is created once and never
+ *   rebuilt`.
+ * - **`ONLY` after `ALTER TABLE`, and `TEMP`/`TEMPORARY`/`UNLOGGED`/`GLOBAL`/
+ *   `LOCAL` inside `CREATE … TABLE`, are elided.** The second was never
+ *   reported by a reviewer; it is the fifth spelling, and it costs nothing
+ *   here because the canonical form is where spellings go to die.
+ * - **`public.` is dropped, and so is any other schema qualifier written on
+ *   `audit_entries`** (round 2 closed `public.`; a different schema name is
+ *   the same move). `audit_entries.actor_user_id` is untouched — there the
+ *   table is the qualifier, not the qualified.
+ * - **Whitespace, commas and parentheses are regularized**, so `ALTER   TABLE`
+ *   across a line break and `users(id)` versus `users (id)` are one string.
+ * - **The argument is split at `;`**, outside literals, into the statements it
+ *   really is. A composed `COMMENT ON …; ALTER TABLE audit_entries OWNER TO
+ *   app` is two statements here, so the second is examined on its own merits
+ *   instead of hiding behind the first's leading keyword (round 3's finding,
+ *   closed generally rather than per-guard).
+ *
+ * `@@0@@`-style sentinels stand in for literals while the rewrites run. Real
+ * SQL that contained the text `@@` followed by digits followed by `@@` would
+ * be misread; nothing writes that, and the alternative — rewriting inside
+ * prose — is the failure mode that actually bites.
+ *
+ * @param raw - one `query()` argument, as written
+ * @returns its statements, canonical, in order, with empties dropped
+ */
+function canonicalize(raw: string): string[] {
+  const literals: string[] = [];
+  let text = '';
+  let index = 0;
+
+  while (index < raw.length) {
+    const here = raw[index];
+    const next = raw[index + 1];
+
+    if (here === '\'') {
+      let end = index + 1;
+      while (end < raw.length) {
+        if (raw[end] === '\'' && raw[end + 1] === '\'') {
+          end += 2;
+          continue;
+        }
+        if (raw[end] === '\'') {
+          end += 1;
+          break;
+        }
+        end += 1;
+      }
+      literals.push(raw.slice(index, end));
+      text += `@@${literals.length - 1}@@`;
+      index = end;
+      continue;
+    }
+
+    if (here === '"') {
+      let end = index + 1;
+      let identifier = '';
+      while (end < raw.length) {
+        if (raw[end] === '"' && raw[end + 1] === '"') {
+          identifier += '"';
+          end += 2;
+          continue;
+        }
+        if (raw[end] === '"') {
+          end += 1;
+          break;
+        }
+        identifier += raw[end];
+        end += 1;
+      }
+      text += identifier.toLowerCase();
+      index = end;
+      continue;
+    }
+
+    if (here === '-' && next === '-') {
+      const newline = raw.indexOf('\n', index);
+      index = newline === -1 ? raw.length : newline;
+      text += ' ';
+      continue;
+    }
+
+    if (here === '/' && next === '*') {
+      let depth = 1;
+      let end = index + 2;
+      while (end < raw.length && depth > 0) {
+        if (raw[end] === '/' && raw[end + 1] === '*') {
+          depth += 1;
+          end += 2;
+          continue;
+        }
+        if (raw[end] === '*' && raw[end + 1] === '/') {
+          depth -= 1;
+          end += 2;
+          continue;
+        }
+        end += 1;
+      }
+      index = end;
+      text += ' ';
+      continue;
+    }
+
+    text += here.toLowerCase();
+    index += 1;
+  }
+
+  const folded = text
+    .replace(/\s*\(\s*/g, ' ( ')
+    .replace(/\s*\)\s*/g, ' ) ')
+    .replace(/\s*,\s*/g, ' , ')
+    .replace(/\s*\.\s*/g, '.')
+    .replace(/\bif\s+not\s+exists\b/g, ' ')
+    .replace(/\bif\s+exists\b/g, ' ')
+    .replace(
+      /\bcreate\s+(?:global\s+|local\s+)?(?:temp\s+|temporary\s+|unlogged\s+)?table\b/g,
+      'create table',
+    )
+    .replace(/\balter\s+table\s+only\b/g, 'alter table')
+    .replace(/\bpublic\./g, '')
+    .replace(/\b[a-z_][a-z0-9_$]*\.audit_entries\b/g, 'audit_entries')
+    .replace(/\s+/g, ' ');
+
+  return folded
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0)
+    .map((statement) =>
+      statement.replace(/@@(\d+)@@/g, (_all, slot: string) => literals[Number(slot)]),
+    );
+}
+
+/** Every canonical statement of one migration source. */
+function canonicalStatements(source: string): string[] {
+  return sqlStatements(source).flatMap(canonicalize);
+}
+
+/** Every canonical statement of every migration, tagged with its file. */
+function allCanonicalStatements(): (readonly [string, string])[] {
   return allMigrations.flatMap(([name, source]) =>
-    sqlStatements(source).map((statement) => [name, statement] as const),
+    canonicalStatements(source).map((statement) => [name, statement] as const),
   );
 }
 
@@ -126,13 +332,18 @@ function allStatements(): (readonly [string, string])[] {
  * against an empty list. It was caught by an injected fault firing on a
  * different, blunter assertion than the one aimed at it.
  *
+ * The default corpus is the *canonical* statements, not the raw ones, so a
+ * caller that passes only a pattern gets the spelling-independent behaviour
+ * without having to remember to ask for it. Patterns are therefore written in
+ * lower case.
+ *
  * @param pattern - what a statement must not (or must) contain
- * @param statements - the statements to search; all of them by default
+ * @param statements - the statements to search; every canonical one by default
  * @returns one `filename: statement` line per match, whitespace collapsed
  */
 function statementsMatching(
   pattern: RegExp,
-  statements: readonly (readonly [string, string])[] = allStatements(),
+  statements: readonly (readonly [string, string])[] = allCanonicalStatements(),
 ): string[] {
   return statements
     .filter(([, statement]) => pattern.test(statement))
@@ -154,6 +365,165 @@ function upBody(source: string): string {
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return source.slice(start, end);
+}
+
+/** A canonical statement, tagged with the migration it came from. */
+type Tagged = readonly [string, string];
+
+/**
+ * Every `ALTER TABLE audit_entries` this schema is allowed to contain, canonical.
+ *
+ * An allow-list rather than a list of forbidden shapes, because the forbidden
+ * shapes cannot be enumerated: `OWNER TO`, `DROP COLUMN`, `DISABLE TRIGGER`,
+ * `ALTER COLUMN … DROP NOT NULL`, an unnamed `ADD CHECK`/`ADD UNIQUE`/`ADD
+ * PRIMARY KEY`, `RENAME TO`, `INHERIT`, `ENABLE … RULE` — and that list was
+ * already incomplete when it was written. Two of them are permitted, so two
+ * of them are listed.
+ *
+ * Needing to edit this list is the guard working. It changes only when
+ * somebody alters `audit_entries`, which is exactly the moment a human has to
+ * look at what they are doing to the append-only guarantee.
+ */
+const PERMITTED_ALTERS = [
+  'alter table audit_entries alter column organization_id type uuid using organization_id::uuid',
+  'alter table audit_entries alter column organization_id type text using organization_id::text',
+];
+
+/**
+ * Every privilege-granting statement over `audit_entries` this schema is
+ * allowed to contain, canonical.
+ *
+ * Exactly one: the audit migration's `down()`, which hands both privileges
+ * back because that is what reverting a revoke *is*. Anything else, in any
+ * migration, in either direction, is the append-only guarantee being undone.
+ */
+const PERMITTED_GRANTS = ['grant update , delete on audit_entries to %i'];
+
+/**
+ * The guards over `audit_entries`, as predicates.
+ *
+ * They are functions rather than expressions inlined into their `it` bodies
+ * for one reason: a guard that is only ever run against the real migrations is
+ * a guard nobody has watched refuse anything. Written this way, each one is
+ * run twice — once over the real corpus, where it must find nothing, and once
+ * over a constructed corpus in `the guards refuse every spelling that voids
+ * D13`, where it must find exactly the offender. A regex that stopped matching
+ * would still pass the first run, and only the second is able to say so.
+ *
+ * All six take *canonical* statements. Passing raw SQL to any of them is the
+ * mistake this file has made four times, and the lower-case patterns below are
+ * what makes it fail loudly rather than silently: raw SQL is upper case here.
+ */
+
+/**
+ * Statements that name `audit_entries` and also declare a foreign key.
+ *
+ * `comment on` is excluded, and only `comment on`. The exclusion is
+ * load-bearing and must stay: the `COMMENT ON COLUMN
+ * audit_entries.actor_user_id` this schema ships says, in its prose,
+ * "Deliberately not a foreign key", and canonicalization preserves literals
+ * verbatim, so without the exclusion this predicate fires on the comment that
+ * explains why there is no foreign key. A `COMMENT ON` cannot create a
+ * constraint, so nothing is given up.
+ *
+ * What *was* given up before, and no longer is: the exclusion reads the
+ * statement's leading keyword, and a `query()` argument that opened
+ * `COMMENT ON …;` and went on to do something else used to be skipped whole.
+ * Canonicalization splits at `;` first, so the something-else is now its own
+ * statement with its own leading keyword.
+ */
+function foreignKeyOffenders(statements: readonly Tagged[]): string[] {
+  const notComments = statements.filter(([, sql]) => !/^comment on\b/.test(sql));
+  return statementsMatching(
+    /\baudit_entries\b[\s\S]*?\b(?:references|foreign key)\b/,
+    notComments,
+  );
+}
+
+/**
+ * The haystack `foreignKeyOffenders` searches — everything it could possibly
+ * report on.
+ *
+ * Its own function because it is asserted twice: the guard checks that this is
+ * not empty before believing "no offenders", and the non-vacuity block checks
+ * that the check is the thing that fails when it is. Written out twice, the
+ * two would drift, and the drift would be invisible in exactly the case both
+ * exist for.
+ */
+function auditNamingStatements(statements: readonly Tagged[]): string[] {
+  return statements
+    .filter(([, sql]) => /\baudit_entries\b/.test(sql) && !/^comment on\b/.test(sql))
+    .map(([, sql]) => sql);
+}
+
+/** The column list of every `create table audit_entries ( … )`, wherever it sits. */
+function auditCreateBodies(statements: readonly Tagged[]): string[] {
+  const body = /\bcreate table audit_entries\s*\(([\s\S]*)\)/;
+  return statements
+    .map(([, sql]) => body.exec(sql)?.[1])
+    .filter((found): found is string => found !== undefined);
+}
+
+/**
+ * `create table audit_entries` bodies carrying a foreign key.
+ *
+ * Anchored on structure — the `create table audit_entries (` itself — and
+ * emphatically *not* on the statement's leading keyword, which is the opposite
+ * of what `foreignKeyOffenders` needs. That asymmetry is deliberate. The
+ * comment exclusion protects prose; this one must have nothing a prefix can
+ * hide behind, so that it keeps working even if the `;` split were ever to
+ * stop splitting. Two guards over the same table, opposite treatment of the
+ * same prefix, and flattening them is how round 3's bypass existed.
+ */
+function createTableForeignKeyOffenders(statements: readonly Tagged[]): string[] {
+  return auditCreateBodies(statements).filter((body) =>
+    /\b(?:references|foreign key)\b/.test(body),
+  );
+}
+
+/** Every statement that alters `audit_entries`, for the allow-list to judge. */
+function alterTableStatements(statements: readonly Tagged[]): string[] {
+  return statements
+    .filter(([, sql]) => /\balter table audit_entries\b/.test(sql))
+    .map(([, sql]) => sql);
+}
+
+/** Statements declaring a foreign key that points AT `audit_entries`. */
+function referencesAuditOffenders(statements: readonly Tagged[]): string[] {
+  return statementsMatching(/\breferences\s+audit_entries\b/, statements);
+}
+
+/**
+ * Every statement that hands table privileges back, for the allow-list to judge.
+ *
+ * `REVOKE UPDATE, DELETE ON audit_entries` is undone by naming the table again
+ * — which the `ALTER TABLE` allow-list would catch — and also by never naming
+ * it: `GRANT UPDATE ON ALL TABLES IN SCHEMA public TO <app role>` in any later
+ * migration restores both privileges on every table that exists, audit log
+ * included, and nothing else in this file reads it. `ALTER DEFAULT PRIVILEGES
+ * … GRANT …` is not collected here — it leads with `alter`, it governs objects
+ * created *after* it rather than the audit table, and `every migration › sets
+ * the default privileges in the earliest migration of all` is what holds it to
+ * one migration.
+ */
+function grantStatements(statements: readonly Tagged[]): string[] {
+  return statements
+    .filter(([, sql]) => /^grant\b/.test(sql))
+    .filter(([, sql]) => /\baudit_entries\b|\ball tables in schema\b/.test(sql))
+    .map(([, sql]) => sql);
+}
+
+/**
+ * Statements that change ownership wholesale, without naming a table.
+ *
+ * The `ALTER TABLE` allow-list cannot see these: `REASSIGN OWNED BY owner TO
+ * <app role>` and `ALTER TABLE ALL IN TABLESPACE … OWNER TO <app role>` hand
+ * the application ownership of `audit_entries` while naming neither
+ * `audit_entries` nor a single table, and an owner is not subject to the
+ * REVOKE at all.
+ */
+function wholesaleOwnershipStatements(statements: readonly Tagged[]): string[] {
+  return statementsMatching(/\breassign owned\b|\ball in tablespace\b/, statements);
 }
 
 describe('the audit migration', () => {
@@ -354,6 +724,345 @@ describe('the statement extractor', () => {
     expect(sqlStatements(migrationSource('AppRoleAndDefaultPrivileges')).join('\n'))
       .toContain('ALTER DEFAULT PRIVILEGES');
   });
+
+  it('reads all three of TypeScript\'s string delimiters', () => {
+    // The double-quoted case reads nothing in this codebase today. It is
+    // asserted because a round of review injected a fault in a double-quoted
+    // argument, watched the suite stay green, and nearly concluded the guard
+    // under test was sound: an extractor that reads two delimiters out of
+    // three does not refuse the third, it never sees it.
+    expect(sqlStatements('await queryRunner.query(`backtick`);')).toEqual(['backtick']);
+    expect(sqlStatements('await queryRunner.query(\'single\');')).toEqual(['single']);
+    expect(sqlStatements('await queryRunner.query("double");')).toEqual(['double']);
+    expect(sqlStatements('await exec(queryRunner, "double, via exec");'))
+      .toEqual(['double, via exec']);
+  });
+});
+
+describe('the canonical form of a statement', () => {
+  // The normalizer is the single component every guard below depends on, so a
+  // bug in it weakens all of them at once and in silence. These tests are what
+  // make that loud instead: each group asserts that a set of spellings reduces
+  // to ONE canonical string, by name, so a rewrite that stopped collapsing
+  // something fails here rather than by four guards quietly starting to agree
+  // with an attacker.
+
+  const OWNER_TO = 'alter table audit_entries owner to app';
+
+  it.each([
+    ['as written', 'ALTER TABLE audit_entries OWNER TO app'],
+    ['lower case', 'alter table audit_entries owner to app'],
+    ['mixed case', 'Alter Table Audit_Entries Owner To app'],
+    ['double spaces', 'ALTER  TABLE   audit_entries    OWNER  TO  app'],
+    ['line breaks', 'ALTER TABLE\n  audit_entries\n  OWNER TO app'],
+    ['tabs', 'ALTER\tTABLE\taudit_entries\tOWNER\tTO\tapp'],
+    ['ONLY', 'ALTER TABLE ONLY audit_entries OWNER TO app'],
+    ['schema-qualified', 'ALTER TABLE public.audit_entries OWNER TO app'],
+    ['a schema that is not public', 'ALTER TABLE archive.audit_entries OWNER TO app'],
+    ['quoted', 'ALTER TABLE "audit_entries" OWNER TO app'],
+    ['quoted and case-shifted', 'ALTER TABLE "AUDIT_ENTRIES" OWNER TO app'],
+    ['qualified with a quoted name', 'ALTER TABLE public."audit_entries" OWNER TO app'],
+    ['both halves quoted', 'ALTER TABLE "public"."audit_entries" OWNER TO app'],
+    ['a spaced qualifier', 'ALTER TABLE public . audit_entries OWNER TO app'],
+    ['all of them at once', 'ALTER  TABLE  ONLY\n  "public" . "AUDIT_ENTRIES"  OWNER  TO  app'],
+    ['a line comment in the middle', 'ALTER TABLE -- nothing to see\n audit_entries OWNER TO app'],
+    ['a block comment in the middle', 'ALTER TABLE /* nothing to see */ audit_entries OWNER TO app'],
+    ['a nested block comment', 'ALTER TABLE /* a /* b */ c */ audit_entries OWNER TO app'],
+    ['a trailing semicolon', 'ALTER TABLE audit_entries OWNER TO app;'],
+  ])('reduces the %s spelling of an OWNER TO to one string', (_label, sql) => {
+    expect(canonicalize(sql)).toEqual([OWNER_TO]);
+  });
+
+  const CREATE_WITH_FK
+    = 'create table audit_entries ( id uuid , user_id uuid references users ( id ) )';
+
+  it.each([
+    ['as written', 'CREATE TABLE audit_entries (id uuid, user_id uuid REFERENCES users(id))'],
+    [
+      'IF NOT EXISTS',
+      'CREATE TABLE IF NOT EXISTS audit_entries (id uuid, user_id uuid REFERENCES users(id))',
+    ],
+    [
+      'UNLOGGED',
+      'CREATE UNLOGGED TABLE audit_entries (id uuid, user_id uuid REFERENCES users(id))',
+    ],
+    [
+      'TEMP and IF NOT EXISTS',
+      'CREATE TEMP TABLE IF NOT EXISTS audit_entries (id uuid, user_id uuid REFERENCES users(id))',
+    ],
+    [
+      'quoted and schema-qualified',
+      'CREATE TABLE public."audit_entries" ( id uuid , user_id uuid REFERENCES users ( id ) )',
+    ],
+    [
+      'spread over lines',
+      'CREATE TABLE\n  audit_entries\n  (\n    id uuid,\n    user_id uuid REFERENCES users (id)\n  )',
+    ],
+  ])('reduces the %s spelling of a CREATE TABLE with a foreign key to one string', (_label, sql) => {
+    expect(canonicalize(sql)).toEqual([CREATE_WITH_FK]);
+  });
+
+  it.each([
+    ['as written', 'DROP TABLE audit_entries'],
+    ['IF EXISTS', 'DROP TABLE IF EXISTS audit_entries'],
+    ['IF EXISTS, quoted and qualified', 'DROP TABLE IF EXISTS public."audit_entries"'],
+  ])('reduces the %s spelling of a DROP TABLE to one string', (_label, sql) => {
+    expect(canonicalize(sql)).toEqual(['drop table audit_entries']);
+  });
+
+  it('drops the default schema from any table, not only from audit_entries', () => {
+    // `public.` is the default schema, so `public.users` and `users` name one
+    // table. The audit table's own qualifier is dropped by a separate rule —
+    // which is exactly why this case is here: without it, nothing in this file
+    // would notice the general rule going away.
+    expect(canonicalize('CREATE TABLE public.users (id uuid)'))
+      .toEqual(['create table users ( id uuid )']);
+  });
+
+  it('splits a composed argument into the statements it really is', () => {
+    expect(
+      canonicalize('COMMENT ON TABLE audit_entries IS \'x\'; ALTER TABLE audit_entries OWNER TO app'),
+    ).toEqual(['comment on table audit_entries is \'x\'', OWNER_TO]);
+  });
+
+  it('keeps a string literal verbatim — its case, its semicolons, its doubled quotes', () => {
+    // This is the half of canonicalization that must NOT happen. The
+    // `COMMENT ON COLUMN audit_entries.actor_user_id` this schema ships says
+    // "Deliberately not a foreign key" in its prose and contains an escaped
+    // apostrophe; a normalizer that rewrote inside literals, or that ended the
+    // literal at the `''`, would turn that comment into something the
+    // foreign-key guard has to be taught to ignore all over again.
+    const sql
+      = 'COMMENT ON COLUMN audit_entries.actor_user_id IS '
+        + '\'Deliberately not a foreign key; rewritten behind the application\'\'s back.\'';
+    expect(canonicalize(sql)).toEqual([
+      'comment on column audit_entries.actor_user_id is '
+      + '\'Deliberately not a foreign key; rewritten behind the application\'\'s back.\'',
+    ]);
+  });
+
+  it('leaves audit_entries alone where it is the qualifier rather than the qualified', () => {
+    // Dropping a schema qualifier must not drop a table qualifier. If it did,
+    // every `COMMENT ON COLUMN audit_entries.…` would stop naming the table
+    // and the foreign-key guard's non-vacuity count would silently fall.
+    expect(canonicalize('COMMENT ON COLUMN public.audit_entries.actor_user_id IS NULL'))
+      .toEqual(['comment on column audit_entries.actor_user_id is null']);
+  });
+
+  it('yields nothing for an argument with no statement in it', () => {
+    expect(canonicalize('  ;  ;  ')).toEqual([]);
+  });
+
+  it('renders the real audit table creation as one statement carrying no foreign key', () => {
+    // The end-to-end check: real migration, real extractor, real normalizer.
+    // Everything above proves spellings collapse; this proves the collapse is
+    // still pointed at the statement the guards are about.
+    const created = canonicalStatements(migrationSource('IdentityFoundation'))
+      .filter((sql) => /^create table audit_entries\b/.test(sql));
+    expect(created).toHaveLength(1);
+    expect(created[0]).not.toMatch(/\breferences\b/);
+  });
+});
+
+describe('the guards refuse every spelling that voids D13', () => {
+  // A guard that has only ever been run against migrations it passes is a
+  // guard nobody has watched refuse anything. Each case below is a corpus of
+  // one constructed offender, handed to the same predicate the real assertion
+  // uses, and the predicate has to find it. This is the fault injection that
+  // used to be done by hand against a generated probe, once per review round —
+  // written as tests, so it happens on every run instead.
+
+  /** One offender, canonicalized and tagged exactly as a real corpus is. */
+  function corpus(sql: string): Tagged[] {
+    return canonicalize(sql).map((statement) => ['injected.ts', statement] as const);
+  }
+
+  it.each([
+    'ALTER TABLE audit_entries OWNER TO app',
+    'alter table audit_entries owner to app',
+    'ALTER  TABLE  audit_entries  OWNER  TO  app',
+    'ALTER TABLE\n  audit_entries\n  OWNER TO app',
+    'ALTER TABLE ONLY audit_entries OWNER TO app',
+    'ALTER TABLE public.audit_entries OWNER TO app',
+    'ALTER TABLE "audit_entries" OWNER TO app',
+    'ALTER TABLE public."audit_entries" OWNER TO app',
+    'ALTER TABLE "public"."audit_entries" OWNER TO app',
+    'ALTER TABLE /* nothing to see */ audit_entries OWNER TO app',
+    'COMMENT ON TABLE audit_entries IS \'x\'; ALTER TABLE audit_entries OWNER TO app',
+    'ALTER TABLE audit_entries DROP COLUMN metadata',
+    'ALTER TABLE audit_entries DISABLE TRIGGER ALL',
+    'ALTER TABLE audit_entries RENAME TO audit_entries_old',
+    'ALTER TABLE audit_entries ALTER COLUMN actor_user_id DROP NOT NULL',
+    'ALTER TABLE audit_entries ADD CONSTRAINT fk_actor FOREIGN KEY (actor_user_id)'
+    + ' REFERENCES users (id) ON DELETE CASCADE',
+  ])('the ALTER TABLE allow-list refuses %p', (sql) => {
+    const found = alterTableStatements(corpus(sql));
+    // Seen at all — the bypass of rounds 1–4 was invisibility, not acceptance.
+    expect(found.length).toBeGreaterThan(0);
+    // ...and not on the list.
+    expect(found.filter((statement) => PERMITTED_ALTERS.includes(statement))).toEqual([]);
+  });
+
+  it.each([
+    'ALTER TABLE audit_entries ALTER COLUMN organization_id TYPE uuid USING organization_id::uuid',
+    'ALTER TABLE   audit_entries\n  ALTER COLUMN organization_id TYPE uuid'
+    + '\n  USING organization_id::uuid',
+    'alter table only public."audit_entries" alter column organization_id type uuid'
+    + ' using organization_id::uuid',
+  ])('and accepts the permitted cast spelled %p', (sql) => {
+    expect(alterTableStatements(corpus(sql))).toEqual([PERMITTED_ALTERS[0]]);
+  });
+
+  it.each([
+    'ALTER TABLE audit_entries ADD CONSTRAINT fk FOREIGN KEY (actor_user_id)'
+    + ' REFERENCES users (id) ON DELETE CASCADE',
+    'ALTER TABLE "audit_entries" ADD FOREIGN KEY (actor_user_id) REFERENCES users (id)',
+    'ALTER TABLE ONLY public.audit_entries ADD CONSTRAINT fk FOREIGN KEY (actor_user_id)'
+    + ' REFERENCES users (id)',
+    'CREATE TABLE audit_entries (id uuid, actor_user_id uuid REFERENCES users (id))',
+    'COMMENT ON TABLE audit_entries IS \'x\'; CREATE TABLE IF NOT EXISTS audit_entries'
+    + ' (id uuid, actor_user_id uuid REFERENCES users (id))',
+  ])('the foreign-key guard refuses %p', (sql) => {
+    expect(foreignKeyOffenders(corpus(sql))).not.toEqual([]);
+  });
+
+  it.each([
+    'CREATE TABLE audit_entries (id uuid, user_id uuid REFERENCES users (id))',
+    'CREATE TABLE IF NOT EXISTS audit_entries (id uuid, user_id uuid REFERENCES users (id))',
+    'CREATE UNLOGGED TABLE audit_entries (id uuid, user_id uuid REFERENCES users (id))',
+    'COMMENT ON TABLE audit_entries IS \'x\'; CREATE TABLE audit_entries'
+    + ' (id uuid, user_id uuid REFERENCES users (id))',
+    'COMMENT ON TABLE audit_entries IS \'x\'; CREATE TABLE IF NOT EXISTS audit_entries'
+    + ' (id uuid, user_id uuid REFERENCES users (id))',
+    'CREATE TABLE public."audit_entries" (id uuid,'
+    + ' CONSTRAINT fk FOREIGN KEY (user_id) REFERENCES users (id))',
+  ])('the CREATE TABLE body guard refuses %p', (sql) => {
+    expect(createTableForeignKeyOffenders(corpus(sql))).not.toEqual([]);
+  });
+
+  it('and the CREATE TABLE body guard accepts the real one, which has no REFERENCES', () => {
+    const real = canonicalStatements(migrationSource('IdentityFoundation'))
+      .map((sql) => ['IdentityFoundation', sql] as const);
+    expect(auditCreateBodies(real)).toHaveLength(1);
+    expect(createTableForeignKeyOffenders(real)).toEqual([]);
+  });
+
+  it('and the foreign-key guard accepts the comment that says there is no foreign key', () => {
+    // The false positive the `COMMENT ON` exclusion exists to prevent, asserted
+    // rather than argued: this statement's own prose contains the words this
+    // guard searches for.
+    const comment = canonicalStatements(migrationSource('IdentityFoundation'))
+      .filter((sql) => /^comment on column audit_entries\.actor_user_id\b/.test(sql));
+    expect(comment).toHaveLength(1);
+    expect(comment[0]).toMatch(/foreign key/);
+    expect(foreignKeyOffenders(comment.map((sql) => ['IdentityFoundation', sql] as const)))
+      .toEqual([]);
+  });
+
+  it.each([
+    'ALTER TABLE users ADD CONSTRAINT fk FOREIGN KEY (last_audit) REFERENCES audit_entries (id)',
+    'ALTER TABLE users ADD CONSTRAINT fk FOREIGN KEY (last_audit) REFERENCES "audit_entries" (id)',
+    'ALTER TABLE users ADD CONSTRAINT fk FOREIGN KEY (last_audit)'
+    + ' REFERENCES public.audit_entries (id)',
+    'ALTER TABLE users ADD CONSTRAINT fk FOREIGN KEY (last_audit)'
+    + ' REFERENCES public."audit_entries"(id)',
+    'CREATE TABLE notes (id uuid, entry uuid references AUDIT_ENTRIES (id) ON DELETE CASCADE)',
+    'CREATE TABLE notes (id uuid, entry uuid REFERENCES\n  archive.audit_entries (id))',
+  ])('the reverse REFERENCES guard refuses %p', (sql) => {
+    expect(referencesAuditOffenders(corpus(sql))).not.toEqual([]);
+  });
+
+  it.each([
+    'GRANT UPDATE, DELETE ON audit_entries TO app',
+    'GRANT DELETE ON public."audit_entries" TO app',
+    'GRANT UPDATE ON ALL TABLES IN SCHEMA public TO app',
+    'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO app',
+  ])('the grant allow-list refuses %p', (sql) => {
+    const found = grantStatements(corpus(sql));
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.filter((statement) => PERMITTED_GRANTS.includes(statement))).toEqual([]);
+  });
+
+  it.each([
+    'REASSIGN OWNED BY owner TO app',
+    'ALTER TABLE ALL IN TABLESPACE pg_default OWNER TO app',
+  ])('the wholesale-ownership guard refuses %p', (sql) => {
+    expect(wholesaleOwnershipStatements(corpus(sql))).not.toEqual([]);
+  });
+
+  it('the created-once guard sees a rebuild however it is spelled', () => {
+    // `CREATE TABLE IF NOT EXISTS` beside `DROP TABLE IF EXISTS` is the
+    // ordinary way somebody writes a rebuild by hand, and it was this file's
+    // longest-standing disclosed gap: three rounds of review left it open
+    // because closing it meant another spelling-specific regex. It closed
+    // itself when the guard moved onto the canonical form.
+    const rebuild = corpus(
+      'DROP TABLE IF EXISTS audit_entries; CREATE TABLE IF NOT EXISTS audit_entries (id uuid)',
+    );
+    expect(statementsMatching(/\bdrop table audit_entries\b/, rebuild)).toHaveLength(1);
+    expect(statementsMatching(/\bcreate table audit_entries\b/, rebuild)).toHaveLength(1);
+  });
+});
+
+describe('each guard fails, rather than passes, when what it examines is absent', () => {
+  // The failure this file has had more than once: an assertion of the form "no
+  // statement does X", run against a corpus that became empty for an unrelated
+  // reason, reports green and means nothing. So for every guard, either the
+  // assertion itself cannot be satisfied by an empty corpus (the two
+  // allow-lists, which are set equality against a non-empty list), or the test
+  // carries a companion assertion that is — and this block is where the
+  // companion is proved to be load-bearing.
+
+  const NOTHING: Tagged[] = [];
+
+  it('the ALTER TABLE allow-list cannot be satisfied by an empty corpus', () => {
+    expect([...alterTableStatements(NOTHING)].sort()).not.toEqual([...PERMITTED_ALTERS].sort());
+  });
+
+  it('the grant allow-list cannot be satisfied by an empty corpus', () => {
+    expect([...grantStatements(NOTHING)].sort()).not.toEqual([...PERMITTED_GRANTS].sort());
+  });
+
+  it('the CREATE TABLE body guard: its body count is what refuses an empty corpus', () => {
+    // The offender list alone says "clean" — indistinguishable from a schema
+    // that creates the table properly...
+    expect(createTableForeignKeyOffenders(NOTHING)).toEqual([]);
+    // ...so the guard asserts this first, and this is what is red.
+    expect(auditCreateBodies(NOTHING)).toHaveLength(0);
+  });
+
+  it('the foreign-key guard: its naming count is what refuses an empty corpus', () => {
+    expect(foreignKeyOffenders(NOTHING)).toEqual([]);
+    expect(auditNamingStatements(NOTHING).length).toBeLessThan(3);
+  });
+
+  it('the foreign-key guard: the COMMENT ON exclusion alone can empty the haystack', () => {
+    // Not a hypothetical. The exclusion is the one thing in this guard that
+    // removes statements, so a corpus of nothing but comments is the shape an
+    // over-broad exclusion would produce, and the naming count is what says so.
+    const comments = canonicalize('COMMENT ON TABLE audit_entries IS \'x\'')
+      .map((sql) => ['injected.ts', sql] as const);
+    expect(comments).toHaveLength(1);
+    expect(foreignKeyOffenders(comments)).toEqual([]);
+    expect(auditNamingStatements(comments).length).toBeLessThan(3);
+  });
+
+  it('the reverse REFERENCES guard: its corpus-size check is what refuses an empty corpus', () => {
+    expect(referencesAuditOffenders(NOTHING)).toEqual([]);
+    expect(NOTHING.length).not.toBeGreaterThan(0);
+  });
+
+  it('the wholesale-ownership guard: its corpus-size check is what refuses an empty corpus', () => {
+    expect(wholesaleOwnershipStatements(NOTHING)).toEqual([]);
+    expect(NOTHING.length).not.toBeGreaterThan(0);
+  });
+
+  it('and the real corpus is not empty, which is what makes all of the above matter', () => {
+    const statements = allCanonicalStatements();
+    expect(statements.length).toBeGreaterThan(0);
+    expect(auditNamingStatements(statements).length).toBeGreaterThanOrEqual(3);
+    expect(auditCreateBodies(statements)).toHaveLength(1);
+  });
 });
 
 describe('audit_entries is never given a foreign key', () => {
@@ -365,61 +1074,44 @@ describe('audit_entries is never given a foreign key', () => {
   // a privilege problem, so nothing points at this file.
 
   it('in any statement of any migration, however the key is written', () => {
-    // `COMMENT ON` is excluded, and only `COMMENT ON`: the column comment this
-    // schema ships says "Deliberately not a foreign key", and a `COMMENT ON`
-    // statement cannot create a constraint, so nothing is given up by skipping
-    // it. The exclusion is by the statement's *leading* keyword, so a statement
-    // that opens `COMMENT ON` and then goes on to do something else is skipped
-    // whole — the sibling assertion below is what covers that.
-    const notComments = allStatements().filter(([, st]) => !/^\s*COMMENT ON\b/i.test(st));
-    // The exclusion must not empty the haystack. Without this line the
-    // assertion below passes for the wrong reason the moment anything upstream
-    // stops producing statements, which is precisely how it failed before.
-    expect(notComments.filter(([, st]) => /\baudit_entries\b/.test(st)).length)
-      .toBeGreaterThanOrEqual(3);
-    expect(statementsMatching(/\baudit_entries\b[\s\S]*?(?:REFERENCES|FOREIGN KEY)/i, notComments))
-      .toEqual([]);
+    const statements = allCanonicalStatements();
+    // The `COMMENT ON` exclusion must not empty the haystack. Without this
+    // line the assertion below passes for the wrong reason the moment anything
+    // upstream stops producing statements, which is precisely how it failed
+    // before.
+    expect(auditNamingStatements(statements).length).toBeGreaterThanOrEqual(3);
+    expect(foreignKeyOffenders(statements)).toEqual([]);
   });
 
-  // Round 3 of this file's review found the gap the test above actually has:
-  // not the `OWNER TO`-behind-`COMMENT ON` shape a since-corrected disclosure
-  // named (that one is unanchored `.test()` over the *ALTER TABLE* allow-list
-  // below, and a leading `COMMENT ON` does not hide anything from a scan of
-  // the whole string), but `CREATE TABLE audit_entries (…)` itself carrying a
-  // `REFERENCES` in its own column list, composed behind a leading
-  // `COMMENT ON …;` in the same `query()` call:
+  // The second direction the test above cannot reach on its own: a
+  // `REFERENCES` in `audit_entries`'s *own* column list, at creation.
   //
   //   COMMENT ON TABLE audit_entries IS 'x';
-  //   CREATE TABLE audit_entries (id uuid, user_id uuid REFERENCES users(id));
+  //   CREATE TABLE IF NOT EXISTS audit_entries (id uuid, user_id uuid REFERENCES users(id));
   //
-  // The test above cannot see this: its `COMMENT ON` exclusion is by the
-  // statement's *leading* keyword, so a statement that opens `COMMENT ON` and
-  // then goes on to create the table is skipped whole. The `ALTER TABLE`
-  // allow-list does not apply — wrong keyword, this is a `CREATE`. The reverse
-  // `REFERENCES audit_entries` guard does not apply either — wrong direction,
-  // `audit_entries` is the FK's *source* here, not its target. And this
-  // matters precisely because it is the CREATE, not the ALTER: a `REFERENCES
-  // users(id)` smuggled into the table's own construction is exactly the
-  // referential-action hazard `IdentityFoundation` refused for
-  // `actor_user_id` — delete a user and the reference rewrites or erases an
-  // audit row through a statement aimed at `users`, past the REVOKE.
+  // Rounds 3 and 4 both arrived here, by different spellings of the same
+  // statement, and neither of the other guards applies: the `ALTER TABLE`
+  // allow-list is the wrong keyword, and the reverse `REFERENCES
+  // audit_entries` guard is the wrong direction — `audit_entries` is this
+  // key's *source*, not its target. It matters precisely because it is the
+  // CREATE: a `REFERENCES users (id)` smuggled into the table's own
+  // construction is exactly the referential-action hazard
+  // `IdentityFoundation` refused for `actor_user_id` — delete a user and the
+  // reference rewrites or erases an audit row through a statement aimed at
+  // `users`, past the REVOKE.
   //
-  // Closed rather than disclosed, because the fix is genuinely cheap and does
-  // not touch the COMMENT exclusion above (which stays, for the reason its own
-  // comment gives — the real `COMMENT ON COLUMN audit_entries…` this schema
-  // ships literally contains the words "foreign key" in its prose, and
-  // dropping that exclusion to reach this case would turn a legitimate comment
-  // into a false positive). Anchored on the one substring no legitimate
-  // comment contains — `CREATE TABLE audit_entries (` itself, however quoted
-  // or schema-qualified — rather than on the statement's leading keyword, so a
-  // `COMMENT ON` prefix has nothing to hide behind.
+  // Anchored on structure rather than on the leading keyword, so no prefix
+  // hides anything from it, and read off the canonical form, so no spelling
+  // of the create does either. See `createTableForeignKeyOffenders` for why
+  // this guard must *not* take the `COMMENT ON` exclusion its sibling needs.
   it('and no migration creates it with a foreign key inside its own CREATE TABLE, whatever precedes the statement', () => {
-    const createBody = /CREATE\s+TABLE\s+(?:public\.)?"?audit_entries"?\s*\(([\s\S]*)\)/i;
-    const offenders = allStatements()
-      .map(([name, statement]) => [name, createBody.exec(statement)?.[1]] as const)
-      .filter((entry): entry is readonly [string, string] => entry[1] !== undefined)
-      .filter(([, body]) => /REFERENCES|FOREIGN KEY/i.test(body));
-    expect(offenders).toEqual([]);
+    const statements = allCanonicalStatements();
+    // Non-vacuity: there is a `CREATE TABLE audit_entries` to examine. Without
+    // this the assertion below is green against a schema that never creates
+    // the table at all, which is also the shape it takes if canonicalization
+    // stops producing the string this predicate looks for.
+    expect(auditCreateBodies(statements)).toHaveLength(1);
+    expect(createTableForeignKeyOffenders(statements)).toEqual([]);
   });
 
   it('and AuditEntryRecord declares no relation for migration:generate to emit', () => {
@@ -463,30 +1155,34 @@ describe('audit_entries permits exactly two ALTER TABLE statements, and nothing 
   // exactly when a human must look — the maintenance cost of updating this
   // list on a genuine, reviewed change to the table IS the guard working, not
   // a tax on it.
-  it('collects every ALTER TABLE audit_entries statement, whitespace-normalized, and checks it against the allow-list', () => {
-    // `(?:public\.)?"?…"?` catches the quoted identifier (`"audit_entries"`)
-    // and the unquoted schema-qualified form (`public.audit_entries`) — the
-    // same two spellings the reverse `REFERENCES` guard below now catches.
-    // Round 2 of review found these had diverged: the `REFERENCES` guard was
-    // fixed to catch quoting in round 1 and this selector was not, so
-    // `ALTER TABLE "audit_entries" OWNER TO app` — the exact statement this
-    // whole describe block exists to stop — walked straight past it.
-    const normalize = (sql: string): string => sql.trim().replace(/\s+/g, ' ');
+  it('collects every ALTER TABLE audit_entries statement, canonical, and checks it against the allow-list', () => {
+    // Set equality, not containment: an extra statement fails as loudly as a
+    // missing one, and an empty corpus fails too — which is this guard's own
+    // non-vacuity proof, since `[] ` is not `PERMITTED`.
+    expect([...alterTableStatements(allCanonicalStatements())].sort())
+      .toEqual([...PERMITTED_ALTERS].sort());
+  });
+});
 
-    const found = allStatements()
-      .filter(([, statement]) =>
-        /ALTER\s+TABLE\s+(?:ONLY\s+)?(?:public\.)?"?audit_entries"?\b/i.test(statement))
-      .map(([, statement]) => normalize(statement));
+describe('audit_entries never has its privileges handed back', () => {
+  // The REVOKE is undone by naming the table again — which the allow-list
+  // above catches — and equally by never naming it. `GRANT UPDATE ON ALL
+  // TABLES IN SCHEMA public TO <app role>` in any later migration restores
+  // both privileges on the audit log without the string `audit_entries`
+  // appearing anywhere in it, and `REASSIGN OWNED BY` hands over ownership,
+  // which is not subject to the REVOKE at all. Both were open, both are
+  // cheap, so both are closed here rather than added to the disclosure at the
+  // top of this file.
 
-    // Exactly the two Task 9 needs: the up() cast to uuid and the down() cast
-    // back to text. Anything else — an added constraint, a dropped column, an
-    // OWNER TO, a whitespace variant this normalization does not collapse the
-    // same way — is not on this list, and the assertion below is red for it.
-    const PERMITTED = [
-      'ALTER TABLE audit_entries ALTER COLUMN organization_id TYPE uuid USING organization_id::uuid',
-      'ALTER TABLE audit_entries ALTER COLUMN organization_id TYPE text USING organization_id::text',
-    ];
-    expect([...found].sort()).toEqual([...PERMITTED].sort());
+  it('grants exactly what the revert of the audit migration grants, and nothing else', () => {
+    expect([...grantStatements(allCanonicalStatements())].sort())
+      .toEqual([...PERMITTED_GRANTS].sort());
+  });
+
+  it('and no migration changes table ownership wholesale', () => {
+    const statements = allCanonicalStatements();
+    expect(statements.length).toBeGreaterThan(0);
+    expect(wholesaleOwnershipStatements(statements)).toEqual([]);
   });
 });
 
@@ -504,19 +1200,16 @@ describe('the organizations-and-authorization migration', () => {
   // audit_entries`), which the word-order-sensitive regex above does not see
   // when nothing else in the same statement mentions `audit_entries` first.
   it('adds no foreign key to audit_entries, in any migration', () => {
-    // `(?:public\.)?"?…"?` catches both the quoted identifier form,
-    // `REFERENCES "audit_entries"`, and the unquoted schema-qualified form,
-    // `REFERENCES public.audit_entries` — the same two spellings the
-    // `ALTER TABLE` guard above now catches, for the same reason: quoting one
-    // guard and not the other is how this exact bypass slipped through once
-    // already. A composed statement — a foreign key or an `OWNER TO`
-    // concatenated after a leading `COMMENT ON …;` inside one `query()` call —
-    // remains a disclosed gap; see "What these guards do not catch" at the
-    // top of this file.
-    const offenders = allMigrations
-      .flatMap(([, source]) => sqlStatements(source))
-      .filter((sql) => /REFERENCES\s+(?:public\.)?"?audit_entries"?/i.test(sql));
-    expect(offenders).toEqual([]);
+    // Quoting, schema-qualification and case are not spelled out here, and
+    // that is the point: they are gone by the time this predicate reads the
+    // statement. Quoting one guard's table name and not its sibling's is how
+    // this exact bypass slipped through in round 1, and there is now only one
+    // spelling for either of them to disagree about.
+    const statements = allCanonicalStatements();
+    // Non-vacuity: there are statements to search, and they are the canonical
+    // ones. An empty corpus would make the assertion below unfalsifiable.
+    expect(statements.length).toBeGreaterThan(0);
+    expect(referencesAuditOffenders(statements)).toEqual([]);
   });
 
   it.each([
@@ -574,14 +1267,15 @@ describe('audit_entries is created once and never rebuilt', () => {
   // Verified at a real Postgres. The REVOKE applies to the table that existed
   // when it ran and to no other.
   //
-  // `CREATE TABLE audit_entries` and `DROP TABLE audit_entries` are matched as
-  // written, so the `IF NOT EXISTS` / `IF EXISTS` spelling of a rebuild is not
-  // caught — see "What these guards do not catch" at the top of this file, and
-  // the warning in `AuditAppendOnly`'s TSDoc, which is where somebody about to
-  // rebuild the table is actually reading.
+  // Read off the canonical statements, so `CREATE TABLE IF NOT EXISTS
+  // audit_entries` and `DROP TABLE IF EXISTS audit_entries` — the ordinary way
+  // somebody writes a rebuild by hand, and a gap this file disclosed for three
+  // rounds — are the same statements as the ones written without the guard
+  // clause. `AuditAppendOnly`'s TSDoc, which is where somebody about to
+  // rebuild the table is actually reading, says the same.
 
-  const creators = allMigrations.filter(
-    ([, source]) => sqlStatements(source).some((s) => /CREATE TABLE audit_entries\b/.test(s)),
+  const creators = allMigrations.filter(([, source]) =>
+    canonicalStatements(source).some((sql) => /\bcreate table audit_entries\b/.test(sql)),
   );
 
   it('is created by exactly one migration', () => {
@@ -590,15 +1284,17 @@ describe('audit_entries is created once and never rebuilt', () => {
 
   it('is dropped by no other migration, and only in that one\'s down()', () => {
     const [creatorName, creatorSource] = creators[0];
-    const elsewhere = allStatements().filter(([name]) => name !== creatorName);
-    expect(statementsMatching(/DROP TABLE audit_entries\b/, elsewhere)).toEqual([]);
+    const elsewhere = allCanonicalStatements().filter(([name]) => name !== creatorName);
+    expect(statementsMatching(/\bdrop table audit_entries\b/, elsewhere)).toEqual([]);
 
-    const inUp = sqlStatements(upBody(creatorSource)).map((st) => [creatorName, st] as const);
+    const inUp = canonicalStatements(upBody(creatorSource)).map(
+      (sql) => [creatorName, sql] as const,
+    );
     expect(inUp.length).toBeGreaterThan(0);
-    expect(statementsMatching(/DROP TABLE audit_entries\b/, inUp)).toEqual([]);
+    expect(statementsMatching(/\bdrop table audit_entries\b/, inUp)).toEqual([]);
     // ...and it really is dropped, in down(). Otherwise "not in up()" is true
     // of a migration that never drops it at all.
-    expect(statementsMatching(/DROP TABLE audit_entries\b/, allStatements())).toHaveLength(1);
+    expect(statementsMatching(/\bdrop table audit_entries\b/)).toHaveLength(1);
   });
 });
 
