@@ -239,14 +239,26 @@ only locale) is in `docs/standards/i18n.md`. The Nuxt-specific mechanics:
 
 | ID | Check | Signal | Severity | Source |
 |----|-------|--------|----------|--------|
-| W1 | Component sits at the right atomic level | `npm run layers -w apps/webapp` (`apps/webapp/scripts/check-atomic-layers.mjs`) — resolves every PascalCase tag each component renders to the layer that defines it, and fails on a same-level or upward dependency. Runs in CI via `nx affected -t … layers`. **Do not replace this with a grep for `~/components/...` import paths** — see the note below | blocking | STANDARDS.md — Atomic design |
+| W1 | Component sits at the right atomic level | `npm run layers -w apps/webapp` (`apps/webapp/scripts/check-atomic-layers.mjs`) — resolves every PascalCase tag each file renders to the layer that defines it, and fails on a same-level or upward dependency. Covers `app/components/**`, `app/layouts/**` and `app/pages/**`, and separately refuses any import from `~/pages/` or `~/layouts/`. Runs in CI via `nx affected -t … layers`. **Do not replace this with a grep for `~/components/...` import paths** — see the note below | blocking | STANDARDS.md — Atomic design |
 | W2 | Components never call fetchers directly | `grep -rnE -e '\$fetch\(' -e 'useFetch\(' -e 'useAsyncData\(' -e 'fetchers/' app/components/` | blocking | STANDARDS.md — fetcher → composable → component |
 | W3 | Tailwind tokens only, no arbitrary values | `grep -rnE '\b[a-z][a-z0-9-]*-\[[^]]+\]' app/` | warning | STANDARDS.md — Tailwind tokens |
 | W4 | No `any` or `never` escapes | `grep -rnE -e '\bas[[:space:]]+any\b' -e '\bas[[:space:]]+never\b' -e ':[[:space:]]*any\b' -e ':[[:space:]]*never\b' -e '<any>' app/` | blocking | `docs/standards/typing.md` |
 | W5 | Every component has a story | a `.vue` under `components/` with no matching `stories/**/*.stories.ts` | warning | STANDARDS.md — Storybook |
-| W6 | UI strings are translated, never inline. **Signal is a broad heuristic — read every hit and judge it; do not treat a match as a violation automatically.** It intentionally over-surfaces (over-surfacing beats missing a real one); it correctly skips `{{ }}` i18n interpolations since `{`/`}` fall outside the scanned run | `grep -rnE '>[^<>{}]*[A-Za-z]{2,}[^<>{}]*<' app/ --include='*.vue'` | blocking | `docs/standards/i18n.md` |
+| W6 | UI strings are translated, never inline. **Signal is two patterns, both broad heuristics — read every hit and judge it; do not treat a match as a violation automatically.** They intentionally over-surface (over-surfacing beats missing a real one); both correctly skip `{{ }}` i18n interpolations since `{`/`}` fall outside the scanned run. Run **both**: the first catches `<Tag>prose</Tag>` on one line, the second catches prose on a line of its own between multi-line tags — which is exactly what fixing a `@stylistic/max-len` warning produces, and what the first one misses | `grep -rnE '>[^<>{}]*[A-Za-z]{2,}[^<>{}]*<' app/ --include='*.vue'` then `grep -rnE "^[[:space:]]*[A-Za-z][A-Za-z ,.!?'-]*[A-Za-z.!?][[:space:]]*$" app/ --include='*.vue'` | blocking | `docs/standards/i18n.md` |
 | W7 | SSR pages set title and meta | `grep -rL -e "useHead" -e "useSeoMeta" app/pages/ --include='*.vue'` (lists changed pages with neither call) | warning | STANDARDS.md — SEO |
 | W8 | Interactive elements are reachable and labelled | `grep -rn "@click" app/ --include='*.vue'` then check the matched tag is not `button`/`a` (a `<button>`/`<a>` hit is not a violation) | blocking | STANDARDS.md — Accessibility |
+
+**W6's second pattern has a known-benign baseline.** On a clean tree it returns ten hits, and
+all ten are the same three shapes: an HTML comment's continuation line, a class-array or
+expression continuation inside a `:class` binding, and a valueless boolean attribute
+(`check-policy`). None is user-facing prose. A hit that is *not* one of those three is worth
+reading. The first pattern's baseline is zero.
+
+The final character class is `[A-Za-z.!?]` and not `[A-Za-z]`, which is not a detail: most
+user-facing prose ends in a full stop, and a pattern requiring a letter last misses every
+sentence of it. Measured — `We will send you a link.` was missed by the letter-only form and is
+caught by this one, and the clean-tree baseline is ten either way, so the widening costs nothing. This baseline is recorded because a heuristic
+whose normal output is "ten things" gets ignored unless somebody wrote down which ten.
 
 **W1 is a script, not a grep, and that is deliberate.** It used to search the component
 directories for the literal strings `~/components/atoms`, `~/components/molecules` and so on.
@@ -257,6 +269,16 @@ read as a pass. It was not clean, it was **inert** — the worst of the three st
 broken signal eventually gets investigated and a green one never does. The replacement checks
 what this stack actually writes: rendered tags, resolved to their defining layer. Anyone
 tempted to "simplify" it back into a one-line grep should read this paragraph first.
+
+**W1 sees pages and layouts, and did not always.** It read `app/components` alone, so every
+page and both layouts — twelve files — were never opened: a page rendering another page, or a
+layout rendering a page, passed silently and the count printed (`43 components`) was exactly the
+component count, which is what made it invisible. Pages and layouts now share one rank above
+`templates`, because neither is below the other: a page is rendered *into* a layout by Nuxt and
+names it in `definePageMeta`, so both may render any component and neither may render the other.
+Nuxt registers neither as a component, so the illegal shape needs an explicit import — which is
+checked by path as well as by tag name, because a tag-name rule can be evaded by binding the
+import to a different name and a path rule cannot.
 
 **No `Signal` in this table contains a pipe.** A markdown table cell cannot carry a bare `|`, so
 a pipe ships escaped as `\|` — read raw (which is how an agent reads this file) that is a literal

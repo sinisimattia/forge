@@ -434,8 +434,16 @@ Voku is read-only throughout (N1).
 
    ```bash
    # every URL and email address in what you copied
-   /usr/bin/grep -rnoE 'https?://[^"'"'"' )>`]+|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}' <paths>
+   /usr/bin/grep -rnoiE 'https?://[^"'"'"' )>`]+|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}' <paths>
    ```
+
+   **The `-i` is load-bearing and this command shipped without it**, blind in two places at
+   once. `\.[a-z]{2,}` misses an email whose TLD is capitalised (`someone@Personal.COM`), and
+   `https?://` misses a URL whose scheme is (`HTTPS://Personal.COM/blog`, `Http://Internal.Host/x`).
+   The second is the worse one: the Critical this step was written for **was a URL in a story's
+   `to` prop**, so the sweep would not have caught its own founding case in upper case. Nothing
+   else in the pattern is case-sensitive — the local part, the domain body and the URL body are
+   already case-blind — so `-i` fixes both and widens nothing.
 
    Anything that is not a reserved documentation domain (`example.com`, `example.org`,
    `example.net`, `*.example`, `*.test` and `*.invalid` — RFC 2606/6761), a framework
