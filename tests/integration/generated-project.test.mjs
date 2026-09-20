@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { generate } from '../../tools/create/index.mjs';
 import { tempDirFactory } from '../helpers/temp.mjs';
+import { engineRangeOf, nodeEngineReport } from '../helpers/node-engine.mjs';
 
 const run = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -61,6 +62,45 @@ async function expectFailure(cmd, args, options, why) {
 
 test('a generated project passes every gate it ships with', async (t) => {
   const project = await generateProject();
+
+  // Which Node produced the results below? Everything after this subtest runs under whatever
+  // Node the developer happens to have, while the generated project declares a range in its
+  // own `package.json` and both Dockerfiles pin one major. On CI those agree (`setup-node@v4`);
+  // on a developer machine they routinely do not, and then a green run below means "this
+  // template passed on a Node it says it does not support" — with a Node-of-record-only
+  // failure invisible to exactly the person who will meet it first, inside the containers.
+  //
+  // The range is READ from the generated project, never restated here. Two claims went stale
+  // in this phase because they were copies of a value that had since moved.
+  //
+  // This subtest WARNS on a version mismatch and FAILS on a missing or unreadable
+  // declaration. That asymmetry is deliberate. Failing on the mismatch would make this gate
+  // unrunnable for every developer whose Node has moved on, and a gate nobody can run is a
+  // gate that gets deleted — whereas what is actually at risk is not the run but the
+  // conclusion drawn from it, which the warning corrects. Failing on the DECLARATION is the
+  // other half: if `engines.node` disappears, this check has nothing to compare against, and
+  // a comparison against nothing must never read as agreement. That is the failure mode this
+  // whole subtest exists to remove, so it is the one it refuses to have itself.
+  await t.test('the Node this gate is running under, against the one the project declares', async () => {
+    const manifest = JSON.parse(await fs.readFile(path.join(project, 'package.json'), 'utf8'));
+    const declared = engineRangeOf(manifest, 'the generated project’s package.json');
+
+    const report = nodeEngineReport({
+      declared,
+      running: process.versions.node,
+      where: 'the generated project’s package.json',
+    });
+
+    if (report) {
+      // `t.diagnostic` puts it in the gate's own output rather than only on a stream a CI
+      // log viewer may fold away, which is the "record the mismatch in the gate's output"
+      // half of this step.
+      for (const line of report.split('\n')) t.diagnostic(line);
+      process.stderr.write(`\n${report}\n\n`);
+    } else {
+      t.diagnostic(`node v${process.versions.node} satisfies the declared "${declared}"`);
+    }
+  });
 
   await t.test('lint', async () => {
     await run('npm', ['run', 'lint'], { cwd: project, ...BIG });
