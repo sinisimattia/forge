@@ -6,6 +6,21 @@ import { substitute, findUnresolved } from './tokens.mjs';
 /**
  * The "how we work" layer, adoptable into a repository that already exists.
  * A trailing slash means "this directory and everything under it".
+ *
+ * **The rule for ADRs, which is why this list stops at `0004`.** An ADR belongs here when it
+ * records how a team works — how it documents decisions, how its agents are organised, where
+ * architecture and API docs live. An ADR does NOT belong here when it records a decision
+ * about *this template's* architecture: identity being separate from user, authorization
+ * being a pure function, tenancy being explicit, mail leaving through a port. Those are true
+ * of a project generated from this template and false of a repository that adopted only the
+ * process layer — shipping them would hand somebody four confident claims about a system
+ * they do not have. That is the whole test to apply: **would this ADR still be true in a
+ * repository that took the agents and the standards and nothing else?**
+ *
+ * By that rule `0000`–`0004` are in and `0005`–`0008` are out, and a new ADR is out unless
+ * someone adds it here deliberately. The list stays an explicit enumeration rather than a
+ * range or a glob precisely so that defaulting to "out" is what happens when nobody thinks
+ * about it: a range would silently adopt the next platform ADR the day it is written.
  */
 export const PROCESS_SUBSET = [
   'CLAUDE.md',
