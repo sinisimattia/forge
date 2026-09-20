@@ -57,8 +57,12 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    # Host-published port only, exactly as compose.yaml does it: the
+    # container-internal port stays fixed at 3000. A hardcoded host port makes
+    # this file unusable on any machine that already has something on 3000 —
+    # including the e2e gate, which allocates a free port rather than assuming.
     ports:
-      - '3000:3000'
+      - '${BACKEND_PORT:-3000}:3000'
     # NOTE: `environment:` takes precedence over `env_file:`, so these pinned values win
     # over anything in apps/backend/.env.
     #
@@ -119,7 +123,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - '3001:3000'
+      - '${WEBAPP_PORT:-3001}:3000'
     environment:
       NODE_ENV: production
       NUXT_PUBLIC_API_BASE: http://localhost:3000
