@@ -72,6 +72,21 @@ export function mountOptions(): { components: Record<string, Component> } {
 export const navigations: string[] = [];
 
 /**
+ * The route the page under test believes it is on.
+ *
+ * A mutable module-level object rather than a per-mount option, because
+ * `useRoute()` is an auto-import a page calls with no arguments: there is
+ * nowhere to hand it one. A spec sets `route.query` before mounting.
+ */
+export const route: { query: Record<string, unknown>; meta: Record<string, unknown> } = {
+  query: {},
+  meta: {},
+};
+
+/** Every `useHead` argument, so a spec can assert a page set a title at all. */
+export const heads: unknown[] = [];
+
+/**
  * The globals a component of this application expects Nuxt to have provided.
  *
  * `stubNuxtAutoImports` covers the framework's own (`ref`, `computed`,
@@ -104,4 +119,17 @@ export function stubAutoImports(): void {
     apiBaseServer: '',
     public: { apiBase: 'http://backend.test', appName: 'Test' },
   }));
+  // The three a page calls that a component does not. `definePageMeta` is a
+  // compiler macro Nuxt erases at build time and plain Vitest does not, so it has
+  // to exist as a function or every page throws on setup; it does nothing here,
+  // which is correct — what it declares (layout, middleware) is Nuxt's to act on
+  // and is asserted by the middleware's own specs, not by mounting a page.
+  vi.stubGlobal('definePageMeta', () => undefined);
+  vi.stubGlobal('useHead', (head: unknown) => {
+    heads.push(head);
+  });
+  vi.stubGlobal('useRoute', () => route);
+  route.query = {};
+  route.meta = {};
+  heads.length = 0;
 }
