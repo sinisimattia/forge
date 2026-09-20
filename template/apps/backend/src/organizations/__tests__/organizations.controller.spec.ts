@@ -51,6 +51,7 @@ const SESSION = '33333333-3333-4333-8333-333333333333' as SessionId;
 const ORG_1 = '44444444-4444-4444-8444-444444444444';
 const ORG_MINE = '55555555-5555-4555-8555-555555555555';
 const ORG_THEIRS = '66666666-6666-4666-8666-666666666666';
+const ORG_ABSENT = '77777777-7777-4777-8777-777777777777';
 
 const SIGNING_KEY = 'organizations-controller-spec-signing-key';
 
@@ -239,8 +240,30 @@ describe('OrganizationsController', () => {
         .get(`/organizations/${ORG_1}`)
         .set('Authorization', bearer(OUTSIDER));
 
-      expect(response.status).not.toBe(200);
+      expect(response.status).toBe(404);
       expect(JSON.stringify(response.body)).not.toContain('Acme Works');
+    });
+
+    // The property `OrganizationNotFoundError`'s shared refusal exists for:
+    // a non-member and a never-issued id must be ONE answer, not two that
+    // happen to share a status. Comparing statuses alone would pass an
+    // implementation that answered 404 to both but put "you are not a member
+    // of this organization" in one body and "no such organization" in the
+    // other — which leaks exactly what the shared status was chosen to hide,
+    // through the one channel a status code cannot close.
+    it('answers a non-member exactly as it answers an id nobody ever issued', async () => {
+      seedOrganization(ORG_1, 'Acme Works', 'acme-works', OWNER);
+
+      const notMine = await request(app.getHttpServer())
+        .get(`/organizations/${ORG_1}`)
+        .set('Authorization', bearer(OUTSIDER));
+
+      const neverIssued = await request(app.getHttpServer())
+        .get(`/organizations/${ORG_ABSENT}`)
+        .set('Authorization', bearer(OUTSIDER));
+
+      expect(notMine.status).toBe(neverIssued.status);
+      expect(notMine.body).toStrictEqual(neverIssued.body);
     });
   });
 

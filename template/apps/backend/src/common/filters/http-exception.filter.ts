@@ -15,6 +15,11 @@ import {
 } from '__FORGE_SCOPE__/core/identities/errors';
 import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policies';
 import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/types';
+import {
+  InvalidOrganizationSlugError,
+  OrganizationNameRequiredError,
+  OrganizationNotFoundError,
+} from '__FORGE_SCOPE__/core/organizations/errors';
 import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
 import {
   DisplayNameRequiredError,
@@ -145,6 +150,20 @@ const DOMAIN_ERRORS: {
   { type: WeakPasswordError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.auth.weak_password', code: 'WEAK_PASSWORD' },
   { type: UserNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.http.not_found', code: 'USER_NOT_FOUND' },
   { type: IdentityNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.http.not_found', code: 'IDENTITY_NOT_FOUND' },
+  // Also the answer for an organization the caller is not a member of —
+  // `OrganizationNotFoundError` is the one error `OrganizationsService` raises
+  // for both, on purpose (see its own TSDoc). `messageKey` is deliberately
+  // `errors.http.not_found`, the SAME key `UserNotFoundError` uses, rather
+  // than an organization-specific one: a distinct key would put back through
+  // the body exactly what the shared 404 status was chosen to keep out — that
+  // a non-member's guess named a real organization. Before this row existed,
+  // every one of these fell through to the unnamed-domain-error branch below
+  // and answered 422, which leaks the same fact a different way: 422 confirms
+  // the id parsed as a UUID and reached the service, 404 does not distinguish
+  // "not yours" from "not real" at all.
+  { type: OrganizationNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.http.not_found', code: 'ORGANIZATION_NOT_FOUND' },
+  { type: OrganizationNameRequiredError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.http.unprocessable', code: 'ORGANIZATION_NAME_REQUIRED' },
+  { type: InvalidOrganizationSlugError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.http.unprocessable', code: 'INVALID_ORGANIZATION_SLUG' },
   // 422 and a code, rather than falling through to the unnamed-domain-error
   // branch below. A blank display name is the one refusal `PATCH /users/me` can
   // raise from the domain, and a caller that had to infer it from "a 422 on this
