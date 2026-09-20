@@ -3,13 +3,14 @@
 The **Nuxt 4 / Vue 3** frontend for __FORGE_TITLE__ — Tailwind CSS, i18n, and an Atomic
 Design component structure. It talks to the [backend API](../backend/README.md). Part of
 the [__FORGE_TITLE__ monorepo](../../README.md). Ships a generic, domain-free component
-library — 32 atoms, 3 molecules and one page template, each with a Storybook story — on a
+library — atoms, molecules and one page template, each with a Storybook story — on a
 named colour palette that replaces Tailwind's stock one, plus a placeholder index page.
 
-It also ships the client half of the identity foundation: fetchers, the three `I*Service`
-implementations over the wire, and — from the auth store down — `useAuth()`, the `auth` and
-`guest` route middleware, and the server-side session renewal. There are no sign-in or
-registration **pages** yet.
+It also ships the client half of the identity foundation end to end: fetchers, the three
+`I*Service` implementations over the wire, the auth store, `useAuth()`, the `auth` and
+`guest` route middleware, the server-side session renewal, and the pages a person actually
+uses — sign in, register, verify an address, request and complete a password reset, and an
+account area for the profile, the password, the sessions and the linked identities.
 
 ## Running
 
@@ -40,12 +41,17 @@ explorer on `http://localhost:6006`.
 
 ### Structure
 
-Components follow Atomic Design under `app/components/` (`atoms` today; `molecules` →
-`organisms` → `templates` join once a second component needs them), consumed by
-`app/pages/`. Once a domain exists in `__FORGE_SCOPE__/core`, data access is layered
-**fetcher → composable → component** (see `STANDARDS.md`) and `app/services/<domain>.service.ts`
-provides an HTTP service that implements the `__FORGE_SCOPE__/core` `I*Service` contract —
-none of that exists yet.
+Components follow Atomic Design under `app/components/` — all four layers are populated,
+`atoms` and `molecules` by the generic library, `organisms` and `templates` by the identity
+surface — consumed by `app/pages/` through `app/layouts/`. `npm run layers` is the gate that
+holds the direction of those dependencies, and it fails when pointed at nothing rather than
+reporting a clean scan.
+
+Data access is layered **fetcher → composable → component** (see `STANDARDS.md`):
+`app/fetchers/` is the only place a backend path is spelled, `app/services/` implements the
+`__FORGE_SCOPE__/core` `I*Service` contracts over the wire, and a component reaches neither
+directly — it calls a composable. Your own domain follows the same three steps once it
+exists in `__FORGE_SCOPE__/core`.
 
 ## Conventions & docs
 

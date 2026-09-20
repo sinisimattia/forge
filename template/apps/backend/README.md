@@ -3,8 +3,10 @@
 The **NestJS** REST API for __FORGE_TITLE__ — TypeORM over PostgreSQL, i18n error/response
 handling. Part of the [__FORGE_TITLE__ monorepo](../../README.md). Ships with no business
 domain of its own, and with the identity foundation already built: `GET /health`, the
-`/auth` endpoints (registration, verification, sign-in, renewal, sign-out, sessions), and a
-global guard that closes every route that does not carry `@Public()`.
+`/auth` endpoints (registration, verification, sign-in, renewal, sign-out, sessions,
+password reset and change), `/users` (the caller's own profile plus four platform-admin
+routes), `/users/me/identities`, `/audit`, and a global guard that closes every route that
+does not carry `@Public()`.
 
 ## Running
 
@@ -35,14 +37,17 @@ npx nx build backend
 ### Structure
 
 Standard NestJS feature modules under `src/<domain>/` (module, controller, service, TypeORM
-entities, DTOs) — none exist yet beyond `src/health/`. Shared concerns live in `src/common/`
-(exception filter, response interceptor, pipes, i18n plumbing). Migrations are in
-`src/db/migrations/` — generate with `npm run migration:generate`, run with
-`npm run migration:run`.
+record classes, DTOs). The ones that ship are `health/`, `auth/`, `identities/`, `users/`,
+`audit/` and `mail/`; yours join them. Shared concerns live in `src/common/` (exception
+filter, response interceptor, pipes, i18n plumbing, the in-memory data source the specs
+run against). Migrations are in `src/db/migrations/` — generate with
+`npm run migration:generate`, run with `npm run migration:run`.
 
-Once a domain exists in `__FORGE_SCOPE__/core`, each backend service implements that
-domain's `I*Service` contract (returning framework-agnostic domain entities) and is driven
-against the shared conformance suite — see `__FORGE_SCOPE__/core`'s README.
+Each backend service implements its domain's `__FORGE_SCOPE__/core` `I*Service` contract,
+returning framework-agnostic domain entities, and is driven against that contract's shared
+conformance suite — the same suite the webapp's HTTP implementations are driven against.
+`AuthService`, `UsersService` and `IdentitiesService` are the worked examples; do the same
+for yours. See `__FORGE_SCOPE__/core`'s README.
 
 ## Conventions & docs
 

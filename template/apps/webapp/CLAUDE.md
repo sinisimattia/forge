@@ -3,7 +3,7 @@
 ## Project Overview
 
 This package is the **webapp**: a Nuxt 4 / Vue 3 frontend. It ships a generic, domain-free
-component library — 32 atoms, 3 molecules and one page template, each with a Storybook story
+component library — atoms, molecules and one page template, each with a Storybook story
 — on a named colour palette, plus an index page. There is no business domain of its own.
 
 What it does ship is the identity foundation's client half: `app/fetchers/` (one function
@@ -17,7 +17,13 @@ On top of those sits the machinery that makes a signed-in user a fact the whole 
 see: `app/stores/auth.ts` (the credential in memory, the person, and a three-valued
 `status`), `useAuth()`/`useCurrentUser()`, the `auth` and `guest` route middleware, and
 `app/plugins/auth-init.server.ts`, which renews the session once per server-rendered
-request. There are no sign-in or registration **pages** yet.
+request.
+
+On top of *that* sits the user-facing surface: `app/components/organisms/` (`LoginForm`,
+`RegisterForm`, `AppHeader`, `SessionList`, `IdentityList`), two layouts, and the pages —
+sign in, register, verify an address, request and complete a password reset, and an
+`account/` area for the profile, the password, the active sessions and the linked
+identities.
 
 Feature domains (e.g. `articles`, `comments`, `tags`) land here once `libs/core` defines
 their entities and `I*Service` contracts (see `libs/core/CLAUDE.md`).
@@ -78,13 +84,13 @@ webapp/
 │   └── check-atomic-layers.mjs # the W1 gate (`npm run layers`)
 ├── app/
 │   ├── app.vue                 # Root component
-│   ├── pages/
-│   │   └── index.vue           # Placeholder landing page
+│   ├── pages/                  # index.vue (placeholder) + the auth and account/ pages
+│   ├── layouts/                # auth, account — chosen by `definePageMeta`
 │   ├── components/
-│   │   ├── atoms/              # 32 — AppButton, AppInput, AppTable*, AppText, …
-│   │   ├── molecules/          # 3  — AppTabGroup, ConfirmDialog, FormField
-│   │   ├── organisms/          # empty
-│   │   └── templates/          # 1  — AuthTemplate
+│   │   ├── atoms/              # the generic library — AppButton, AppInput, AppTable*, …
+│   │   ├── molecules/          # AppTabGroup, ConfirmDialog, FormField, PasswordField, …
+│   │   ├── organisms/          # LoginForm, RegisterForm, AppHeader, SessionList, …
+│   │   └── templates/          # AuthTemplate
 │   ├── fetchers/               # one function per endpoint; the only place a path is spelled
 │   ├── services/               # the core I*Service implementations, over the wire
 │   │   └── __tests__/          # the shared conformance suites, driven under vitest
@@ -102,12 +108,14 @@ webapp/
 │   │   └── en.json             # i18n strings (single file today)
 │   ├── assets/scss/            # _variables, _mixins, app.scss (the Tailwind entry)
 │   └── test/                   # Vitest unit tests
-├── stories/                    # atoms/ molecules/ templates/ — one story per component
+├── stories/                    # mirrors the four layers — one story per component
 └── .storybook/                 # Storybook config
 ```
 
-Not present yet: `app/layouts/`, auth pages. `app/components/organisms/` exists but is
-empty.
+Every Atomic Design layer is populated, so a new component has an existing sibling at its
+level to be judged against. `npm run layers` is what enforces the direction of the
+dependencies between them — and it fails when it is pointed at nothing, rather than
+reporting a clean scan of zero files.
 
 ## What's wired up
 

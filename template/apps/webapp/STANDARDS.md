@@ -73,11 +73,14 @@ structural layers.
 
 "Can this be reused in a completely different context?" If yes, it is likely an atom or
 molecule; if it is tied to a domain concept, it is an organism. `atoms/`, `molecules/` and
-`templates/` ship populated with the generic component library; `organisms/` is empty,
-because an organism is by definition tied to *your* domain and there is none yet. That is
-also the shape of the commonest mistake here: a domain component put in `atoms/` because it
-is small. Size is not the criterion, reusability is. W1 enforces the direction of
-dependencies, not the placement — placement is a judgement, and this is the question to ask.
+`templates/` ship populated with the generic component library. `organisms/` ships populated
+too, but only with the identity surface (`LoginForm`, `RegisterForm`, `AppHeader`,
+`SessionList`, `IdentityList`) — which is what an organism looks like: tied to a domain, and
+the domain it is tied to is the only one this template has. Yours go beside them.
+
+The commonest mistake here is a domain component put in `atoms/` because it is small. Size
+is not the criterion, reusability is. W1 enforces the direction of dependencies, not the
+placement — placement is a judgement, and this is the question to ask.
 
 - **HTML-only-in-atoms:** raw HTML UI primitive tags (`button`, `input`, `textarea`,
   `select`, `option`, `a`, `img`, `h1`–`h6`, `p`, `span`, `label`, `form`, `svg`, etc.)
@@ -244,7 +247,7 @@ only locale) is in `docs/standards/i18n.md`. The Nuxt-specific mechanics:
 | W3 | Tailwind tokens only, no arbitrary values | `grep -rnE '\b[a-z][a-z0-9-]*-\[[^]]+\]' app/` | warning | STANDARDS.md — Tailwind tokens |
 | W4 | No `any` or `never` escapes | `grep -rnE -e '\bas[[:space:]]+any\b' -e '\bas[[:space:]]+never\b' -e ':[[:space:]]*any\b' -e ':[[:space:]]*never\b' -e '<any>' app/` | blocking | `docs/standards/typing.md` |
 | W5 | Every component has a story | a `.vue` under `components/` with no matching `stories/**/*.stories.ts` | warning | STANDARDS.md — Storybook |
-| W6 | UI strings are translated, never inline. **Signal is two patterns, both broad heuristics — read every hit and judge it; do not treat a match as a violation automatically.** They intentionally over-surface (over-surfacing beats missing a real one); both correctly skip `{{ }}` i18n interpolations since `{`/`}` fall outside the scanned run. Run **both**: the first catches `<Tag>prose</Tag>` on one line, the second catches prose on a line of its own between multi-line tags — which is exactly what fixing a `@stylistic/max-len` warning produces, and what the first one misses | `grep -rnE '>[^<>{}]*[A-Za-z]{2,}[^<>{}]*<' app/ --include='*.vue'` then `grep -rnE "^[[:space:]]*[A-Za-z][A-Za-z ,.!?'-]*[A-Za-z.!?][[:space:]]*$" app/ --include='*.vue'` | blocking | `docs/standards/i18n.md` |
+| W6 | UI strings are translated, never inline. **Signal is two patterns, both broad heuristics — read every hit and judge it; do not treat a match as a violation automatically.** They intentionally over-surface (over-surfacing beats missing a real one); both correctly skip `{{ }}` i18n interpolations since `{`/`}` fall outside the scanned run. Run **both**: the first catches `<Tag>prose</Tag>` on one line, the second catches prose on a line of its own between multi-line tags — which is exactly what fixing a `@stylistic/max-len` warning produces, and what the first one misses | `grep -rnE '>[^<>{}]*[A-Za-z]+[^<>{}]*<' app/ --include='*.vue'` then `grep -rnE "^[[:space:]]*[A-Za-z][A-Za-z ,.!?'-]*[A-Za-z.!?][[:space:]]*$" app/ --include='*.vue'` | blocking | `docs/standards/i18n.md` |
 | W7 | SSR pages set title and meta | `grep -rL -e "useHead" -e "useSeoMeta" app/pages/ --include='*.vue'` (lists changed pages with neither call) | warning | STANDARDS.md — SEO |
 | W8 | Interactive elements are reachable and labelled | `grep -rn "@click" app/ --include='*.vue'` then check the matched tag is not `button`/`a` (a `<button>`/`<a>` hit is not a violation) | blocking | STANDARDS.md — Accessibility |
 
@@ -289,3 +292,12 @@ compliant ones, which is worse — a row that cries wolf on everything is the ro
 whole table ignored. Write alternation as repeated `-e` patterns, which are correct whether the
 cell is read raw or rendered. Quote every `--include` glob for the same reason: unquoted, zsh
 expands it against the current directory and aborts the command before grep runs.
+
+**And prefer `+` to `{2,}` where the two say the same thing.** Not for portability of the
+quantifier itself — `[A-Za-z]{2,}` is ERE and behaves identically everywhere it was tried. The
+shape that breaks is a *bounded* run either side of a required pair: `>[^<>]*[A-Za-z]{2,}[^<>]*<`
+matches `<p>Inline prose here</p>` under GNU and BSD grep and matches **nothing** under ugrep
+7.8.4, which some developers have aliased to `grep`. `>[^<>]*[A-Za-z]+[^<>]*<` matches under all
+three and surfaces no extra hit on a clean tree. Whenever a signal is written or changed, run it
+against a file you have deliberately broken before believing a clean result — a pattern that
+matches nothing and a codebase with nothing to find are the same output.
