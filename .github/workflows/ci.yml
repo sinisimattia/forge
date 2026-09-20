@@ -5,9 +5,10 @@ name: CI
 #                         because it is the cheapest check and the one that catches an
 #                         extraction mistake (a source-project trace or a populated secret).
 #   - generated-project: PR-only. Actually generates a project and runs its lint/typecheck/
-#                         test/build/purity/layers gates — slow (an npm install plus a Nuxt
+#                         test/build/purity/layers gates — slow (an npm ci plus a Nuxt
 #                         build), and it does that twice: once for the gate suite and once
-#                         for the inventory suite.
+#                         for the inventory suite. It installs with `npm ci` so the committed
+#                         lockfile is exercised by the same command Docker and dev:up use.
 #   - storybook:          PR-only, non-blocking for now. `build-storybook` is a separate nx
 #                         target that `nx run-many -t build` never invokes; this job is the
 #                         only thing that exercises it. See its own comment below for why it
@@ -21,8 +22,8 @@ name: CI
 # `npm ci` was checked directly against this repo and fails outright with no package-lock.json
 # (EUSAGE), so it is deliberately never invoked here. The generated projects created inside the
 # integration/storybook/docker steps below are a different package.json tree entirely, ship
-# their own package-lock.json, and do get an explicit install — `npm install`, inside the test
-# files themselves, for the integration/docker tiers; `npm ci` as its own step for storybook.
+# their own package-lock.json, and do get an explicit install — `npm ci` in every case: inside
+# the test files themselves for the integration/docker tiers, and as its own step for storybook.
 
 on:
   push:

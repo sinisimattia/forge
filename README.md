@@ -166,9 +166,12 @@ This runs, in order: `npm run sanitize` (the extraction gate — must be clean),
 (the generator's own unit tests), and `npm run test:integration` (generates a real project
 and asserts it passes its own `lint`/`typecheck`/`test`/`build`/`purity`/`layers`; set
 `FORGE_E2E=1` to also boot the generated stack in Docker and check `/health`). The
-integration tier is slow — a generated project's `npm install` plus a Nuxt build, and the
-Docker tier adds image builds on top — budget real time for it rather than expecting it to
-finish like the unit tier.
+integration tier is slow — a generated project's `npm ci` plus a Nuxt build, and the Docker
+tier adds image builds on top — budget real time for it rather than expecting it to finish
+like the unit tier. It installs with `npm ci`, not `npm install`, so the committed
+`package-lock.json` is exercised by the same command the Dockerfiles and `dev:up` use: a
+lockfile that had fallen out of sync with a `package.json` would otherwise pass the whole
+gate and fail on the user's first boot.
 
 ### The discriminating tests
 
