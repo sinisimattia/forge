@@ -1,4 +1,9 @@
 export type { CreateOrganizationInput } from './CreateOrganizationInput';
+export type { InvitationId } from './InvitationId';
+export type { InvitationJSON } from './InvitationJSON';
+export type { InvitationProps } from './InvitationProps';
+export type { InvitationQuery } from './InvitationQuery';
+export type { InviteMemberInput } from './InviteMemberInput';
 export type { MemberQuery } from './MemberQuery';
 export type { MembershipId } from './MembershipId';
 export type { MembershipJSON } from './MembershipJSON';

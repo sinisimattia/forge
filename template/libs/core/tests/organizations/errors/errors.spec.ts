@@ -2,6 +2,9 @@ import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
 import {
   AlreadyAMemberError,
   InvalidOrganizationSlugError,
+  InvitationAddressMismatchError,
+  InvitationNoLongerOpenError,
+  InvitationNotFoundError,
   LastOwnerError,
   MembershipNotFoundError,
   OrganizationNameRequiredError,
@@ -18,6 +21,21 @@ const CASES: ReadonlyArray<[string, DomainError, string]> = [
     'InvalidOrganizationSlugError',
     new InvalidOrganizationSlugError('ACME'),
     '"ACME" is not a usable organization slug.',
+  ],
+  [
+    'InvitationAddressMismatchError',
+    new InvitationAddressMismatchError('invitation-9'),
+    'Invitation "invitation-9" was not addressed to this account.',
+  ],
+  [
+    'InvitationNoLongerOpenError',
+    new InvitationNoLongerOpenError('invitation-9'),
+    'Invitation "invitation-9" is no longer open.',
+  ],
+  [
+    'InvitationNotFoundError',
+    new InvitationNotFoundError('invitation-9'),
+    'No invitation with id "invitation-9".',
   ],
   [
     'LastOwnerError',
