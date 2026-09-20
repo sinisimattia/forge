@@ -736,6 +736,18 @@ A. FIX IN THE WAVE
  A3. [Task 12] W1's signal misses same-level imports (atom->atom), which the Atomic Design table also
      forbids. And W6's signal still contains `{2,}` — rewrite as `[A-Za-z][A-Za-z]+` to remove a
      portability trap, since a silently no-op'd signal reads exactly like a clean codebase.
+
+     **>>> CORRECTION (2026-09-20, Phase 2 close-out): the W6 half of this was the right row
+     for the wrong reason, and its prescribed fix does not work. <<<**
+     `[A-Za-z]{2,}` on its own behaves identically under `/usr/bin/grep -E` and under ugrep
+     7.8.4 — 9 matches each — so the interval is not a portability trap. The shape that does
+     break is a bounded run either side of a required pair: `>[^<>]*[A-Za-z]{2,}[^<>]*<`
+     matches `<p>Inline prose here</p>` under `/usr/bin/grep` and matches **nothing** under
+     ugrep. `[A-Za-z][A-Za-z]+`, prescribed above, also matches nothing — it is the same
+     shape. `[A-Za-z]+` works under both and adds no hit on a clean tree; that is what
+     shipped. The W1 half was superseded instead: `check-atomic-layers.mjs` replaced the grep
+     entirely and does catch a same-level dependency.
+     Do not re-adopt the `{2,}` explanation — it has been tested and falsified.
  A4. [Task 6] main()'s catch reports error.written but not error.skipped, though both are attached.
  A5. [Task 7] rfcs/README.md says shapes "belong in `__FORGE_SCOPE__/core`" where it should say
      `libs/core` — that sentence is about physical location, so the directory is the right referent.

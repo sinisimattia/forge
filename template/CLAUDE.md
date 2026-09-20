@@ -26,9 +26,13 @@ rules (see ADR-0001 on single-source docs).
 
 - **Dev environment (containerized, Node 22):** `npm run dev:up` brings up backend + webapp +
   Postgres together; `npm run dev:down` / `npm run dev:reset` tear down. The host Node version
-  is irrelevant — everything runs in containers.
+  does not affect the running stack — it installs and runs inside the containers, which pin
+  Node 22.
 - Build/test/lint/typecheck via NX: `npx nx <target> <project>` or
-  `npx nx run-many -t <target>`.
+  `npx nx run-many -t <target>`. **These run on the host's Node, not in a container.**
+  `package.json` declares the range this project supports; a green run under a Node outside
+  it says less than it looks like, because the failure it would catch is the one that only
+  happens on the Node the images actually use.
 - Agents live in `.claude/agents/`. Standard flow:
   `planner → core-implementer → [backend-implementer ‖ webapp-implementer] → [*-tester ‖ reviewer] → documenter → closer → pr`.
 
