@@ -75,6 +75,55 @@ fix round to find; see `phase-2-decision-log.md` for the evidence behind them.
   second renewal race right, or reuse detection revokes the family. The no-flash behaviour is
   not at risk — the three-state `status` is what prevents the flash, not the token.
 
+## What the final whole-branch review left for Phase 3
+
+Phase 2's final review returned **MERGE, no blockers**, and six findings that are real but do
+not make any shipped behaviour wrong. Each was measured; none needs re-deriving. Four of the
+six are the phase's own theme — *a check that passes because it never ran* — which is why they
+are listed first rather than filed as chores.
+
+- **`AuthenticationOutcome`'s forcing function does not reach the webapp.** Core's TSDoc says
+  every consumer ends its `switch` with `assertNever`. Injecting a third status member fails
+  `core` and `backend` typecheck (TS2345 `'never'`) and **`webapp` passes**: its three consumers
+  (`stores/auth.ts:229`, `LoginForm.vue:63`, `useAuth.ts`) use `if`. A new member would render
+  as a sign-in refusal, silently. Phase 5 adds `MFA_REQUIRED`, so this is the branch the whole
+  design exists to make loud.
+- **A third masked assertion, and the first two were fixed.** `runIAuditServiceContract.ts:439-473`
+  checks ten wire fields, but the backend driver seeds `organizationId`, `clientAddress` and
+  `clientLabel` as `null`, so three are null-symmetric. Measured: dropping `organizationId`
+  from `AuditService.toEntity` leaves **499/499 green**; dropping the client columns fails a
+  *different* test while the wire-shape test stays green. Core's own driver seeds non-nulls with
+  a comment saying why. **Phase 3 is tenancy — `organizationId` is exactly the field that stops
+  being null.**
+- **`libs/core`'s 100% coverage thresholds run in no CI at all** — not `ci.yml`, not
+  `project.json`, not the integration gate. The coverage is real and was verified; nothing
+  enforces it. The plan said Task 18 owned closing this and Task 18 did not.
+- **The layer checker has no test that injects a layering violation**, and with `app/pages` and
+  `app/layouts` moved aside it prints `clean (44 component(s) and 0 page(s)/layout(s) checked)`
+  and exits 0. Its vacuous-pass guard covers the mirror case only — the axis added when Task 17
+  extended it to pages is unguarded.
+- **ADR-0008 says "every external capability is a port — an interface in core", and that is
+  false.** `IMailer` and `IPasswordHasher` live in the backend, deliberately, and
+  `IMailer.ts:21-27` argues against the ADR that governs it. Fix the ADR or move the ports;
+  do not leave them contradicting each other.
+- **`libs/core/README.md` claims one contract per domain and one suite per contract.** Identities
+  has two contracts, auth has two suites, and `IBreachedPasswordRegistry` has none. Its `shared/`
+  inventory also omits `shared/policies`, which is load-bearing.
+
+Also carried, smaller: **a direct push to `main` runs only the `unit` tier** — `generated-project`,
+`storybook` and `docker` are all `if: pull_request`, so the gate this phase spent a task building
+does not run on the branch it protects. The gate list exists twice (root `affected` and `ci.yml`)
+with nothing pinning them together. Two tautological assertions remain
+(`auth.controller.spec.ts:419`, whose own comment argues against it, and
+`composition-root.spec.ts:289`). `users.controller.spec.ts:197` sweeps for a secret in a world that
+has none. Nine more stale doc claims across D4–D13. And spec §12 step 5, run fresh, leaves one
+un-triaged residue: `https://placehold.co` in `AppImage.stories.ts:4`.
+
+**Not verified anywhere in Phase 2:** the template on the Node it declares. This machine has only
+`v26.5.0` and no version manager, so every run — including the final review's — was on Node 26
+while `template/package.json` says `>=22 <23` and both Dockerfiles pin 22. The gate's new mismatch
+warning fired correctly every time, which is the guard working and the coverage still missing.
+
 ## What Phase 3 inherits, already built
 
 | | Where |
