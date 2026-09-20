@@ -48,7 +48,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const APP = path.resolve(import.meta.dirname, '..', 'app');
+// Defaults to this package's real `app/`, so `npm run layers` (no argument) is unchanged.
+// An explicit argument exists only so a test can point the whole scan at a disposable
+// fixture tree instead of physically moving `app/pages`/`app/layouts`/`app/components`
+// aside — see `scripts/__tests__/check-atomic-layers.spec.ts`.
+const APP = process.argv[2]
+  ? path.resolve(process.argv[2])
+  : path.resolve(import.meta.dirname, '..', 'app');
 
 /**
  * The layers, lowest first. A file may render only files of a STRICTLY lower rank.
