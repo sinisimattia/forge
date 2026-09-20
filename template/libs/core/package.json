@@ -84,6 +84,22 @@
       "types": "./dist/identities/types/index.d.ts",
       "default": "./dist/identities/types/index.js"
     },
+    "./organizations/entities": {
+      "types": "./dist/organizations/entities/index.d.ts",
+      "default": "./dist/organizations/entities/index.js"
+    },
+    "./organizations/enums": {
+      "types": "./dist/organizations/enums/index.d.ts",
+      "default": "./dist/organizations/enums/index.js"
+    },
+    "./organizations/errors": {
+      "types": "./dist/organizations/errors/index.d.ts",
+      "default": "./dist/organizations/errors/index.js"
+    },
+    "./organizations/types": {
+      "types": "./dist/organizations/types/index.d.ts",
+      "default": "./dist/organizations/types/index.js"
+    },
     "./shared/errors": {
       "types": "./dist/shared/errors/index.d.ts",
       "default": "./dist/shared/errors/index.js"
