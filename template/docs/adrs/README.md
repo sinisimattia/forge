@@ -6,7 +6,7 @@ __FORGE_TITLE__, along with their context and consequences.
 ## Process
 
 1. Copy [0000-template.md](0000-template.md) with the next available number (e.g.,
-   `0009-my-decision.md`).
+   `0010-my-decision.md`).
 2. Fill in the context, decision, and consequences.
 3. Set the status to **Accepted**.
 4. Commit the ADR alongside the code change it documents.
@@ -32,7 +32,8 @@ __FORGE_TITLE__, along with their context and consequences.
 | [0006](0006-authorization-is-a-pure-function-in-core.md) | Authorization Is a Pure Function in Core | Accepted |
 | [0007](0007-tenancy-is-explicit-never-ambient.md) | Tenancy Is Explicit, Never Ambient | Accepted |
 | [0008](0008-ports-not-vendors.md) | Ports, Not Vendors | Accepted |
+| [0009](0009-two-database-roles.md) | Two Database Roles | Accepted |
 
-ADRs 0001–0008 are Forge template defaults — inherited from the template, not decisions
+ADRs 0001–0009 are Forge template defaults — inherited from the template, not decisions
 this project made for itself. Supersede any of them with a new, higher-numbered ADR if
 this project needs something different; do not edit them in place.

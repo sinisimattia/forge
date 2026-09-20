@@ -72,7 +72,8 @@ All design docs live in the top-level `docs/` folder (paths relative to the repo
 **ADRs:** `docs/adrs/` — conventions: 0001 (single-source docs), 0002 (consolidated agent
 roster), 0003 (architecture docs describe boundaries), 0004 (API reference lives with
 implementation). Platform: 0005 (identity is separate from user), 0006 (authorization is a
-pure function in core), 0007 (tenancy is explicit, never ambient), 0008 (ports, not vendors).
+pure function in core), 0007 (tenancy is explicit, never ambient), 0008 (ports, not
+vendors), 0009 (two database roles).
 
 ## Directory structure
 

@@ -50,7 +50,8 @@ All design docs live in the top-level `docs/` folder (paths relative to the repo
 **ADRs:** `docs/adrs/` — conventions: 0001 (single-source docs), 0002 (consolidated agent
 roster), 0003 (architecture docs describe boundaries), 0004 (API reference lives with
 implementation). Platform: 0005 (identity is separate from user), 0006 (authorization is a
-pure function in core), 0007 (tenancy is explicit, never ambient), 0008 (ports, not vendors).
+pure function in core), 0007 (tenancy is explicit, never ambient), 0008 (ports, not
+vendors), 0009 (two database roles).
 
 ## Module structure
 
@@ -144,7 +145,10 @@ named `<Thing>Record` because `__FORGE_SCOPE__/core` already exports `User`,
   **Two roles, on purpose:** migrations run as the schema owner, the application connects
   as a restricted role that owns nothing, and `UPDATE`/`DELETE` on `audit_entries` are
   revoked from that role — which a non-owner cannot grant back to itself. That is the
-  whole of the append-only audit guarantee; see `src/db/migrations/` and `.env.example`.
+  whole of the append-only audit guarantee. **Read
+  [ADR-0009](../../docs/adrs/0009-two-database-roles.md) before touching this schema**: it
+  lists the four ways to make the revoke decorative while every test stays green, and the
+  one most likely to be reached for by accident is adding a foreign key to `audit_entries`.
 - `src/i18n/en/*.json` + `src/common/i18n/` — translation plumbing, **registered** as the
   exported `I18N` dynamic module in `app.module.ts`. It was not, for a phase, and the
   consequence was concrete: `HttpExceptionFilter` fell back to emitting the raw key, so a
