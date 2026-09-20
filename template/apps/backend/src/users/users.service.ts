@@ -253,15 +253,23 @@ export class UsersService implements IUserService {
   /**
    * The actor as core's `can` wants them, read from the row.
    *
-   * No memberships. Every question this service asks is about a person or about
-   * the deployment — never about a record inside an organization — so layer two
-   * is never consulted and hydrating them would be a second query for an answer
-   * that cannot depend on it. `PermissionsGuard` (Task 13) is what builds a full
-   * principal for the callers that do ask organization-scoped questions.
+   * No memberships and no grants. Every question this service asks is about a
+   * person or about the deployment — never about a record inside an
+   * organization — and every one of them is asked without a `resource`, so
+   * layers two and three are unreachable rather than merely unused. Hydrating
+   * either would be a second query for an answer that cannot depend on it.
+   * `PermissionsGuard` (Task 13) is what builds a full principal for the callers
+   * that do ask organization-scoped questions, and it is the one place the
+   * expiry rule that `Principal.grants` promises is applied.
    */
   private async principalOf(actorId: UserId): Promise<Principal> {
     const row = await this.require(actorId);
-    return { userId: row.id as UserId, platformRole: row.platformRole, memberships: [] };
+    return {
+      userId: row.id as UserId,
+      platformRole: row.platformRole,
+      memberships: [],
+      grants: [],
+    };
   }
 
   /**
@@ -277,9 +285,16 @@ export class UsersService implements IUserService {
     // somebody else's id — which is what the caller would otherwise report.
     const row = await this.users.findOne({ where: { id: actorId } });
     if (row === null) throw new ForbiddenException();
-    // No memberships: `platform:administer` is layer one's alone and no
-    // organization role carries it, so there is nothing for layer two to read.
-    const principal = { userId: row.id as UserId, platformRole: row.platformRole, memberships: [] };
+    // No memberships and no grants: `platform:administer` is layer one's alone.
+    // No organization role carries it, layer three excludes it by name, and this
+    // call names no resource anyway — so there is nothing for either list to be
+    // read by.
+    const principal = {
+      userId: row.id as UserId,
+      platformRole: row.platformRole,
+      memberships: [],
+      grants: [],
+    };
     if (!can(principal, 'platform:administer')) {
       throw new ForbiddenException();
     }

@@ -1,5 +1,11 @@
 import { ROLE_PERMISSIONS, can } from '__FORGE_SCOPE__/core/authorization/policies';
-import type { Permission, Principal } from '__FORGE_SCOPE__/core/authorization/types';
+import type {
+  GrantId,
+  Permission,
+  Principal,
+  ResourceGrant,
+  ResourceType,
+} from '__FORGE_SCOPE__/core/authorization/types';
 import { OrgRole } from '__FORGE_SCOPE__/core/organizations/enums';
 import type { OrganizationId } from '__FORGE_SCOPE__/core/organizations/types';
 import { PlatformRole } from '__FORGE_SCOPE__/core/users/enums';
@@ -15,11 +21,13 @@ const administrator: Principal = {
   userId: ADA,
   platformRole: PlatformRole.PLATFORM_ADMIN,
   memberships: [],
+  grants: [],
 };
 const ordinary: Principal = {
   userId: ADA,
   platformRole: PlatformRole.PLATFORM_USER,
   memberships: [],
+  grants: [],
 };
 
 /**
@@ -47,6 +55,40 @@ const EVERY_PERMISSION: Permission[] = [
   'grant:create',
   'grant:revoke',
 ];
+
+const DOC = 'document' as ResourceType;
+const SPREADSHEET = 'spreadsheet' as ResourceType;
+const RECORD = 'record-1';
+
+/**
+ * A grant for ADA on one record of ORG_1, to build the layer-three cases on.
+ *
+ * `expiresAt: null` throughout, and no assertion below varies it. `can` never
+ * reads it — a clock would make the function impure — so a grant in a
+ * principal's hands is one the hydrator already found live. `isGrantLive.spec`
+ * is where the expiry rule is asserted.
+ */
+const GRANT: ResourceGrant = {
+  id: 'grant-1' as GrantId,
+  subjectUserId: ADA,
+  organizationId: ORG_1,
+  resourceType: DOC,
+  resourceId: RECORD,
+  permission: 'organization:update',
+  grantedBy: GRACE,
+  createdAt: new Date('2026-01-01T00:00:00.000Z'),
+  expiresAt: null,
+};
+
+/** A VIEWER of ORG_1 — the weakest role — holding the grants given. */
+function viewerHolding(...grants: ResourceGrant[]): Principal {
+  return {
+    userId: ADA,
+    platformRole: PlatformRole.PLATFORM_USER,
+    memberships: [{ organizationId: ORG_1, role: OrgRole.VIEWER }],
+    grants,
+  };
+}
 
 describe('can', () => {
   describe('the platform layer', () => {
@@ -108,6 +150,7 @@ describe('can', () => {
           { organizationId: ORG_1, role: OrgRole.VIEWER },
           { organizationId: ORG_2, role: OrgRole.ADMIN },
         ],
+        grants: [],
       };
       expect(can(principal, 'organization:update', { organizationId: ORG_1 })).toBe(false);
       expect(can(principal, 'organization:update', { organizationId: ORG_2 })).toBe(true);
@@ -122,6 +165,7 @@ describe('can', () => {
         userId: ADA,
         platformRole: PlatformRole.PLATFORM_USER,
         memberships: [{ organizationId: ORG_1, role: OrgRole.OWNER }],
+        grants: [],
       };
       expect(can(principal, 'organization:read', { organizationId: ORG_2 })).toBe(false);
     });
@@ -134,6 +178,7 @@ describe('can', () => {
         userId: ADA,
         platformRole: PlatformRole.PLATFORM_USER,
         memberships: [{ organizationId: ORG_1, role: OrgRole.OWNER }],
+        grants: [],
       };
       expect(can(principal, 'organization:update')).toBe(false);
     });
@@ -146,6 +191,7 @@ describe('can', () => {
         userId: ADA,
         platformRole: PlatformRole.PLATFORM_ADMIN,
         memberships: [],
+        grants: [],
       };
       expect(can(principal, 'organization:delete', { organizationId: ORG_2 })).toBe(true);
     });
@@ -159,6 +205,7 @@ describe('can', () => {
         userId: ADA,
         platformRole: PlatformRole.PLATFORM_USER,
         memberships: [{ organizationId: ORG_1, role }],
+        grants: [],
       };
       const granted = new Set<Permission>(ROLE_PERMISSIONS[role]);
       for (const permission of EVERY_PERMISSION) {
@@ -169,6 +216,141 @@ describe('can', () => {
           granted.has(permission),
         );
       }
+    });
+  });
+
+  describe('layer three — resource grant', () => {
+    // A grant names one organization and one record. This is the assertion that
+    // stops it widening: the same grant, asked about the same record id in a
+    // DIFFERENT organization, must not answer true. Spec §9.5 states it as
+    // "grants never widen into another tenant", and without this assertion an
+    // implementation matching on the record id alone passes every other test
+    // here — two tenants are free to issue the same id.
+    it('never lets a grant reach into another tenant', () => {
+      const principal: Principal = {
+        userId: ADA,
+        platformRole: PlatformRole.PLATFORM_USER,
+        // A VIEWER of BOTH, so the only thing that differs between the two asks
+        // below is the organization the grant names. A principal belonging to
+        // one of them would be refused by layer two in the other, and this test
+        // would pass without layer three having a rule at all.
+        memberships: [
+          { organizationId: ORG_1, role: OrgRole.VIEWER },
+          { organizationId: ORG_2, role: OrgRole.VIEWER },
+        ],
+        grants: [GRANT],
+      };
+      expect(can(principal, 'organization:update', {
+        organizationId: ORG_1,
+        resourceType: DOC,
+        resourceId: RECORD,
+      })).toBe(true);
+      expect(can(principal, 'organization:update', {
+        organizationId: ORG_2,
+        resourceType: DOC,
+        resourceId: RECORD,
+      })).toBe(false);
+    });
+
+    // The carried finding from Task 6, and the reason it stopped being
+    // cosmetic. Layer two's `return false` for "no membership here" was pinned
+    // by nothing while every organization permission was refused by the switch
+    // anyway. Layer three is a route to `true` that runs after it, so folding
+    // that refusal into the `if` above it now means a grant authorizes somebody
+    // who is not a member of the organization at all — which is precisely what
+    // spec §9.5 says cannot happen, "because `can()` requires the resource's
+    // `organizationId` to match the principal's membership".
+    it('refuses a matching grant to a principal with no membership there', () => {
+      const principal: Principal = {
+        userId: ADA,
+        platformRole: PlatformRole.PLATFORM_USER,
+        // Belongs to ORG_2 only. The grant below names ORG_1 and matches the
+        // ask in every other respect, so membership is the only thing left to
+        // refuse it.
+        memberships: [{ organizationId: ORG_2, role: OrgRole.VIEWER }],
+        grants: [GRANT],
+      };
+      expect(can(principal, 'organization:update', {
+        organizationId: ORG_1,
+        resourceType: DOC,
+        resourceId: RECORD,
+      })).toBe(false);
+      // The same grant, the same everything, for a principal who does belong —
+      // so the refusal above is about the membership and not about some other
+      // mismatch that would have refused it anyway.
+      expect(can(viewerHolding(GRANT), 'organization:update', {
+        organizationId: ORG_1,
+        resourceType: DOC,
+        resourceId: RECORD,
+      })).toBe(true);
+    });
+
+    // Additive only: a grant adds a permission, it never removes one the role
+    // already gave. A VIEWER reads their organization by role, and must go on
+    // doing so both with no grant at all and while holding a grant about some
+    // other record — an implementation that treated grants as the answer
+    // whenever a record was named would refuse both.
+    it('does not take away what the role already allowed', () => {
+      const about = { organizationId: ORG_1, resourceType: DOC, resourceId: RECORD };
+      expect(can(viewerHolding(), 'organization:read', about)).toBe(true);
+      expect(can(viewerHolding({ ...GRANT, resourceId: 'record-9' }), 'organization:read', about))
+        .toBe(true);
+    });
+
+    // All four of organization, type, id and permission must match. Three
+    // assertions, each varying exactly one of the last three, because an
+    // implementation matching on two of them passes any test that varies none.
+    // The organization is varied by the cross-tenant test above.
+    it('requires the type, the id and the permission all to match', () => {
+      const principal = viewerHolding(GRANT);
+      expect(can(principal, 'organization:update', {
+        organizationId: ORG_1,
+        resourceType: SPREADSHEET,
+        resourceId: RECORD,
+      })).toBe(false);
+      expect(can(principal, 'organization:update', {
+        organizationId: ORG_1,
+        resourceType: DOC,
+        resourceId: 'record-9',
+      })).toBe(false);
+      // `member:remove` is carried by no role a VIEWER holds either, so the only
+      // thing that could have permitted it is the grant — which is for
+      // `organization:update`.
+      expect(can(principal, 'member:remove', {
+        organizationId: ORG_1,
+        resourceType: DOC,
+        resourceId: RECORD,
+      })).toBe(false);
+    });
+
+    // A type with no id names every record of that kind, and an id with no type
+    // names an id in a namespace nobody stated. Neither is a record, so neither
+    // reaches a grant — a caller that half-hydrated its resource gets a refusal
+    // rather than an answer about a record it did not name.
+    it('consults no grant for a resource that half-names a record', () => {
+      const principal = viewerHolding(GRANT);
+      expect(can(principal, 'organization:update', {
+        organizationId: ORG_1,
+        resourceType: DOC,
+      })).toBe(false);
+      expect(can(principal, 'organization:update', {
+        organizationId: ORG_1,
+        resourceId: RECORD,
+      })).toBe(false);
+    });
+
+    // The one thing this layer is not additive about. `platform:administer` is
+    // layer one's alone — no role carries it, which `ROLE_PERMISSIONS.spec`
+    // asserts — and grants are issued under `grant:create`, an organization
+    // permission an ADMIN holds. Without the exclusion, somebody whose
+    // authority ends at a tenant could issue the one permission that has none.
+    it('never lets a grant confer platform administration', () => {
+      const principal = viewerHolding({ ...GRANT, permission: 'platform:administer' });
+      expect(can(principal, 'platform:administer', {
+        organizationId: ORG_1,
+        resourceType: DOC,
+        resourceId: RECORD,
+      })).toBe(false);
     });
   });
 

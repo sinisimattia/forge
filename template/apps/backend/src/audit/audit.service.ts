@@ -107,12 +107,19 @@ export class AuditService implements IAuditService {
   public async query(actorId: UserId, query: AuditQuery): Promise<PaginatedResult<AuditEntry>> {
     const actor = await this.users.findOne({ where: { id: actorId } });
     if (actor === null) throw new ForbiddenException();
-    // No memberships, and no resource either: this is the deployment-wide
-    // history, which only layer one answers. An organization administrator
-    // reading their own organization's entries is the same permission asked
-    // *with* an organization, and it is a different call this endpoint does not
-    // make yet.
-    const principal = { userId: actor.id as UserId, platformRole: actor.platformRole, memberships: [] };
+    // No memberships, no grants, and no resource either: this is the
+    // deployment-wide history, which only layer one answers. With no `resource`
+    // argument there is no path into layers two and three at all, so both lists
+    // are empty because nothing here could read them — not because hydrating
+    // them was skipped. An organization administrator reading their own
+    // organization's entries is the same permission asked *with* an
+    // organization, and it is a different call this endpoint does not make yet.
+    const principal = {
+      userId: actor.id as UserId,
+      platformRole: actor.platformRole,
+      memberships: [],
+      grants: [],
+    };
     if (!can(principal, 'audit:read')) {
       throw new ForbiddenException();
     }

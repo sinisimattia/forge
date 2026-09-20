@@ -89,11 +89,18 @@ export class PlatformAdminGuard implements CanActivate {
       {
         userId: row.id as UserId,
         platformRole: row.platformRole,
-        // No memberships: this guard asks only layer one, which never reads them.
-        // Hydrating them here would be a database read for an answer that cannot
-        // depend on it. `PermissionsGuard` (Task 13) is what hydrates a full
+        // No memberships and no grants: this guard asks only layer one, which
+        // reads neither. Hydrating them here would be a database read for an
+        // answer that cannot depend on it, and the call below passes no
+        // `resource`, so layers two and three are not merely unused — there is
+        // no path to them. `PermissionsGuard` (Task 13) is what hydrates a full
         // principal, and it is the only thing that needs one.
         memberships: [],
+        // An empty list, never an omitted one. The field is required precisely so
+        // that a caller which should have hydrated grants cannot forget to — see
+        // `Principal.grants`, whose contract is that whatever is here was already
+        // judged live. Nothing was judged here because nothing is read here.
+        grants: [],
       },
       'platform:administer',
     );

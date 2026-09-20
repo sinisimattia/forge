@@ -2,6 +2,8 @@ import type { OrgRole } from '../../organizations/enums/OrgRole';
 import type { OrganizationId } from '../../organizations/types/OrganizationId';
 import type { PlatformRole } from '../../users/enums/PlatformRole';
 import type { UserId } from '../../users/types/UserId';
+import type { ResourceGrant } from './ResourceGrant';
+import type { ResourceType } from './ResourceType';
 
 /**
  * One organization a principal belongs to, and what they are in it.
@@ -46,6 +48,25 @@ export interface Principal {
    * would let a forgotten hydration read as a deliberate answer.
    */
   memberships: readonly PrincipalMembership[];
+  /**
+   * The record-level exceptions this person holds, **live as of hydration**.
+   *
+   * That phrase is the whole contract of this field. `can` never reads
+   * `expiresAt`: doing so needs a clock, and a clock would stop the same
+   * principal and resource producing the same answer, which is exactly what
+   * lets the server and a client evaluate the same rule. So the expiry rule is
+   * {@link isGrantLive}, and applying it is the hydrator's job — a lapsed grant
+   * must be absent from this array rather than present and ignored.
+   *
+   * Required and not optional, for the same reason `memberships` is and one
+   * more. An optional list lets a hydrator that forgot the expiry rule omit the
+   * field entirely, and `can` would read the absence as "holds no exceptions" —
+   * a wrong answer that looks like a right one. Required makes forgetting it a
+   * compile error, which is the only place the omission can still be caught.
+   * A caller with nothing to hydrate passes an empty array, which says
+   * "exercised the rule and found none".
+   */
+  grants: readonly ResourceGrant[];
 }
 
 /**
@@ -66,4 +87,13 @@ export interface Resource {
   organizationId?: OrganizationId;
   /** The person the record is about. Absent when it is about nobody in particular. */
   ownerId?: UserId;
+  /**
+   * What kind of record it is. Layer three asks it, and a caller that names one
+   * of this and `resourceId` without the other has named no record — layer
+   * three requires both, along with `organizationId`, before it consults a
+   * grant at all.
+   */
+  resourceType?: ResourceType;
+  /** Which record, as that kind of record's store identifies it. */
+  resourceId?: string;
 }

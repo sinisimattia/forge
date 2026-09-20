@@ -29,19 +29,24 @@ import { ROLE_PERMISSIONS } from './ROLE_PERMISSIONS';
  * the type system distinguishes the two uses, which ADR-0006 records as the
  * price of having one statement of the rules instead of two that drift.
  *
- * ## What it evaluates, and what it does not yet
+ * ## What it evaluates
  *
- * ADR-0006 describes three layers in order: platform role, organization role,
- * resource grant. **The first two exist here, and the ownership half of the
- * third**; the grant half arrives with grants themselves. That is still written
- * as a short function rather than as a scaffold with an empty layer in it: an
- * empty layer is a branch no test can fail and a shape the next phase is obliged
- * to keep whether or not it fits.
+ * ADR-0006's three layers, in order: platform role, organization role, resource
+ * grant. All three are here now, and the order is not cosmetic — each later
+ * layer can only add to what an earlier one allowed. Layer one is unconditional,
+ * layer two is the only layer that can refuse outright, and layer three is
+ * additive alone.
  *
  * `PLATFORM_ADMIN` passing everything is the first layer, and it is the reason
  * every such pass is recorded: it is a pass the ordinary rules would have
  * refused, so it is the one kind of access whose justification is not visible in
  * the request itself.
+ *
+ * **Nothing here reads a clock**, including layer three, which does not consult
+ * a grant's `expiresAt`. `Principal.grants` holds the grants that were live when
+ * the principal was hydrated, `isGrantLive` is the rule, and the hydrator is what
+ * applies it. That is what keeps this function's promise that the same inputs
+ * give the same answer.
  *
  * @param principal - who is asking, hydrated by the caller
  * @param permission - what they are asking to do
@@ -79,10 +84,61 @@ export function can(
     if (ROLE_PERMISSIONS[membership.role].includes(permission)) return true;
   }
 
+  // Layer three — resource grant (ADR-0006, spec §9.5). The exceptions a role
+  // cannot express: this one person, this one record, this one permission.
+  //
+  // Additive only: it can turn a `false` into a `true` and never the reverse,
+  // which is why it runs after the role check rather than instead of it. A
+  // principal whose role already allowed the ask has returned above.
+  //
+  // It is reached only by a principal who holds a membership for this
+  // organization, because layer two refuses outright when there is none. That
+  // ordering is what makes spec §9.5's sentence true — grants never widen into
+  // another tenant "because `can()` requires the resource's `organizationId` to
+  // match the principal's membership". Fold that refusal into the `if` above and
+  // a grant would authorize somebody who belongs to the organization not at all.
+  //
+  // **`expiresAt` is not read here, and that is deliberate.** Reading it needs a
+  // clock, and a clock would make this function impure — the same principal and
+  // resource would stop producing the same answer, which is exactly what lets
+  // the server and a client both call it. `Principal.grants` is documented as
+  // live as of hydration and `isGrantLive` is the rule the hydrator applies.
+  //
+  // All three of organization, type and id must be named. Two of them name no
+  // record: a type with no id is every record of that kind, and an id with no
+  // type is an id in a namespace nobody stated.
+  //
+  // `platform:administer` is excluded by name, which is the one thing this layer
+  // is not additive about. Layer one is its only route — `ROLE_PERMISSIONS` is
+  // asserted to carry it nowhere — and a grant is issued by an organization's own
+  // administrator under `grant:create`, an organization-scoped permission. Without
+  // this clause somebody whose authority ends at a tenant could issue the one
+  // permission that has no tenant. A grant is an exception *inside* a tenant,
+  // never a way out of one.
+  if (
+    permission !== 'platform:administer'
+    && resource?.organizationId !== undefined
+    && resource.resourceType !== undefined
+    && resource.resourceId !== undefined
+  ) {
+    const granted = principal.grants.some(
+      (grant) => grant.permission === permission
+        // All four together, and the organization is the one that stops a grant
+        // widening: matching on the record id alone would let a grant in one
+        // tenant answer for a record that happens to share an id in another.
+        && grant.organizationId === resource.organizationId
+        && grant.resourceType === resource.resourceType
+        && grant.resourceId === resource.resourceId,
+    );
+    if (granted) return true;
+  }
+
   switch (permission) {
     case 'platform:administer':
-      // Nothing below layer one grants it, and no organization role appears
-      // above with it either — `ROLE_PERMISSIONS` is asserted against that.
+      // Nothing below layer one grants it: no organization role appears above
+      // with it — `ROLE_PERMISSIONS` is asserted against that — and layer three
+      // excludes it by name. This line is the only answer the other two layers
+      // can leave it.
       return false;
     case 'audit:read':
     case 'organization:read':
@@ -97,10 +153,11 @@ export function can(
     case 'grant:read':
     case 'grant:create':
     case 'grant:revoke':
-      // Every member here is answered by layer two when it can be answered at
-      // all, so reaching this line means one of exactly two things: the ask named
-      // no organization, or it named one whose role does not carry the
-      // permission. Both are refusals. An ask with no organization is refused
+      // Every member here is answered above when it can be answered at all, so
+      // reaching this line means one of exactly three things: the ask named no
+      // organization; it named one whose role does not carry the permission and
+      // no record either; or it named a record no grant of the principal's
+      // matches. All three are refusals. An ask with no organization is refused
       // rather than read as "any organization I belong to", which is the same
       // judgement `user:read` makes for a missing owner — and for `audit:read`
       // it is the difference between one organization's entries and the

@@ -4,9 +4,21 @@
   "private": true,
   "type": "commonjs",
   "exports": {
+    "./authorization/contracts": {
+      "types": "./dist/authorization/contracts/index.d.ts",
+      "default": "./dist/authorization/contracts/index.js"
+    },
+    "./authorization/errors": {
+      "types": "./dist/authorization/errors/index.d.ts",
+      "default": "./dist/authorization/errors/index.js"
+    },
     "./authorization/policies": {
       "types": "./dist/authorization/policies/index.d.ts",
       "default": "./dist/authorization/policies/index.js"
+    },
+    "./authorization/testing": {
+      "types": "./dist/authorization/testing/index.d.ts",
+      "default": "./dist/authorization/testing/index.js"
     },
     "./authorization/types": {
       "types": "./dist/authorization/types/index.d.ts",
