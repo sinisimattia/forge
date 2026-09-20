@@ -140,7 +140,7 @@ New files, and the one responsibility each carries.
 
 | File | Responsibility |
 |---|---|
-| `types/Permission.ts` | widened from three members to sixteen |
+| `types/Permission.ts` | widened from three members to fifteen |
 | `types/Principal.ts` | gains `memberships` and `grants`; `OwnedResource` becomes `Resource` |
 | `types/ResourceGrant.ts` | the layer-three exception record |
 | `types/ResourceType.ts` | what a grant can be about |
