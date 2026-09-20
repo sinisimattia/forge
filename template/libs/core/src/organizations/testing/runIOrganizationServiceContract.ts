@@ -8,6 +8,7 @@ import { InvitationStatus } from '../enums/InvitationStatus';
 import { OrgRole } from '../enums/OrgRole';
 import { AlreadyAMemberError } from '../errors/AlreadyAMemberError';
 import { InvitationNoLongerOpenError } from '../errors/InvitationNoLongerOpenError';
+import { InvitationNotFoundError } from '../errors/InvitationNotFoundError';
 import { LastOwnerError } from '../errors/LastOwnerError';
 import { OrganizationNotFoundError } from '../errors/OrganizationNotFoundError';
 import type { IOrganizationServiceContractDeps } from './IOrganizationServiceContractDeps';
@@ -76,7 +77,15 @@ function lists(page: PaginatedResult<Organization>, organizationId: string): boo
  * ids and token that are well-formed for the host's store and answer to nothing
  */
 export function runIOrganizationServiceContract(deps: IOrganizationServiceContractDeps): void {
-  const { describe, it, expect, makeContext, absentOrganizationId } = deps;
+  const {
+    describe,
+    it,
+    expect,
+    makeContext,
+    absentOrganizationId,
+    absentInvitationId,
+    absentToken,
+  } = deps;
 
   describe('IOrganizationService conformance', () => {
     describe('createOrganization', () => {
@@ -392,6 +401,62 @@ export function runIOrganizationServiceContract(deps: IOrganizationServiceContra
       });
     });
 
+    describe('revokeInvitation', () => {
+      // Two halves, and the second is the one that matters. An implementation
+      // that flips the status field and leaves the value the recipient holds
+      // still redeemable satisfies everything asserted about the returned
+      // entity, and the invitation it "withdrew" is accepted the next time
+      // somebody opens the link they were already sent. So the state change is
+      // tied to its consequence in one assertion rather than trusted to imply
+      // it.
+      //
+      // The token is taken before the revocation, because that is when a
+      // recipient got theirs: an implementation is under no obligation to still
+      // hand one out for an invitation that is closed.
+      it('revokes an invitation, and its token stops redeeming', async () => {
+        const { service, organization, owner, outsider, tokenFor } = await makeContext();
+        const invitation = await service.inviteMember(owner.id, organization.id, {
+          email: outsider.email,
+          role: OrgRole.MEMBER,
+        });
+        const token = await tokenFor(invitation);
+        expect.equal(
+          invitation.status,
+          InvitationStatus.PENDING,
+          'the world must issue an open invitation for withdrawing it to be a change',
+        );
+
+        const revoked = await service.revokeInvitation(owner.id, organization.id, invitation.id);
+        expect.ok(revoked instanceof Invitation, 'revokeInvitation must return a real entity');
+        expect.equal(revoked.id, invitation.id, 'and must be the invitation it was asked about');
+        expect.equal(
+          revoked.status,
+          InvitationStatus.REVOKED,
+          'the returned invitation must be REVOKED',
+        );
+
+        await expect.rejects(
+          () => service.acceptInvitation(outsider.id, token),
+          InvitationNoLongerOpenError,
+          'and the value its recipient holds must stop redeeming',
+        );
+      });
+
+      // `InvitationNotFoundError`, not `InvitationNoLongerOpenError`. The three
+      // CLOSED reasons — revoked, accepted, expired — collapse into one answer
+      // so that a caller cannot learn which of them happened. Never-issued stays
+      // separate, because that collapse is justified by an identifier being
+      // guessable and this one is not: somebody managing invitations needs to
+      // know whether there is anything left to withdraw.
+      it('rejects an invitation id that does not exist', async () => {
+        const { service, organization, owner } = await makeContext();
+        await expect.rejects(
+          () => service.revokeInvitation(owner.id, organization.id, absentInvitationId),
+          InvitationNotFoundError,
+        );
+      });
+    });
+
     describe('acceptInvitation', () => {
       // The role the membership ends up with must come from the INVITATION, not
       // from a default. A service that ignores the invited role and always
@@ -440,6 +505,17 @@ export function runIOrganizationServiceContract(deps: IOrganizationServiceContra
         await expect.rejects(
           () => service.acceptInvitation(outsider.id, token),
           InvitationNoLongerOpenError,
+        );
+      });
+
+      // A value nobody issued, answered the same way as an id nobody issued and
+      // deliberately not the same way as one that has closed — see the note on
+      // `revokeInvitation` above for why that distinction survives here.
+      it('rejects a token that redeems nothing', async () => {
+        const { service, outsider } = await makeContext();
+        await expect.rejects(
+          () => service.acceptInvitation(outsider.id, absentToken),
+          InvitationNotFoundError,
         );
       });
     });
