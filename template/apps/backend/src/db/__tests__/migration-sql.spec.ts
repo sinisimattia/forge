@@ -39,8 +39,16 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  *   call; `const sql = '…'; await queryRunner.query(sql)` yields nothing, so
  *   every "no statement does X" assertion passes over it.
  * - **A statement composed to look like something else**, e.g. a foreign key
- *   following a leading `COMMENT ON …;` inside one `query()` call, schema-
- *   qualified as `public.audit_entries`. Adversarial rather than accidental.
+ *   or an `OWNER TO` concatenated after a leading `COMMENT ON …;` inside one
+ *   `query()` call — the `COMMENT ON` exclusion in `audit_entries is never
+ *   given a foreign key` skips such a statement whole, by its leading
+ *   keyword, so anything appended after it in the same string is invisible
+ *   too. Adversarial rather than accidental. (Quoting and schema-
+ *   qualification of `audit_entries` itself — `"audit_entries"`,
+ *   `public.audit_entries` — are no longer gaps: every guard in this file
+ *   that names the table now matches both spellings, closed in round 2 of
+ *   Task 9's review after they diverged between two guards. This bullet is
+ *   about a statement's *composition*, not the table name's spelling.)
  *
  * None of these is a way to weaken the database. They are ways to weaken this
  * file, and what stands behind it is D13: Task 19 runs the real statement
@@ -418,10 +426,18 @@ describe('audit_entries permits exactly two ALTER TABLE statements, and nothing 
   // list on a genuine, reviewed change to the table IS the guard working, not
   // a tax on it.
   it('collects every ALTER TABLE audit_entries statement, whitespace-normalized, and checks it against the allow-list', () => {
+    // `(?:public\.)?"?…"?` catches the quoted identifier (`"audit_entries"`)
+    // and the unquoted schema-qualified form (`public.audit_entries`) — the
+    // same two spellings the reverse `REFERENCES` guard below now catches.
+    // Round 2 of review found these had diverged: the `REFERENCES` guard was
+    // fixed to catch quoting in round 1 and this selector was not, so
+    // `ALTER TABLE "audit_entries" OWNER TO app` — the exact statement this
+    // whole describe block exists to stop — walked straight past it.
     const normalize = (sql: string): string => sql.trim().replace(/\s+/g, ' ');
 
     const found = allStatements()
-      .filter(([, statement]) => /ALTER\s+TABLE\s+(?:ONLY\s+)?audit_entries\b/i.test(statement))
+      .filter(([, statement]) =>
+        /ALTER\s+TABLE\s+(?:ONLY\s+)?(?:public\.)?"?audit_entries"?\b/i.test(statement))
       .map(([, statement]) => normalize(statement));
 
     // Exactly the two Task 9 needs: the up() cast to uuid and the down() cast
@@ -450,13 +466,18 @@ describe('the organizations-and-authorization migration', () => {
   // audit_entries`), which the word-order-sensitive regex above does not see
   // when nothing else in the same statement mentions `audit_entries` first.
   it('adds no foreign key to audit_entries, in any migration', () => {
-    // `"?…"?` also catches the quoted identifier form, `REFERENCES
-    // "audit_entries"`, which an unquoted-only pattern would miss — the
-    // schema-qualified form, `public.audit_entries`, is a separate, disclosed
-    // gap; see "What these guards do not catch" at the top of this file.
+    // `(?:public\.)?"?…"?` catches both the quoted identifier form,
+    // `REFERENCES "audit_entries"`, and the unquoted schema-qualified form,
+    // `REFERENCES public.audit_entries` — the same two spellings the
+    // `ALTER TABLE` guard above now catches, for the same reason: quoting one
+    // guard and not the other is how this exact bypass slipped through once
+    // already. A composed statement — a foreign key or an `OWNER TO`
+    // concatenated after a leading `COMMENT ON …;` inside one `query()` call —
+    // remains a disclosed gap; see "What these guards do not catch" at the
+    // top of this file.
     const offenders = allMigrations
       .flatMap(([, source]) => sqlStatements(source))
-      .filter((sql) => /REFERENCES\s+"?audit_entries"?/i.test(sql));
+      .filter((sql) => /REFERENCES\s+(?:public\.)?"?audit_entries"?/i.test(sql));
     expect(offenders).toEqual([]);
   });
 
