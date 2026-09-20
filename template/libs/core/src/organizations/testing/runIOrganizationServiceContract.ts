@@ -361,6 +361,15 @@ export function runIOrganizationServiceContract(deps: IOrganizationServiceContra
           'addressed to the address it was asked for, in normal form',
         );
         expect.equal(invitation.organizationId, organization.id, 'in the inviting organization');
+        // `invitedByUserId` is `UserId | null` on the type — `null` is what a
+        // later read may answer once the inviter's account has been deleted —
+        // but issuing one never produces it. Guarded the same way commit
+        // 2203f99 guarded `AuditEntry.organizationId`: without this, a future
+        // implementation that always answered `null` here would still satisfy
+        // `equal` for a world where the comparison degenerated, though `owner.id`
+        // itself is never null, so this is belt-and-braces against exactly that
+        // degeneration rather than a comparison that is vacuous today.
+        expect.ok(invitation.invitedByUserId !== null, 'a freshly issued invitation must name a real inviter');
         expect.equal(invitation.invitedByUserId, owner.id, 'and naming whoever sent it');
         expect.ok(
           invitation.isOpenAt(now),

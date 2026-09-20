@@ -16,14 +16,10 @@ import { InvitationRecord } from './invitation-record.entity';
  * assign it to, which is the point: the boundary that would leak a hash into
  * a served invitation does not exist.
  *
- * **`invitedByUserId` is cast rather than guarded.** `InvitationRecord`
- * declares it nullable (`ON DELETE SET NULL`, so an invitation outlives the
- * account that sent it), while core's `Invitation.invitedByUserId` is a
- * non-nullable `UserId` — that mismatch predates this file and is not
- * resolved here; it is noted in Task 9's report for review. In the case this
- * mapper is asked to read a row whose inviter has since been deleted, the
- * cast produces an `Invitation` claiming a `UserId` of `null`, which nothing
- * downstream currently guards against.
+ * `invitedByUserId` and `acceptedByUserId` are both cast to `UserId | null`,
+ * matching `InvitationRecord`'s nullable columns (`ON DELETE SET NULL`, so an
+ * invitation outlives the account that sent or accepted it) and core's
+ * `Invitation` fields of the same type.
  *
  * @param row - the stored row
  * @returns the same invitation as a domain entity
@@ -35,7 +31,7 @@ export function toInvitationEntity(row: InvitationRecord): Invitation {
     email: row.email,
     role: row.role,
     status: row.status,
-    invitedByUserId: row.invitedByUserId as UserId,
+    invitedByUserId: row.invitedByUserId as UserId | null,
     expiresAt: row.expiresAt,
     createdAt: row.createdAt,
     acceptedAt: row.acceptedAt,

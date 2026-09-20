@@ -24,14 +24,16 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * `RecordAuditEntryInput` in this phase — `AuditService.record` itself,
  * `AuthService`, `UsersService`, `IdentitiesService`, `RefreshTokenService`,
  * `PlatformAdminOverrideInterceptor` — passes `organizationId: null` literally.
- * Verified two ways before writing this migration:
- *
- * - Statically: `grep -rn "organizationId" apps/backend/src/{audit,auth,identities,users}`
- *   shows every write site as the literal `null`, never a variable.
- * - Dynamically, against the database this migration is about to run against:
- *   `SELECT count(*) FROM audit_entries WHERE organization_id IS NOT NULL`
- *   returned `0`. Recorded in Task 9's report alongside the privilege
- *   verification below.
+ * Verified statically before writing this migration:
+ * `grep -rn "organizationId" apps/backend/src/{audit,auth,identities,users}`
+ * shows every write site as the literal `null`, never a variable. That grep is
+ * what this claim actually rests on — a second check was run against the
+ * database this migration ran against, `SELECT count(*) FROM audit_entries
+ * WHERE organization_id IS NOT NULL`, and it returned `0`, but the table was
+ * empty at the time (`SELECT count(*) FROM audit_entries` also returned `0`),
+ * which makes that particular `0` prove nothing: an empty table satisfies any
+ * `WHERE` clause. Recorded, with both counts, in Task 9's report alongside the
+ * privilege verification below.
  *
  * **No foreign key to `organizations`, and this is where the temptation
  * arrives** — more than it did for `actor_user_id`, because this column is

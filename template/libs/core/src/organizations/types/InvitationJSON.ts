@@ -19,8 +19,8 @@ export interface InvitationJSON {
   role: OrgRole;
   /** Where the invitation stands, as a fact somebody recorded. */
   status: InvitationStatus;
-  /** The member who sent the invitation. */
-  invitedByUserId: UserId;
+  /** The member who sent the invitation, or `null` once that account has since been deleted. */
+  invitedByUserId: UserId | null;
   /** The instant after which the invitation is no longer open, regardless of status. */
   expiresAt: string;
   /** When the invitation came into being. */

@@ -130,9 +130,16 @@ export function runIAuthorizationServiceContract(
           permission: 'organization:update',
         });
 
+        // `grantedBy` is `UserId | null` on the type — `null` is what a later
+        // read may answer once the issuer's account has been deleted — but
+        // issuing one never produces it. Guarded the same way commit 2203f99
+        // guarded `AuditEntry.organizationId`, against a future implementation
+        // that answered `null` here degenerating this into a vacuous comparison.
+        expect.ok(created.grantedBy !== null, 'a freshly issued grant must record a real issuer');
         expect.equal(created.grantedBy, actorId, 'the actor must be recorded as the issuer');
 
         const page = await service.listGrants(actorId, organizationId, EVERYTHING);
+        expect.ok(page.data[0].grantedBy !== null, 'and still name a real issuer on a later read');
         expect.equal(
           page.data[0].grantedBy,
           actorId,

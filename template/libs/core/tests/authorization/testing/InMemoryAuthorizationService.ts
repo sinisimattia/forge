@@ -89,6 +89,11 @@ export class InMemoryAuthorizationService implements IAuthorizationService {
       throw new CrossTenantGrantError(organizationId, input.subjectUserId);
     }
     this.issued += 1;
+    // `grantedBy` is `UserId | null` on the type, but `actorId` here is always
+    // a real, present id: `null` is what a later read may answer once the
+    // issuer's account has been deleted, which this reference store has no
+    // operation that models — nothing here ever nulls out an existing grant's
+    // issuer.
     const row: ResourceGrantJSON = {
       id: `grant-${this.issued}` as GrantId,
       subjectUserId: input.subjectUserId,

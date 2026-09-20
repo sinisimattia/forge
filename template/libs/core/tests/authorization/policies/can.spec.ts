@@ -390,6 +390,17 @@ describe('can', () => {
         resourceId: RECORD,
       })).toBe(false);
     });
+
+    // `grantedBy` became `UserId | null` once the issuer's account could be
+    // deleted out from under a grant. `can` has no business reading it — the
+    // decision is about the subject, the record and the permission, never
+    // about who issued the exception — so a null issuer must authorize exactly
+    // as the same grant with a real one does.
+    it('does not read grantedBy — a grant with a null issuer authorizes the same as one with a real one', () => {
+      const about = { organizationId: ORG_1, resourceType: DOC, resourceId: RECORD };
+      expect(can(viewerHolding({ ...GRANT, grantedBy: null }), 'organization:update', about))
+        .toBe(true);
+    });
   });
 
   describe('exhaustiveness', () => {

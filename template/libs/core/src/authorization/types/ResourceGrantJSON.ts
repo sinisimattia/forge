@@ -21,8 +21,8 @@ export interface ResourceGrantJSON {
   resourceId: string;
   /** The one thing the subject may do to it. */
   permission: Permission;
-  /** Who issued it. */
-  grantedBy: UserId;
+  /** Who issued it, or `null` once that account has since been deleted. */
+  grantedBy: UserId | null;
   /** When it was issued. */
   createdAt: string;
   /** When it lapses, or `null` for a grant that does not. */

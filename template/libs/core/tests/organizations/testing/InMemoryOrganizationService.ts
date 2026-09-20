@@ -187,6 +187,11 @@ export class InMemoryOrganizationService implements IOrganizationService {
     organizationId: OrganizationId,
     input: InviteMemberInput,
   ): Promise<Invitation> {
+    // `invitedByUserId` is `UserId | null` on the type, but `actorId` here is
+    // always a real, present id: `null` is what a later read may answer once
+    // the inviter's account has been deleted, which this reference store has
+    // no operation that models — nothing here ever nulls out an existing
+    // invitation's inviter.
     this.visibleRow(actorId, organizationId);
     const email = normalizeEmail(input.email);
     const existing = this.memberHolding(organizationId, email);

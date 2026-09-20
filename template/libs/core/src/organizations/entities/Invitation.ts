@@ -25,8 +25,11 @@ export class Invitation {
   readonly role: OrgRole;
   /** Where the invitation stands, as a fact somebody recorded. See {@link InvitationStatus}. */
   readonly status: InvitationStatus;
-  /** The member who sent the invitation. */
-  readonly invitedByUserId: UserId;
+  /**
+   * The member who sent the invitation, or `null` once that account has since
+   * been deleted. See {@link InvitationProps.invitedByUserId}.
+   */
+  readonly invitedByUserId: UserId | null;
   /** The instant after which the invitation is no longer open, regardless of status. */
   readonly expiresAt: Date;
   /** When the invitation came into being. */

@@ -78,6 +78,15 @@ describe('Invitation', () => {
     expect(invitation.invitedByUserId).toBe('user-1');
   });
 
+  // `invitedByUserId` may be null once the inviter's account has since been
+  // deleted — the invitation outlives the account that made it, the same rule
+  // `acceptedByUserId` already follows. This is the entity accepting that
+  // value at all; `toJSON`/`fromJSON` below cover it surviving the wire.
+  it('accepts a null invitedByUserId, for an inviter whose account has since been deleted', () => {
+    const invitation = new Invitation(makeProps({ invitedByUserId: null }));
+    expect(invitation.invitedByUserId).toBeNull();
+  });
+
   describe('toJSON', () => {
     it('renders instants as ISO-8601 strings and carries every other field', () => {
       const json = new Invitation(makeProps()).toJSON();
@@ -106,6 +115,11 @@ describe('Invitation', () => {
       expect(json.acceptedAt).toBe('2026-01-26T00:00:00.000Z');
       expect(json.acceptedByUserId).toBe('user-2');
     });
+
+    it('renders invitedByUserId as null once the inviter\'s account has been deleted', () => {
+      const json = new Invitation(makeProps({ invitedByUserId: null })).toJSON();
+      expect(json.invitedByUserId).toBeNull();
+    });
   });
 
   describe('fromJSON', () => {
@@ -118,6 +132,12 @@ describe('Invitation', () => {
       expect(revived.createdAt.toISOString()).toBe(CREATED_AT.toISOString());
       expect(revived.acceptedAt).toBeNull();
       expect(revived.toJSON()).toEqual(original.toJSON());
+    });
+
+    it('round-trips a null invitedByUserId, for an inviter whose account has since been deleted', () => {
+      const original = new Invitation(makeProps({ invitedByUserId: null }));
+      const revived = Invitation.fromJSON(original.toJSON());
+      expect(revived.invitedByUserId).toBeNull();
     });
 
     it('revives acceptedAt as a Date when the invitation has been accepted', () => {

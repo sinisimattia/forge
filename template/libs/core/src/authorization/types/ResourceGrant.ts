@@ -44,8 +44,15 @@ export interface ResourceGrant {
   resourceId: string;
   /** The one thing the subject may do to it. */
   permission: Permission;
-  /** Who issued it. Retained so that an exception has somebody accountable for it. */
-  grantedBy: UserId;
+  /**
+   * Who issued it, retained so that an exception has somebody accountable for
+   * it — or `null` once that account has since been deleted. Every grant is
+   * issued naming a real issuer ({@link IAuthorizationService.createGrant});
+   * `null` arises only afterward, the same way `AuditEntryProps.actorId` and
+   * `InvitationProps.invitedByUserId` do, and for the same reason: the grant
+   * outlives the account that made it.
+   */
+  grantedBy: UserId | null;
   /** When it was issued. */
   createdAt: Date;
   /**

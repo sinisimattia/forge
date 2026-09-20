@@ -23,8 +23,14 @@ export interface InvitationProps {
   role: OrgRole;
   /** Where the invitation stands, as a fact somebody recorded. */
   status: InvitationStatus;
-  /** The member who sent the invitation. */
-  invitedByUserId: UserId;
+  /**
+   * The member who sent the invitation, or `null` once that account has since
+   * been deleted. The invitation outlives the account that made it — the same
+   * rule `acceptedByUserId` already follows, and `AuditEntryProps.actorId`
+   * before it: a column that names an account may end up naming nobody, and a
+   * reader treats that as expected rather than as corruption.
+   */
+  invitedByUserId: UserId | null;
   /** The instant after which the invitation is no longer open, regardless of status. */
   expiresAt: Date;
   /** When the invitation came into being. */

@@ -62,4 +62,16 @@ describe('isGrantLive', () => {
       AT('2026-01-01T00:00:00.000Z'),
     )).toBe(true);
   });
+
+  // `grantedBy` became `UserId | null` once the issuer's account could be
+  // deleted out from under a grant. This function has no business reading it
+  // at all — it answers a question about time, not about who issued
+  // anything — so a null issuer must change nothing about the answer.
+  it('is unaffected by a null grantedBy — an issuer whose account has since been deleted', () => {
+    const withoutIssuer = { ...GRANT, grantedBy: null };
+    expect(isGrantLive({ ...withoutIssuer, expiresAt: null }, AT('2099-01-01T00:00:00.000Z')))
+      .toBe(true);
+    const expiresAt = AT('2026-02-01T00:00:00.000Z');
+    expect(isGrantLive({ ...withoutIssuer, expiresAt }, expiresAt)).toBe(false);
+  });
 });

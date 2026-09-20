@@ -58,7 +58,11 @@ export interface IAuthorizationService {
    *
    * The actor becomes the grant's `grantedBy`, taken from the parameter and
    * never from the input, so that an exception always has somebody accountable
-   * for it and the input cannot name a different somebody.
+   * for it and the input cannot name a different somebody. `grantedBy` is
+   * `UserId | null` on the type, but never `null` here — every grant this
+   * method issues names a real issuer. `null` is what a *later* read may
+   * return, once that account has since been deleted; issuing one never
+   * produces it.
    *
    * @param actorId - the user on whose behalf the call is made, recorded as the issuer
    * @param organizationId - the organization the grant is confined to

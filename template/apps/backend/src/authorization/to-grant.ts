@@ -1,4 +1,4 @@
-import type { GrantId, ResourceGrant, ResourceType } from '__FORGE_SCOPE__/core/authorization/types';
+import type { GrantId, ResourceGrant } from '__FORGE_SCOPE__/core/authorization/types';
 import type { OrganizationId } from '__FORGE_SCOPE__/core/organizations/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { ResourceGrantRecord } from './resource-grant-record.entity';
@@ -15,11 +15,9 @@ import { ResourceGrantRecord } from './resource-grant-record.entity';
  * on the row is claimed for its domain, in one visible place, exactly as the
  * mappers that do build an entity do.
  *
- * **`grantedBy` is cast rather than guarded**, for the same reason
- * `toInvitationEntity` casts `invitedByUserId`: `ResourceGrantRecord` declares
- * the column nullable (`ON DELETE SET NULL`, so a grant outlives the account
- * that issued it), while core's `ResourceGrant.grantedBy` is a non-nullable
- * `UserId`. Noted in Task 9's report for review, not resolved here.
+ * `grantedBy` is cast to `UserId | null`, matching `ResourceGrantRecord`'s
+ * nullable column (`ON DELETE SET NULL`, so a grant outlives the account that
+ * issued it) and core's `ResourceGrant.grantedBy` field of the same type.
  *
  * @param row - the stored row
  * @returns the same grant, its ids and types claimed for their domains
@@ -29,10 +27,10 @@ export function toGrantEntity(row: ResourceGrantRecord): ResourceGrant {
     id: row.id as GrantId,
     subjectUserId: row.subjectUserId as UserId,
     organizationId: row.organizationId as OrganizationId,
-    resourceType: row.resourceType as ResourceType,
+    resourceType: row.resourceType,
     resourceId: row.resourceId,
     permission: row.permission,
-    grantedBy: row.grantedBy as UserId,
+    grantedBy: row.grantedBy as UserId | null,
     createdAt: row.createdAt,
     expiresAt: row.expiresAt,
   };

@@ -58,10 +58,17 @@ export function makeMembershipJSON(overrides: Partial<MembershipJSON> = {}): Mem
  * Build a valid {@link InvitationJSON} wire object, overriding any fields.
  *
  * The default is an offer that has been made and nothing else has happened to:
- * PENDING, unaccepted, expiring a week after it was issued. Its instants are
- * fixed literals, so a test that pins one does not chase the clock — a test
- * that cares whether the invitation has lapsed sets `expiresAt` relative to the
- * instant it controls.
+ * PENDING, unaccepted, expiring a week after it was issued, and naming a real
+ * inviter. Its instants are fixed literals, so a test that pins one does not
+ * chase the clock — a test that cares whether the invitation has lapsed sets
+ * `expiresAt` relative to the instant it controls.
+ *
+ * `invitedByUserId` defaults to a real id rather than `null` for the same
+ * reason `role` defaults to `MEMBER` rather than `OWNER`: a default that was
+ * already the degenerate case would let a test pass without asserting
+ * anything about it. A caller building the case where the inviter's account
+ * has since been deleted overrides it explicitly: `makeInvitationJSON({
+ * invitedByUserId: null })`.
  *
  * @param overrides - fields to replace on the default
  * @returns a complete wire object

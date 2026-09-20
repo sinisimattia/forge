@@ -376,30 +376,6 @@ describe('audit_entries is never given a foreign key', () => {
       .toEqual([]);
   });
 
-  it('and no migration adds a constraint to the table', () => {
-    // Belt and braces, and it earns its place on its own: a constraint added
-    // to this table by `ALTER TABLE` is caught by the assertion above as well;
-    // this one is what covers a statement that assertion skips, and vice
-    // versa — this regex is blind to `ALTER TABLE public.audit_entries`, which
-    // the assertion above catches. Neither is complete on its own.
-    //
-    // Narrowed to "adds a constraint" rather than "alters the table at all"
-    // for Task 9: `OrganizationsAndAuthorization1758000003000` legitimately
-    // runs `ALTER TABLE audit_entries ALTER COLUMN organization_id TYPE uuid`
-    // — a column-type change, verified safe because the column has never held
-    // a non-null value (this file's own report), and reviewed as a structural
-    // change precisely because it is not hidden from this guard. A blanket
-    // "no ALTER TABLE at all" rule would make that legitimate, reviewed
-    // migration indistinguishable from the thing this describe block exists to
-    // catch, which is a constraint — `ADD CONSTRAINT`, `REFERENCES`, `FOREIGN
-    // KEY` — arriving through this table's own `ALTER TABLE`.
-    expect(
-      statementsMatching(
-        /ALTER TABLE\s+(?:ONLY\s+)?audit_entries\b[\s\S]*?(?:ADD\s+CONSTRAINT|REFERENCES|FOREIGN KEY)/i,
-      ),
-    ).toEqual([]);
-  });
-
   it('and AuditEntryRecord declares no relation for migration:generate to emit', () => {
     // The third route, and the one that does not look like SQL at all: a
     // `@ManyToOne` here produces nothing at runtime (`synchronize` is false),
@@ -420,6 +396,46 @@ describe('audit_entries is never given a foreign key', () => {
   });
 });
 
+describe('audit_entries permits exactly two ALTER TABLE statements, and nothing else structural', () => {
+  // This guard was narrowed once, to "adds a constraint", to let Task 9's own
+  // `ALTER TABLE audit_entries ALTER COLUMN organization_id TYPE uuid` through.
+  // That narrowing was a defect, caught on review: it preserved every
+  // foreign-key check intact and quietly let through the one statement that
+  // voids D13 more completely than any foreign key does —
+  // `ALTER TABLE audit_entries OWNER TO <app role>`. Table ownership is not
+  // subject to the REVOKE at all; the owner can `GRANT` itself `UPDATE` and
+  // `DELETE` straight back, no referential action required. The same
+  // narrowing also newly allowed `DROP COLUMN`, `ALTER COLUMN … DROP NOT
+  // NULL`, an unnamed `ADD CHECK`/`ADD UNIQUE`/`ADD PRIMARY KEY`, `RENAME TO`,
+  // `INHERIT` and `ENABLE … RULE` — none of them caught by anything else in
+  // this file.
+  //
+  // Restored to a blanket rule, allow-listing the exact statements this
+  // schema needs rather than trying to name every dangerous shape an
+  // `ALTER TABLE` can take. This is no more brittle than the narrowed regex
+  // was: it changes only when somebody alters `audit_entries`, which is
+  // exactly when a human must look — the maintenance cost of updating this
+  // list on a genuine, reviewed change to the table IS the guard working, not
+  // a tax on it.
+  it('collects every ALTER TABLE audit_entries statement, whitespace-normalized, and checks it against the allow-list', () => {
+    const normalize = (sql: string): string => sql.trim().replace(/\s+/g, ' ');
+
+    const found = allStatements()
+      .filter(([, statement]) => /ALTER\s+TABLE\s+(?:ONLY\s+)?audit_entries\b/i.test(statement))
+      .map(([, statement]) => normalize(statement));
+
+    // Exactly the two Task 9 needs: the up() cast to uuid and the down() cast
+    // back to text. Anything else — an added constraint, a dropped column, an
+    // OWNER TO, a whitespace variant this normalization does not collapse the
+    // same way — is not on this list, and the assertion below is red for it.
+    const PERMITTED = [
+      'ALTER TABLE audit_entries ALTER COLUMN organization_id TYPE uuid USING organization_id::uuid',
+      'ALTER TABLE audit_entries ALTER COLUMN organization_id TYPE text USING organization_id::text',
+    ];
+    expect([...found].sort()).toEqual([...PERMITTED].sort());
+  });
+});
+
 describe('the organizations-and-authorization migration', () => {
   // The guarantee this protects is not a property of `audit_entries` alone: it
   // is a property of every foreign key anyone ever adds to it. So the assertion
@@ -434,9 +450,13 @@ describe('the organizations-and-authorization migration', () => {
   // audit_entries`), which the word-order-sensitive regex above does not see
   // when nothing else in the same statement mentions `audit_entries` first.
   it('adds no foreign key to audit_entries, in any migration', () => {
+    // `"?…"?` also catches the quoted identifier form, `REFERENCES
+    // "audit_entries"`, which an unquoted-only pattern would miss — the
+    // schema-qualified form, `public.audit_entries`, is a separate, disclosed
+    // gap; see "What these guards do not catch" at the top of this file.
     const offenders = allMigrations
       .flatMap(([, source]) => sqlStatements(source))
-      .filter((sql) => /REFERENCES\s+audit_entries/i.test(sql));
+      .filter((sql) => /REFERENCES\s+"?audit_entries"?/i.test(sql));
     expect(offenders).toEqual([]);
   });
 
