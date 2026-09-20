@@ -2,12 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import net from 'node:net';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { generate } from '../../tools/create/index.mjs';
+import { tempDirFactory } from '../helpers/temp.mjs';
 
 const run = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -15,6 +15,8 @@ const forgeRoot = path.resolve(here, '../..');
 const templateRoot = path.join(forgeRoot, 'template');
 
 const enabled = process.env.FORGE_E2E === '1';
+
+const tempDir = tempDirFactory('forge-docker-');
 
 /**
  * The host running this test may already have something bound to 5432/3000/3001
@@ -51,7 +53,7 @@ test(
   'the generated stack boots and serves /health',
   { skip: !enabled && 'set FORGE_E2E=1' },
   async () => {
-    const out = await fs.mkdtemp(path.join(os.tmpdir(), 'forge-docker-'));
+    const out = await tempDir();
     const { target } = await generate({
       argv: ['--name', 'dockerapp', '--out', out, '--yes', '--no-git'],
       templateRoot,

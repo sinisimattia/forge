@@ -2,14 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import {
   isBinary, walk, copyTree, UnresolvedTokenError, UnsupportedEntryError,
 } from '../../tools/create/copy.mjs';
+import { tempDirFactory } from '../helpers/temp.mjs';
 
-async function tempDir() {
-  return fs.mkdtemp(path.join(os.tmpdir(), 'forge-copy-'));
-}
+const tempDir = tempDirFactory('forge-copy-');
 
 test('isBinary detects a NUL byte and passes plain text', () => {
   assert.equal(isBinary(Buffer.from('hello world')), false);

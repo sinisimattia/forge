@@ -2,17 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { generate } from '../../tools/create/index.mjs';
+import { tempDirFactory } from '../helpers/temp.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const forgeRoot = path.resolve(here, '../..');
 const templateRoot = path.join(forgeRoot, 'tests/fixtures/mini-template');
 
-async function tempDir() {
-  return fs.mkdtemp(path.join(os.tmpdir(), 'forge-create-'));
-}
+const tempDir = tempDirFactory('forge-create-');
 
 // Adopt mode derives the project name from the target directory's basename (F3) and now
 // validates it against NAME_RE, so an adopt-mode test target can't be a raw mkdtemp() directory
