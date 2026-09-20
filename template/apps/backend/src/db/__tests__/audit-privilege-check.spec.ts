@@ -1,7 +1,11 @@
 import { MODULE_METADATA } from '@nestjs/common/constants';
 import type { DataSource } from 'typeorm';
 import { AuditModule } from '../../audit/audit.module';
-import { AUDIT_TABLE, AuditPrivilegeCheck, OVER_PRIVILEGED_MESSAGE } from '../audit-privilege-check';
+import {
+  AUDIT_TABLE,
+  AuditPrivilegeCheck,
+  OVER_PRIVILEGED_MESSAGE,
+} from '../audit-privilege-check';
 
 /**
  * # The startup privilege guard
@@ -21,8 +25,8 @@ import { AUDIT_TABLE, AuditPrivilegeCheck, OVER_PRIVILEGED_MESSAGE } from '../au
  *
  * | Fault | Caught by |
  * |---|---|
- * | the check asks about the wrong table or the wrong privilege | `asks the database exactly one question` |
- * | the check is written `=== true` and a driver answers `'t'`/`1`/`undefined` | `refuses to start when the answer is not a plain false` |
+ * | the check asks about the wrong table or privilege | `asks the database exactly one question` |
+ * | it is written `=== true` and a driver answers `'t'`/`1` | `refuses to start on …` |
  * | the guard is deleted from `AuditModule` | `AuditModule registers it` |
  * | the message stops naming the variable an operator has to set | `names MIGRATION_DATABASE_URL` |
  *
@@ -31,7 +35,7 @@ import { AUDIT_TABLE, AuditPrivilegeCheck, OVER_PRIVILEGED_MESSAGE } from '../au
  * answer.
  */
 describe('AuditPrivilegeCheck', () => {
-  /** A data source that answers the privilege question with `answer`, recording what it was asked. */
+  /** A data source answering the privilege question with `answer`, recording the ask. */
   const stub = (answer: unknown): { dataSource: DataSource; calls: unknown[][] } => {
     const calls: unknown[][] = [];
     const dataSource = {
@@ -45,8 +49,9 @@ describe('AuditPrivilegeCheck', () => {
 
   it('starts when the connection cannot update the audit table', async () => {
     const { dataSource } = stub([{ granted: false }]);
+    const check = new AuditPrivilegeCheck(dataSource);
 
-    await expect(new AuditPrivilegeCheck(dataSource).onApplicationBootstrap()).resolves.toBeUndefined();
+    await expect(check.onApplicationBootstrap()).resolves.toBeUndefined();
   });
 
   it('refuses to start when the connection can update the audit table', async () => {
@@ -79,7 +84,7 @@ describe('AuditPrivilegeCheck', () => {
     const [sql, params] = calls[0] as [string, unknown[]];
     expect(sql).toContain('has_table_privilege');
     expect(sql).toContain('current_user');
-    expect(sql).toContain("'UPDATE'");
+    expect(sql).toContain('\'UPDATE\'');
     // The table arrives as a bind parameter, not spliced into the text.
     expect(params).toEqual([AUDIT_TABLE]);
     expect(AUDIT_TABLE).toBe('audit_entries');

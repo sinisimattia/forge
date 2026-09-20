@@ -16,14 +16,14 @@ export const AUDIT_TABLE = 'audit_entries';
  * from "permission denied" logs that never appear what they were supposed to
  * have set.
  */
-export const OVER_PRIVILEGED_MESSAGE =
-  `This connection holds UPDATE on ${AUDIT_TABLE}, so the audit log is not append-only and `
-  + 'the application could rewrite its own history. That happens when migrations were run as '
-  + 'the same role the application connects as: the role then OWNS the table, and a revoke '
-  + 'cannot hold against an owner. Set MIGRATION_DATABASE_URL to the schema owner\'s '
-  + 'connection string and re-run the migrations as that role (see compose.prod.yaml), or, if '
-  + 'you genuinely do not want this guarantee, say so deliberately rather than by omission. '
-  + 'Refusing to start rather than serving without it.';
+export const OVER_PRIVILEGED_MESSAGE
+  = `This connection holds UPDATE on ${AUDIT_TABLE}, so the audit log is not append-only and `
+    + 'the application could rewrite its own history. That happens when migrations were run as '
+    + 'the same role the application connects as: the role then OWNS the table, and a revoke '
+    + 'cannot hold against an owner. Set MIGRATION_DATABASE_URL to the schema owner\'s '
+    + 'connection string and re-run the migrations as that role (see compose.prod.yaml), or, if '
+    + 'you genuinely do not want this guarantee, say so deliberately rather than by omission. '
+    + 'Refusing to start rather than serving without it.';
 
 /**
  * Refuses to serve over a database connection that can rewrite the audit log.
