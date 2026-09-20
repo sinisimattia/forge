@@ -12,19 +12,40 @@ and was extracted once, read-only, from a real monorepo (`docs/adrs/0003-extract
 
 ## What exists today
 
-Phase 1 (this repository's current state) ships the generator and a **skeleton** template:
-the workspace shell (NX, ESLint, TypeScript, Docker Compose, CI), the agent/docs layer, a
-`libs/core` with the purity pattern and shared building blocks (`DomainError`, the
-conformance-testing helpers, branded ID types), a NestJS backend with a `/health` endpoint
-and its common infrastructure (i18n, error filter, pagination types, a migrations folder),
-and a Nuxt webapp with one component, one page, and its test/Storybook setup wired up.
+The generator, and a template that is a working **identity foundation** rather than a
+skeleton. A generated project boots, signs people up, verifies their address, signs them in
+and out, lets them change a password, recover a forgotten one, manage their profile and see
+and revoke their own sessions — and it passes its own gates on the way out of the generator.
 
-The identity, tenancy and authorization platform described in the design spec (`docs/
-superpowers/specs/2026-09-17-forge-template-design.md`, §9 — users, auth identities,
-sessions, MFA, organizations, permissions, audit log) is **designed but not yet built** — it
-lands in later plans (see that spec's §14 "Deferred" and the phase plan's "Next"). Don't
-expect a generated project to have login or organizations today; it has a project that
-boots, passes its own gates, and is ready for that work to be added.
+- **`libs/core`** — the framework-agnostic domain. Five domains (`users`, `identities`,
+  `auth`, `audit`, `authorization`) plus `shared`. `authorization/` is a pure function over
+  facts the caller passes in, never an ambient lookup
+  (`docs/adrs/0006-authorization-is-a-pure-function-in-core.md`); it therefore has policies
+  and types where the other four have a `contracts/` service port. Each of those four domain
+  service ports ships an executable conformance suite under `testing/` — `auth` has a second
+  one for its security properties — and the backend runs every one of them against its own
+  implementation, so "the adapter satisfies the contract" is a test, not a review note.
+  Every subpath in `libs/core/package.json`'s `exports` resolves to a real barrel on disk,
+  and every barrel on disk is exported; Forge's gate asserts that in both directions.
+- **`apps/backend`** — NestJS. Registration, email verification, sign-in/out, password
+  change and reset, profile, session listing and revocation, an append-only audit log, and
+  `/health`. Mail leaves through a port, not a vendor
+  (`docs/adrs/0008-ports-not-vendors.md`) — the shipped adapter writes messages to disk, so
+  a generated project works end to end with nothing to sign up for. Three migrations build
+  the schema, the last of which takes `UPDATE`/`DELETE` on the audit table away from the
+  application role at the database.
+- **`apps/webapp`** — Nuxt 4. The whole auth surface (sign in, register, forgot/reset
+  password, verify email) plus an account area, over an Atomic Design component library.
+  The layering is enforced by a checker, not a convention: `npm run layers -w apps/webapp`
+  resolves every rendered tag and every cross-layer import to the layer that defines it,
+  and fails if it finds nothing to scan.
+
+What is **not** built yet: organizations and tenancy (`docs/adrs/0007-tenancy-is-explicit-never-ambient.md`
+records the decision, and every contract method that acts on somebody's record already takes
+an explicit `actorId` rather than resolving a caller from ambient state, but there is
+no `Organization` entity and the audit log's `organizationId` is a plain string that is
+always `null` this phase), MFA, OAuth/social sign-in, and WebAuthn. See the design spec's §14
+"Deferred" and the Phase 2 plan's "Next".
 
 ## Quick start
 
@@ -58,9 +79,11 @@ Once generated:
 
 ```bash
 cd my-app
-npm install
 npm run dev:up   # backend + webapp + Postgres, containerized, Node 22
 ```
+
+`dev:up` installs inside the containers from the committed `package-lock.json`; a host
+`npm install` (or `npm ci`) is optional, and only useful for local editor tooling.
 
 ### Adopt mode
 
@@ -71,10 +94,14 @@ already exists, without touching its application code:
 npm run create -- --into ~/existing-repo
 ```
 
-Adopt mode copies only the declared **process subset** (`CLAUDE.md`, `.claude/agents/**`,
-`.claude/agent-memory/**`, `docs/standards/**`, `docs/adrs/0000-template.md` and
-`docs/adrs/0001`–`0004`) and **never overwrites an existing file** — anything already
-present at a destination path is skipped and listed in the closing report.
+Adopt mode copies only the declared **process subset** (`tools/create/subset.mjs`'s
+`PROCESS_SUBSET`): `CLAUDE.md`, `.claude/agents/**`, `.claude/agent-memory/**`,
+`docs/standards/**`, and the ADRs that describe how we work — `0000-template.md` through
+`0004`. The platform ADRs (`0005`–`0008`) are deliberately not in it: they are decisions
+about *this* template's identity architecture, not about how a team works, and they would
+be false in a repository that had adopted only the process layer. Adopt mode **never
+overwrites an existing file** — anything already present at a destination path is skipped
+and listed in the closing report.
 
 **Precondition: a comparable package layout.** The adopted agent prompts point at
 `libs/core/STANDARDS.md`, `apps/backend/STANDARDS.md` and `apps/webapp/STANDARDS.md` for
@@ -96,21 +123,34 @@ paths after every adopt run as a reminder.
 ```
 my-app/
 ├── CLAUDE.md, README.md, forge.json          # forge.json is the extraction receipt
-├── package.json, nx.json, tsconfig.base.json, eslint.config.base.mjs
+├── package.json, package-lock.json, nx.json, tsconfig.base.json, eslint.config.base.mjs
 ├── compose.yaml, compose.prod.yaml, .env.example
 ├── .github/workflows/ci.yml
 ├── .claude/agents/ (11 agents + README), .claude/agent-memory/
 ├── docs/{standards,adrs,rfcs,architecture,guides,concepts,api,superpowers}/
-├── libs/core/        → shared/ (DomainError, conformance testing, branded types)
+├── libs/core/        → users/ identities/ auth/ audit/ authorization/ shared/
+│                       grouped by kind — entities/ types/ enums/ errors/ policies/, and
+│                       contracts/ + testing/ where a domain has a service port. Every
+│                       group that exists is a subpath export; the gate checks both ways.
 └── apps/
-    ├── backend/      → health, common (i18n/filters/interceptors/pipes/types), db/migrations
-    └── webapp/       → one atom component, one page, Storybook + Vitest wired up
+    ├── backend/      → auth, identities, users, audit, mail (a port), health,
+    │                   common (i18n, filters, interceptors, pipes, crypto, …), db/migrations
+    └── webapp/       → pages (auth + account), an Atomic Design component library,
+                        stores, composables, fetchers, Storybook + Vitest wired up
 ```
 
-`npm install && npm run dev:up` gives you a running stack with a working `/health` endpoint,
-NX-driven `lint`/`typecheck`/`test`/`build` across all three packages, and a
-`libs/core` purity gate (`npm run purity -w libs/core`) — with no source-project domain
-code to delete first.
+`npm run dev:up` gives you a running stack with a working `/health` endpoint. Across all
+three packages the project ships NX-driven `lint`, `typecheck`, `test` and `build`, plus two
+gates that are **not** in any `run-many` list and so need naming explicitly:
+
+```bash
+npm run purity -w libs/core     # core names no framework or transport, in code or in prose
+npm run layers -w apps/webapp   # a component renders only layers below its own
+```
+
+Both are in the root `affected` script (`nx affected -t lint test build typecheck purity
+layers`), which is what a project's own CI should run. Forge's generated-project gate runs
+each of them by name, because `nx run-many -t build` and friends never reach them.
 
 ## Changing the template
 
@@ -124,17 +164,41 @@ npm run test:all
 
 This runs, in order: `npm run sanitize` (the extraction gate — must be clean), `npm test`
 (the generator's own unit tests), and `npm run test:integration` (generates a real project
-and asserts it passes its own `lint`/`typecheck`/`test`/`build`/`purity`; set `FORGE_E2E=1`
-to also boot the generated stack in Docker and check `/health`). The integration tier is
-slow — a generated project's `npm install` plus a Nuxt build, and the Docker tier adds image
-builds on top — budget real time for it rather than expecting it to finish like the unit
-tier.
+and asserts it passes its own `lint`/`typecheck`/`test`/`build`/`purity`/`layers`; set
+`FORGE_E2E=1` to also boot the generated stack in Docker and check `/health`). The
+integration tier is slow — a generated project's `npm install` plus a Nuxt build, and the
+Docker tier adds image builds on top — budget real time for it rather than expecting it to
+finish like the unit tier.
+
+### The discriminating tests
+
+The design spec's §11 "Testing" lists fifteen faults, D1–D15, each with the observation
+that must catch it. A gate that only ever runs against correct code proves nothing, so the ones Forge
+itself owns are enforced by **injecting the fault and watching the gate fail**:
+
+| | Fault injected | Caught by | Enforced in |
+|---|---|---|---|
+| D1 | an unresolved `__FORGE_MISSING__` token | generation aborts, leaves nothing behind | `tests/integration/create.test.mjs` |
+| D2 | `import { Repository } from 'typeorm'` in a real core entity, in static, dynamic and `require()` form | `npx nx lint core` — each form's own rule message asserted | `tests/integration/generated-project.test.mjs` |
+| D4 | adopt mode over a repo that already has `CLAUDE.md` | the file is left byte-identical and reported as skipped | `tests/integration/create.test.mjs` |
+| D5 | a source-project trace or a populated secret anywhere in `template/` or `tools/` | `npm run sanitize` | `tools/sanitize.mjs`, run by both tiers |
+| D14 | a TSDoc line naming a JWT and a cookie in a real core contract | `npm run purity -w libs/core` — both terms asserted, not just the first | `tests/integration/generated-project.test.mjs` |
+
+D2 and D14 are injected into files that were already there — `libs/core/src/auth/entities/Session.ts`
+and `libs/core/src/auth/contracts/IAuthService.ts` — and restored afterwards. A probe file
+the test writes for itself only ever proves the guard covers the directory the probe was
+written into.
+
+The remaining faults (D3, D6–D13, D15) are behaviours of the generated application, and are
+enforced by the generated project's own suites — the core conformance suites and the
+backend's security specs. Forge's gate runs those suites (`npm run test` across all three
+packages) but does not assert them one by one.
 
 ## Tokens
 
 Substituted in both file contents and path segments (so `libs/core/package.json`'s
-`"name": "__FORGE_SCOPE__/core"` generalizes `@voku/core` correctly). The generator fails if
-any `__FORGE_[A-Z0-9_]*__` token survives substitution.
+`"name": "__FORGE_SCOPE__/core"` generalizes correctly). The generator fails if any
+`__FORGE_[A-Z0-9_]*__` token survives substitution.
 
 | Token | Example | Source |
 |---|---|---|
@@ -149,7 +213,7 @@ token substitution.
 
 ## CI
 
-`.github/workflows/ci.yml` runs three tiers:
+`.github/workflows/ci.yml` runs four push/PR jobs and one scheduled one:
 
 - **unit** — every push and PR: `npm run sanitize` (must run first — it's the cheapest gate
   and the one that catches an extraction mistake), then `npm test`.
@@ -162,14 +226,18 @@ token substitution.
   "Known limitations" below.
 - **docker** — PR-only and slowest: `npm run test:integration` with `FORGE_E2E=1`, which
   boots the generated stack for real and asserts `/health` returns `{"status":"ok"}`.
+- **lockfile-refresh** — schedule-only (weekly): regenerates `template/package-lock.json`
+  from scratch and runs the generated-project gate against the result, so dependency drift
+  surfaces here rather than the day someone deletes `node_modules`. It never commits.
 
 Forge has no runtime or test dependencies, so there is no lockfile and no `npm ci`/`npm
 install` step for Forge's own `package.json` in this workflow — there is nothing to install.
-(`npm ci` was checked directly against this repo before writing the workflow: with no
-`package-lock.json` present it fails immediately, it does not treat "nothing to install" as
-success — so it is deliberately never invoked here.) The generated projects created inside
-the integration/storybook/docker steps are a separate `package.json` tree and do get an
-explicit `npm install`.
+(`npm ci` was checked directly against this repo before writing the workflow, and again
+while extending it: with no `package-lock.json` present it fails immediately with `EUSAGE`,
+it does not treat "nothing to install" as success — so it is deliberately never invoked
+here.) The generated projects created inside the integration/storybook/docker steps are a
+separate `package.json` tree, ship their own `package-lock.json`, and do get an explicit
+install.
 
 ## Known limitations
 
@@ -181,30 +249,34 @@ explicit `npm install`.
   which conflicts with the zero-dependency constraint (`docs/adrs/0002-dependency-free-generator.md`)
   — this is accepted as a known gap rather than an oversight.
 - **The template's Storybook build fails on a freshly generated project, for a reason that
-  is still unknown.** `template/package-lock.json` now pins the whole workspace (root,
-  `libs/core`, `apps/backend`, `apps/webapp`), and a generated project installs with `npm ci`
-  against it — this fixed the general reproducibility problem the template used to have (two
-  builds a week apart no longer resolve different dependency trees), and it fixed `npm ci`
-  inside the Dockerfiles, which previously needed a host `npm install` first just to produce
-  a lockfile for `COPY package-lock.json` to find.
+  is still unknown.** `template/package-lock.json` pins the whole workspace (root,
+  `libs/core`, `apps/backend`, `apps/webapp`), and a generated project installs against it
+  with `npm ci` — this fixed the general reproducibility problem the template used to have
+  (two builds a week apart no longer resolve different dependency trees), and it fixed
+  `npm ci` inside the Dockerfiles, which previously needed a host `npm install` first just
+  to produce a lockfile for `COPY package-lock.json` to find.
   It did **not** fix Storybook. The lockfile pins the exact combination once believed to be
   the cause (`@storybook/builder-vite@9.1.2`, `@storybook/vue3-vite@9.1.2`,
-  `@rolldown/pluginutils@1.0.1`), and `npx nx run webapp:build-storybook` still fails
-  identically: `[vite:build-html] Missing field 'moduleType'` while building `iframe.html`.
-  That disproves the dependency-drift hypothesis this project previously recorded (see
-  `docs/superpowers/phase-1-decision-log.md`) — the exact same resolved versions still fail,
-  lockfile or not. The `storybook` CI job stays `continue-on-error: true` (non-blocking)
-  pending real root-causing of this failure. Do not re-attribute it to "no lockfile" without
-  re-testing — that specific fix has been tried and did not work.
+  `@rolldown/pluginutils@1.0.1` — all three re-checked against the current lockfile), and
+  `npx nx run webapp:build-storybook` still fails identically on a generated project:
+  `✓ 0 modules transformed`, then `[vite:build-html] Missing field 'moduleType'` while
+  building `iframe.html`. That disproves the dependency-drift hypothesis this project
+  previously recorded (see `docs/superpowers/phase-1-decision-log.md`) — the exact same
+  resolved versions still fail, lockfile or not. Note that a `storybook-static/` directory
+  is produced even by the failed run, so its existence is not evidence of a successful
+  build. The `storybook` CI job stays `continue-on-error: true` (non-blocking) pending real
+  root-causing of this failure. Do not re-attribute it to "no lockfile" without re-testing
+  — that specific fix has been tried and did not work.
 - **No drift/update tooling.** A generated project's `forge.json` records the Forge commit
   it was generated from, so re-syncing against a newer template stays *possible*, but no
   tooling to do it exists yet (`docs/adrs/0003-extraction-is-copy-out-only.md`).
-- **The identity/tenancy/authorization platform in the design spec (§9) is not yet built** —
-  see "What exists today" above.
+- **Organizations, tenancy, MFA, OAuth and WebAuthn are not built** — see "What exists
+  today" above.
 
 ## More
 
 - Design spec: `docs/superpowers/specs/2026-09-17-forge-template-design.md`
 - Phase 1 plan: `docs/superpowers/plans/2026-09-17-forge-phase-1-generator-and-template-skeleton.md`
+- Phase 2 plan: `docs/superpowers/plans/2026-09-18-forge-phase-2-identity-foundation.md`
 - ADRs: `docs/adrs/`
 - Agent orientation: `CLAUDE.md`
