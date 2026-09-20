@@ -914,7 +914,7 @@ Fifteen assertions. Write each with the `expect.equal(actual, expected, message)
 | 5 | refuses an organization the actor does not belong to, indistinguishably | `outsider` calling `getOrganization` gets `OrganizationNotFoundError` — the same error as #4, on purpose |
 | 6 | updates the name and the change is readable afterwards | a service that returns an updated entity without storing it |
 | 7 | soft-deletes, and the organization stops being listed | |
-| 8 | lists the seeded members | compare against the world's four, not against a count the service reports |
+| 8 | lists the seeded members | compare against the world's **three** members, not against a count the service reports. Corrected during execution: the world seeds four users but `outsider` belongs to no organization by construction |
 | 9 | changes a member's role and the change is readable afterwards | |
 | 10 | **refuses to demote the last owner** | `LastOwnerError` — D15 |
 | 11 | **refuses to remove the last owner** | `LastOwnerError` — D15 |
@@ -922,6 +922,9 @@ Fifteen assertions. Write each with the `expect.equal(actual, expected, message)
 | 13 | refuses to invite somebody who is already a member | `AlreadyAMemberError` |
 | 14 | accepts an invitation, creating a membership with the invited role | the role must come from the invitation, not from a default — a service that always creates MEMBER passes every other assertion here |
 | 15 | refuses a token that has already been redeemed | `InvitationNoLongerOpenError` |
+| 16 | `revokeInvitation` closes it AND its token stops redeeming | **added during execution** — the table omitted revoke while the contract declared it. A service that flips the status and leaves the token live passes the status half alone, so the assertion ties the state change to its consequence |
+| 17 | `revokeInvitation` with an absent id | `InvitationNotFoundError` |
+| 18 | `acceptInvitation` with a token that was never issued | `InvitationNotFoundError` — never-existed stays distinct from closed (ruling T4-b) |
 
 Assertions 2, 10, 11 and 14 are the ones with a real chance of being written unfailable. Write them like this:
 
