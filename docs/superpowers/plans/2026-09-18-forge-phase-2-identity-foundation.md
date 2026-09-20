@@ -2992,6 +2992,12 @@ Phase 1 closed with a single fix-wave dispatch and a preserved decision log, and
 
 **ADR-0009 is not optional bookkeeping.** Task 8's brief told its implementer to cite ADR-0008 for the two-role design; the implementer read ADR-0008, found it is about external service capabilities being ports rather than vendor bindings, and correctly refused to paste a citation that is true elsewhere and false there. The result is that the most structurally binding decision in the backend has no ADR at all, and Task 8's review proved it has consequences a future reader will violate by accident. The ADR must record: why two roles rather than one; that referential-integrity actions execute with the **table owner's** privileges, so no foreign key may ever be added to `audit_entries`; that `TRUNCATE` is a privilege distinct from `DELETE` and must stay out of the default-privileges grant list; that `ALTER DEFAULT PRIVILEGES` is standing configuration, so re-creating `audit_entries` in a later migration silently restores `UPDATE` and `DELETE`; and that the whole guarantee is void if the application connects as the owner.
 
+- [ ] **Step 0: Make the gate notice what Node it is running under**
+
+Task 18 found that the generated-project gate runs under whatever Node the developer happens to have — locally that was **node 26** — while `template/package.json` declares `>=22 <23` and both Dockerfiles pin node 22. CI is fine (`setup-node@v4` with node 22), so the exposure is bounded to local runs; but a local green then means "this template passes on a Node it says it does not support", and a Node-22-only failure would be invisible to the person most likely to hit it.
+
+Assert it. Read the engine range from the generated project's own `package.json` — do not restate it, this phase twice replaced a copy with a derivation for exactly this reason — and compare it with `process.versions.node`. Fail, or warn loudly and record the mismatch in the gate's output; decide which and say why. Watch it fire by running the gate under a Node outside the range.
+
 - [ ] **Step 1: Triage everything deferred during the phase**
 
 Sort every parked item into: fix now, leave documented with a reason, or out of phase and named so it is not lost. Phase 1's triage put 21 items into those three buckets and fixed 11; use the same test — **does this affect a real user of a generated project?**
