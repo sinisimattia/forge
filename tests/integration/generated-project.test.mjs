@@ -2,11 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { generate } from '../../tools/create/index.mjs';
+import { tempDirFactory } from '../helpers/temp.mjs';
 
 const run = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -15,13 +15,30 @@ const templateRoot = path.join(forgeRoot, 'template');
 
 const BIG = { maxBuffer: 64 * 1024 * 1024 };
 
+const tempDir = tempDirFactory('forge-gate-');
+
+/**
+ * Generates a project and installs it **the way a real user's tooling installs it**.
+ *
+ * `npm ci`, not `npm install`. That is not a stylistic choice: `npm install` re-resolves and
+ * quietly rewrites `package-lock.json`, so it succeeds against a lockfile that no longer
+ * matches any `package.json` in the workspace. Every other consumer of a generated project
+ * uses the committed lockfile — both Dockerfiles, `dev:up` (which installs inside the
+ * containers), and forge's own storybook CI job all run `npm ci`. Installing with
+ * `npm install` here meant a desynced lockfile passed this entire gate and then failed on
+ * the user's first `npm run dev:up`, which is the same shape as the two production-only
+ * defects this phase already found.
+ *
+ * `npm ci` is also the stricter of the two, so it is the one worth spending the time on:
+ * it fails loudly on the mismatch rather than papering over it.
+ */
 async function generateProject() {
-  const out = await fs.mkdtemp(path.join(os.tmpdir(), 'forge-gate-'));
+  const out = await tempDir();
   const { target } = await generate({
     argv: ['--name', 'gateapp', '--out', out, '--yes', '--no-git'],
     templateRoot, forgeRoot, interactive: false,
   });
-  await run('npm', ['install'], { cwd: target, ...BIG });
+  await run('npm', ['ci'], { cwd: target, ...BIG });
   return target;
 }
 
@@ -273,6 +290,32 @@ test('a generated project contains the whole process layer', async () => {
     missingExport, [],
     'libs/core has a barrel that package.json does not export — it is unreachable from any '
     + 'consumer, and whoever wrote it cannot tell until they try to import it',
+  );
+
+  // Every gate the root `affected` script runs must be declared in `nx.json`'s
+  // `targetDefaults`. `layers` was not, where `purity` was — the same kind of gate, declared
+  // two different ways, which is how one of them gets forgotten. Derived from the script
+  // rather than listed here, so adding a seventh gate cannot leave this assertion behind:
+  // the list it checks IS the list nx is told to run.
+  const rootPkg = JSON.parse(await fs.readFile(path.join(project, 'package.json'), 'utf8'));
+  const affected = rootPkg.scripts?.affected ?? '';
+  const targetsFlag = / -t ((?:[a-z][a-z-]*(?: |$))+)/.exec(affected);
+  assert.ok(
+    targetsFlag,
+    `the root \`affected\` script no longer has a parseable \`-t\` list, so this assertion `
+    + `would pass by not looking. It reads: ${JSON.stringify(affected)}`,
+  );
+  const affectedTargets = targetsFlag[1].trim().split(/ +/);
+  assert.ok(affectedTargets.length > 1, 'parsed only one affected target — the parse is wrong');
+
+  const nxJson = JSON.parse(await fs.readFile(path.join(project, 'nx.json'), 'utf8'));
+  const undeclared = affectedTargets
+    .filter((target) => !Object.hasOwn(nxJson.targetDefaults ?? {}, target))
+    .sort();
+  assert.deepEqual(
+    undeclared, [],
+    'a target in the root `affected` script has no `targetDefaults` entry in nx.json — it '
+    + 'runs uncached and configured differently from every gate beside it',
   );
 
   // `nx run-many` is checked elsewhere only by exit code, which stays 0 even if a
