@@ -29,6 +29,7 @@ const ENV = '.env.example';
 
 const labels = (line, file) => lineFindings(line, file).join(',');
 const flagged = (line, file) => lineFindings(line, file).length > 0;
+const pathFlagged = (p) => pathFindings(p).length > 0;
 
 test('a populated secret is flagged in each shape a real credential takes', () => {
   assert.equal(labels("  password: 'hunter2',", TS), 'populated secret');
@@ -494,4 +495,21 @@ test('the entry point is recognised through a symlink', () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// Spec §9.4 makes organization invitations a first-class concept in every generated
+// project, so the gate can no longer treat the noun as evidence of a leak. What it must
+// still catch is the shape a leak actually takes — a domain compound — which for this
+// concept is the qualifier in front of it, not the word itself.
+test('the template\'s own invitation vocabulary is admitted', () => {
+  assert.equal(flagged('export class Invitation {', TS), false);
+  assert.equal(flagged("import { InvitationsService } from './invitations.service';", TS), false);
+  assert.equal(flagged('  INVITATION_ACCEPTED = \'INVITATION_ACCEPTED\',', TS), false);
+  assert.equal(pathFlagged('apps/backend/src/organizations/invitations.controller.ts'), false);
+});
+
+// The narrowing above must not become a hole. A source-project trace is still a trace
+// wherever it appears, including on a line that also says "invitation".
+test('a source-project trace on an invitation line is still flagged', () => {
+  assert.equal(labels('// see voku for the original invitation flow', TS), 'source-project trace');
 });

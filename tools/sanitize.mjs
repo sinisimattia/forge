@@ -225,7 +225,19 @@ function matchesUnacceptedIdentifier(pattern, text) {
 export const RULES = [
   ['source-project trace', /voku/i],
   // Terms with no innocent generic use — always a leak.
-  ['source-domain term', /\b(rsvp|stripe|organizers?|refunds?|invitations?)\b/i],
+  //
+  // `invitation` was here and is deliberately gone. Spec §9.4 makes organization
+  // invitations a first-class concept of the template itself: `Invitation`,
+  // `invitations.controller.ts` and `INVITATION_ACCEPTED` are all things a generated
+  // project is supposed to contain. A rule that bans a word the template uses is not a
+  // gate, it is a rule everyone learns to route around, and the routing-around is what
+  // actually costs — it teaches that a sanitize failure is something you argue with.
+  //
+  // What still catches a leak of this concept is `source-project trace` (/voku/i), which
+  // is unconditional and matches on the same line whatever else is on it. The qualifier
+  // in front of the noun is where a domain shows itself, and no qualifier this template
+  // uses is shared with the source project's.
+  ['source-domain term', /\b(rsvp|stripe|organizers?|refunds?)\b/i],
   // `event`, `payment` and `ticket` DO have innocent uses ("emitted events" in Vue,
   // "issue tickets"), so flagging the bare word produces false positives. Flag them
   // only in identifier shape, which is how a leaked domain name actually looks —
@@ -248,8 +260,8 @@ export const RULES = [
   // (`EVENT_CREATED`, `PAYMENT_STATUS`, `TICKET_ISSUED`). Uppercase-plus-underscore
   // is unambiguous, so this needs no innocent-word exclusion the way the bare
   // PascalCase stems above do.
-  ['source-domain constant', /\b(EVENT|PAYMENT|TICKET|INVITATION|REFUND)_/],
-  ['source-domain module', /\b(event|payment|ticket|invitation)s?\.(module|service|controller|entity|repository|guard|dto|resolver|interceptor|pipe|strategy|gateway)\b/i],
+  ['source-domain constant', /\b(EVENT|PAYMENT|TICKET|REFUND)_/],
+  ['source-domain module', /\b(event|payment|ticket)s?\.(module|service|controller|entity|repository|guard|dto|resolver|interceptor|pipe|strategy|gateway)\b/i],
   ['stripe-style key', /\b(sk_|pk_live)/],
   // The non-TypeScript form of the populated-secret rule; `lineFindings` substitutes
   // POPULATED_SECRET_TS for this one wherever `isTypeScriptFile` says the file's own
