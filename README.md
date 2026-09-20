@@ -173,8 +173,8 @@ finish like the unit tier.
 ### The discriminating tests
 
 The design spec's §11 "Testing" lists fifteen faults, D1–D15, each with the observation
-that must catch it. A gate that only ever runs against correct code proves nothing, so the ones Forge
-itself owns are enforced by **injecting the fault and watching the gate fail**:
+that must catch it. A gate that only ever runs against correct code proves nothing, so the
+ones Forge itself owns are enforced by **injecting the fault and watching the gate fail**:
 
 | | Fault injected | Caught by | Enforced in |
 |---|---|---|---|
@@ -189,10 +189,15 @@ and `libs/core/src/auth/contracts/IAuthService.ts` — and restored afterwards. 
 the test writes for itself only ever proves the guard covers the directory the probe was
 written into.
 
-The remaining faults (D3, D6–D13, D15) are behaviours of the generated application, and are
-enforced by the generated project's own suites — the core conformance suites and the
-backend's security specs. Forge's gate runs those suites (`npm run test` across all three
-packages) but does not assert them one by one.
+The rest are behaviours of the generated application, not of Forge, and are enforced inside
+the generated project's own suites — which Forge's gate runs wholesale via `npm run test`,
+without asserting them one by one. Of those, **D3** (`*.conformance.spec.ts` in each backend
+domain, running core's suites against the real adapter), **D6** (`auth/__tests__/global-guard.spec.ts`),
+**D7** (`auth/__tests__/enumeration-safety.spec.ts`), **D8** (`auth/__tests__/refresh-rotation.spec.ts`)
+and **D13** (`db/__tests__/migration-sql.spec.ts` — which says in its own header that it reads
+the migration text and is *not* itself the database-level guarantee) have specs today.
+**D9–D12 and D15 do not, and cannot**: they describe organizations, MFA, OAuth and resource
+grants, none of which is built yet.
 
 ## Tokens
 
