@@ -10,6 +10,7 @@ const meta = {
     id: { control: 'text' },
     disabled: { control: 'boolean' },
     autocomplete: { control: 'select', options: ['current-password', 'new-password'] },
+    required: { control: 'boolean' },
     checkPolicy: { control: 'boolean' },
     error: { control: 'text' },
   },
@@ -43,6 +44,11 @@ export const RefusedByTheServer: Story = {
     reportedViolations: ['BREACHED'],
     modelValue: 'a well known phrase',
   },
+};
+
+/** Marked required, with the same asterisk every other field uses. */
+export const Required: Story = {
+  args: { id: 'story-required', label: 'Password', required: true },
 };
 
 export const Disabled: Story = {

@@ -1,4 +1,15 @@
 <script setup lang="ts">
+/**
+ * A password field: a labelled control, a reveal toggle, and the policy's own
+ * verdict on what is being typed.
+ *
+ * The label and the error line are `AppFieldFrame`'s, not this file's. They used
+ * to be a near-verbatim copy of `FormField`'s, because a molecule may not render
+ * another molecule (W1) and composing `FormField` was therefore not open to it.
+ * That copy was the worse trade of the two: `npm run layers` can see a molecule
+ * rendering a molecule, and nothing at all can see two molecules' chrome drifting
+ * apart. Lifting the chrome into an atom satisfies the rule and removes the copy.
+ */
 import {
   DEFAULT_PASSWORD_POLICY,
   evaluatePassword,
@@ -29,6 +40,8 @@ interface Props {
    * where a secret is being *chosen*.
    */
   checkPolicy?: boolean;
+  /** Whether to mark the field required, with the asterisk every other field uses. */
+  required?: boolean;
   /** A message from the server, shown under the field. */
   error?: string;
   /**
@@ -46,6 +59,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   disabled: false,
   autocomplete: 'current-password',
+  required: false,
   checkPolicy: false,
   error: '',
   reportedViolations: () => [],
@@ -119,16 +133,7 @@ function toggle(): void {
 </script>
 
 <template>
-  <AppStack gap="none">
-    <AppText
-      as="label"
-      color="default"
-      weight="medium"
-      :for="id"
-      class="mb-1 block"
-    >
-      {{ label }}
-    </AppText>
+  <AppFieldFrame :id="id" :label="label" :required="required" :error="error">
     <!-- bare div: a positioning shim only. The reveal control is absolutely
          positioned over the right-hand end of the input, and no layout atom
          models "one element overlaid on another". -->
@@ -152,7 +157,6 @@ function toggle(): void {
         {{ toggleLabel }}
       </AppButton>
     </div>
-    <AppText v-if="error" color="error" class="mt-1">{{ error }}</AppText>
     <AppStack v-if="violations.length > 0" gap="none" class="mt-1">
       <AppText
         v-for="code in violations"
@@ -163,5 +167,5 @@ function toggle(): void {
         {{ t(VIOLATION_MESSAGE_KEYS[code], policyBounds) }}
       </AppText>
     </AppStack>
-  </AppStack>
+  </AppFieldFrame>
 </template>
