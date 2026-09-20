@@ -1,5 +1,8 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { getMetadataArgsStorage } from 'typeorm';
+import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
+import { AuthIdentityRecord } from '../../identities/auth-identity-record.entity';
 import { requireAppRoleName, requireAppRolePassword } from '../app-role';
 
 /**
@@ -231,6 +234,45 @@ describe('the schema migration', () => {
     expect(source).toContain(
       'CONSTRAINT uq_auth_identities_provider_account UNIQUE (provider, provider_account_id)',
     );
+  });
+
+  it('makes one password identity per account a partial unique index', () => {
+    // Two separate propositions, and the second is the one that is easy to lose.
+    //
+    // That the index EXISTS is what stops `findPasswordIdentityByUser` — a
+    // `findOne` over `(user_id, provider)` — from answering with whichever of
+    // two password rows the planner reached first.
+    //
+    // That it is PARTIAL is what stops it from being a different rule wearing
+    // the same name. `UNIQUE (user_id, provider)` would enforce this and also
+    // forbid an account from ever holding two identities from one non-password
+    // provider, which nothing in this template has decided. The `WHERE` is the
+    // whole difference and it is one clause somebody could drop while
+    // "simplifying" the statement, so it is asserted in its own right.
+    const statement = /CREATE UNIQUE INDEX uq_auth_identities_one_password_per_user\s+ON auth_identities \(user_id\)\s+WHERE provider = '([A-Z_]+)'/
+      .exec(source);
+
+    expect(statement).not.toBeNull();
+    // And the predicate names the provider the application actually stores.
+    // The migration writes `'PASSWORD'` as a literal on purpose — a migration
+    // that read this enum at runtime would silently rewrite its own history
+    // every time the member's value moved. This comparison is what turns that
+    // divergence into a red test for a person to decide about, instead.
+    expect(statement?.[1]).toBe(AuthProvider.PASSWORD);
+
+    // `AuthIdentityRecord` mirrors the index in a decorator, for a reader who
+    // has the class open rather than the migration. A mirror nobody compares is
+    // how the two drift apart while both look considered, so this reads the
+    // decorator back out of TypeORM's own metadata and holds it to the same
+    // predicate. `synchronize` is off, so the decorator creates nothing — which
+    // is exactly why its going wrong would otherwise be silent.
+    const mirrored = getMetadataArgsStorage().indices.find(
+      (index) => index.name === 'uq_auth_identities_one_password_per_user',
+    );
+    expect(mirrored?.target).toBe(AuthIdentityRecord);
+    expect(mirrored?.unique).toBe(true);
+    expect(mirrored?.where).toBe(`provider = '${AuthProvider.PASSWORD}'`);
+    expect(mirrored?.columns).toEqual(['userId']);
   });
 
   it('says in the database that every token column holds a hash', () => {

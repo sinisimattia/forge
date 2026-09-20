@@ -14,6 +14,17 @@ import type { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
  */
 @Entity('auth_identities')
 @Unique('uq_auth_identities_provider_account', ['provider', 'providerAccountId'])
+// The migration is the schema's authority — `synchronize` is off and nothing
+// here creates anything. This mirrors it so that the two rules this table
+// enforces are both visible from the class a reader has open, and so that the
+// partial one is not mistaken for the table-level `@Unique` above it. They are
+// different rules: this one permits several GITHUB identities on one account and
+// forbids a second PASSWORD one. `migration-sql.spec.ts` compares this predicate
+// against the migration's, so the mirror cannot quietly stop matching.
+@Index('uq_auth_identities_one_password_per_user', ['userId'], {
+  unique: true,
+  where: "provider = 'PASSWORD'",
+})
 export class AuthIdentityRecord {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

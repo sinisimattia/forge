@@ -97,6 +97,49 @@ export class IdentityFoundation1758000001000 implements MigrationInterface {
       COMMENT ON CONSTRAINT uq_auth_identities_provider_account ON auth_identities IS
         'One identity per account per provider, enforced here rather than by a check-then-insert.'
     `);
+    // One password per account, and only for passwords.
+    //
+    // `findPasswordIdentityByUser` is a `findOne` — it asks for *the* password
+    // identity of an account and returns the first row the planner hands back.
+    // Nothing above made that singular. `uq_auth_identities_provider_account` is
+    // on `(provider, provider_account_id)`, so two PASSWORD rows for one user
+    // under two different addresses satisfy it completely, and a second one
+    // inserts without complaint. The reads would then answer with whichever row
+    // came first, which means a password change could rewrite one derivation
+    // while sign-in keeps checking the other.
+    //
+    // A PARTIAL index, not `UNIQUE (user_id, provider)`. The table-level form
+    // looks like the same statement and is a different rule: it would forbid a
+    // second identity from any one provider, so an account could never hold two
+    // GitHub identities or two OIDC identities from different issuers. That is a
+    // product decision this template has not made and has no reason to make
+    // here. The predicate confines the constraint to exactly the provider whose
+    // singularity the code already assumes.
+    //
+    // A unique INDEX rather than a constraint because Postgres has no partial
+    // UNIQUE constraint — only a partial unique index. It raises the same
+    // SQLSTATE `23505`, so `AuthService.isUniqueViolation` catches it unchanged
+    // and the registration race keeps answering the way D7 requires.
+    //
+    // `'PASSWORD'` is written out rather than interpolated from
+    // `AuthProvider.PASSWORD`. A migration is a record of what was done to a
+    // database that has already run it, and a migration that reads a live
+    // constant rewrites that record every time the constant moves: an existing
+    // deployment would keep the old predicate while a freshly generated project
+    // got the new one, with nothing anywhere saying they differ. The drift that
+    // interpolation would have prevented is caught instead by
+    // `migration-sql.spec.ts`, which compares this literal against the enum
+    // member and fails if they ever part company — a signal to a person rather
+    // than a silent rewrite.
+    await queryRunner.query(`
+      CREATE UNIQUE INDEX uq_auth_identities_one_password_per_user
+        ON auth_identities (user_id)
+        WHERE provider = 'PASSWORD'
+    `);
+    await queryRunner.query(`
+      COMMENT ON INDEX uq_auth_identities_one_password_per_user IS
+        'At most one password identity per account. Partial, so an account may still hold several identities from the same non-password provider.'
+    `);
     await queryRunner.query(`
       COMMENT ON COLUMN auth_identities.secret_hash IS
         'A one-way derivation of the password, never the password. NULL for every non-password provider.'
