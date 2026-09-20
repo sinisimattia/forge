@@ -13,8 +13,9 @@
  * member added before anything can grant it is a permission nobody holds, which
  * reads as a rule and is a constant `false`. The organization members below
  * arrive with layer two, which `ROLE_PERMISSIONS` answers. The `grant:*` three
- * are about *administering* grants and are answered by layer two as well —
- * layer three, which is a grant deciding an ordinary permission, arrives next.
+ * are about *administering* grants and are answered by layer two as well, which
+ * is what keeps layer three — a grant deciding an ordinary permission — from
+ * being able to widen itself. All three layers now exist.
  *
  * Documented here rather than one per member: a string-literal union member
  * carries no doc an editor will surface, so a comment attached to one is a
@@ -28,7 +29,12 @@
  *   Holding it is what the audit log records as an override, because a pass
  *   here is a pass that the ordinary rules would have refused. **No
  *   organization role grants it**, and `ROLE_PERMISSIONS` is asserted against
- *   that: layer one is its only route.
+ *   that: layer one is its only route. That holds for layer three as well, and
+ *   by a mechanism worth naming here rather than leaving to be discovered —
+ *   `can` excludes this member from the grant check **by name**, because a grant
+ *   is issued under `grant:create`, which an organization's own ADMIN holds.
+ *   Without that exclusion, somebody whose authority ends at one tenant could
+ *   issue the one permission that has none.
  * - `audit:read` — reading history. Separate from `platform:administer` because
  *   the layer that splits them now exists: asked *with* an organization it is an
  *   administrator of that organization reading their own organization's

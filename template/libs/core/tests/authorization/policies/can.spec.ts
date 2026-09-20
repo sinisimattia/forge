@@ -285,16 +285,54 @@ describe('can', () => {
       })).toBe(true);
     });
 
-    // Additive only: a grant adds a permission, it never removes one the role
-    // already gave. A VIEWER reads their organization by role, and must go on
-    // doing so both with no grant at all and while holding a grant about some
-    // other record — an implementation that treated grants as the answer
-    // whenever a record was named would refuse both.
+    // **This pins ORDERING, not additivity — read the name narrowly.** A VIEWER
+    // reads their organization by role, so layer two has already returned `true`
+    // before layer three is reached, and layer three could do anything at all
+    // without this assertion noticing. What it does catch is a layer three moved
+    // ABOVE the role check, or one that pre-empted it.
+    //
+    // The other half of "additive only" — that layer three's `false` is not an
+    // answer and the layers BELOW it still get to speak — is a different shape
+    // entirely and is the assertion immediately following this one. Neither
+    // covers the other.
     it('does not take away what the role already allowed', () => {
       const about = { organizationId: ORG_1, resourceType: DOC, resourceId: RECORD };
       expect(can(viewerHolding(), 'organization:read', about)).toBe(true);
       expect(can(viewerHolding({ ...GRANT, resourceId: 'record-9' }), 'organization:read', about))
         .toBe(true);
+    });
+
+    // Layer three is not authoritative: finding no matching grant is not an
+    // answer of `false`, it is no answer, and the switch below still gets to
+    // give one. `user:read` is the shape that proves it — no role carries it, so
+    // layer two never short-circuits, and the ownership rule in the switch is
+    // what permits a person to read their own profile. A resource that names
+    // BOTH an owner and a record walks the whole way past layer three to reach
+    // it, and that call shape becomes ordinary from Task 17 on, when a client
+    // starts asking about concrete records.
+    //
+    // Turning layer three's `if (granted) return true;` into `return granted;`
+    // is what this exists to catch: a mutation that silently REVOKES the
+    // ownership rule for any resource naming a record, and that every other
+    // assertion in this file survives.
+    it('lets the rules below it answer when no grant matches', () => {
+      // Their own profile, asked with a record named alongside it.
+      const about = {
+        organizationId: ORG_1,
+        ownerId: ADA,
+        resourceType: DOC,
+        resourceId: RECORD,
+      };
+      // Holding no grant at all...
+      expect(can(viewerHolding(), 'user:read', about)).toBe(true);
+      // ...and holding one that simply does not match this record, which is the
+      // same "no" from layer three by a different route.
+      expect(can(viewerHolding({ ...GRANT, resourceId: 'record-9' }), 'user:read', about))
+        .toBe(true);
+      // And the rule below is still a rule: somebody else's profile is refused,
+      // so the two assertions above are the ownership rule answering rather than
+      // anything permitting `user:read` wholesale.
+      expect(can(viewerHolding(), 'user:read', { ...about, ownerId: GRACE })).toBe(false);
     });
 
     // All four of organization, type, id and permission must match. Three
