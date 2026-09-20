@@ -591,14 +591,56 @@ async function proveWhatTheFakeCannotExpress(compose, base, target) {
   // constraint is what stops the second account existing. Four concurrent
   // registrations of one address, which is what actually exercises it: a
   // check-then-insert wins this race as often as it loses.
-  const contested = `race-${Date.now()}@example.com`;
-  const attempts = await Promise.all(
-    [0, 1, 2, 3].map(() =>
-      call(base, 'POST', '/auth/register', {
-        body: { email: contested, displayName: 'Racer', secret: 'correct-horse-battery-staple-42' },
-      }),
-    ),
-  );
+  /**
+   * One round of four concurrent registrations of one fresh address.
+   *
+   * @returns the contested address, the four responses, and how many
+   *   registrations anywhere in this run lost on a unique violation
+   */
+  const raceOnce = async () => {
+    const contested = `race-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
+    const attempts = await Promise.all(
+      [0, 1, 2, 3].map(() =>
+        call(base, 'POST', '/auth/register', {
+          body: {
+            email: contested,
+            displayName: 'Racer',
+            secret: 'correct-horse-battery-staple-42',
+          },
+        }),
+      ),
+    );
+    // The two branches `register` reaches "exactly one account" through are
+    // already distinguishable in the audit table: the check-then-insert records
+    // the existing owner as the actor with empty metadata, the unique violation
+    // records a NULL actor and `{lostRace:true}`.
+    const lost = Number(
+      await ask(
+        "SELECT count(*) FROM audit_entries WHERE action = 'DUPLICATE_REGISTRATION_ATTEMPTED'"
+        + " AND actor_user_id IS NULL AND metadata->>'lostRace' = 'true'",
+      ),
+    );
+    return { contested, attempts, lost };
+  };
+
+  // Retried, because the property under test only exists in the rounds that
+  // genuinely interleave. **`count(users) = 1` on its own is not evidence of a
+  // unique constraint** — `AuthService.register`'s check-then-insert produces
+  // that result too, so an assertion that stops there passes against a schema
+  // with no constraint at all, which is the precise property Step 3c exists to
+  // prove. Proven to fire: with the four registrations issued sequentially, so
+  // that no round can interleave, this fails with "not one lost on a UNIQUE
+  // violation" while `count(users) = 1` still passes.
+  //
+  // Three rounds rather than one, because a round that fails to interleave is a
+  // scheduling accident and not a fault, and failing a gate for one would be a
+  // flake. The count is over the whole run, so it never decreases.
+  let race = await raceOnce();
+  for (let round = 1; round < 3 && race.lost === 0; round += 1) {
+    race = await raceOnce();
+  }
+  const { contested, attempts } = race;
+
   const shapes = new Set(attempts.map((attempt) => `${attempt.status}|${attempt.text}`));
   assert.equal(
     shapes.size,
@@ -606,6 +648,13 @@ async function proveWhatTheFakeCannotExpress(compose, base, target) {
     `concurrent registrations of one address were distinguishable: ${JSON.stringify([...shapes])}`,
   );
   assert.equal(attempts[0].status, 202, attempts[0].text);
+  assert.equal(
+    race.lost >= 1,
+    true,
+    'across three rounds of four concurrent registrations, not one lost on a UNIQUE violation — '
+    + 'every duplicate was caught by the check-then-insert instead, so nothing here proves the '
+    + 'constraint exists. Audit rows on the losing branch: 0.',
+  );
   assert.equal(
     await ask(`SELECT count(*) FROM users WHERE email = '${contested}'`),
     '1',
@@ -616,28 +665,6 @@ async function proveWhatTheFakeCannotExpress(compose, base, target) {
     await ask(`SELECT count(*) FROM auth_identities WHERE provider_account_id = '${contested}'`),
     '1',
     'the race produced more than one password identity for one address',
-  );
-
-  // "Exactly one account" is NOT enough on its own, and that is the whole point
-  // of this block. `AuthService.register` reaches it two ways: the check-then-
-  // insert (`findOne` says the address exists → audited with the owner as actor
-  // and empty metadata) and the `23505` catch (audited with a NULL actor and
-  // `{lostRace:true}`). If the four requests fail to genuinely interleave, the
-  // pre-check alone produces one account — and the count above passes with no
-  // unique constraint in the database at all, which is exactly the property this
-  // is here to prove. The two branches are already distinguishable in the audit
-  // table, so this asserts the constraint branch actually fired. Same shape as
-  // the second mechanism behind D8's reuse detection.
-  const lostRace = await ask(
-    "SELECT count(*) FROM audit_entries WHERE action = 'DUPLICATE_REGISTRATION_ATTEMPTED'"
-    + " AND actor_user_id IS NULL AND metadata->>'lostRace' = 'true'",
-  );
-  assert.equal(
-    Number(lostRace) >= 1,
-    true,
-    'not one of the concurrent registrations lost on a UNIQUE violation — every duplicate was '
-    + 'caught by the check-then-insert instead, so this run proves nothing about the constraint. '
-    + `Audit rows on the losing branch: ${lostRace}.`,
   );
 
   // ---- Entity-versus-migration drift. ----
