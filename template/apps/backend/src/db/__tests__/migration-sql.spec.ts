@@ -26,10 +26,18 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  *
  * A textual guard over SQL embedded in TypeScript cannot be made complete, and
  * saying which shapes get past these ones is more useful than implying none do.
- * A review attacked them with twelve variants; three got through, and they are
- * named here rather than patched, because a guard that grows a special case per
- * adversarial variant gets harder to read without getting meaningfully harder
- * to defeat:
+ * A review attacked them with twelve variants; three got through. Two are
+ * named here rather than patched, because a guard that grows a special case
+ * per adversarial variant gets harder to read without getting meaningfully
+ * harder to defeat. The third — a foreign key smuggled into `audit_entries`'s
+ * own `CREATE TABLE` behind a leading `COMMENT ON …;` in the same `query()`
+ * call — was closed rather than disclosed in round 3 of this file's review,
+ * after an earlier version of this list named the wrong composed statement as
+ * the open one; see `audit_entries is never given a foreign key › and no
+ * migration creates it with a foreign key inside its own CREATE TABLE` for
+ * what actually closes it and why. Quoting and schema-qualification of
+ * `audit_entries` itself — `"audit_entries"`, `public.audit_entries` — are
+ * closed too, in every guard that names the table (round 2).
  *
  * - **`IF EXISTS` / `IF NOT EXISTS`.** `DROP TABLE IF EXISTS audit_entries`
  *   and `CREATE TABLE IF NOT EXISTS audit_entries` are invisible to
@@ -38,17 +46,6 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  * - **SQL hoisted into a variable.** `sqlStatements` reads a literal at the
  *   call; `const sql = '…'; await queryRunner.query(sql)` yields nothing, so
  *   every "no statement does X" assertion passes over it.
- * - **A statement composed to look like something else**, e.g. a foreign key
- *   or an `OWNER TO` concatenated after a leading `COMMENT ON …;` inside one
- *   `query()` call — the `COMMENT ON` exclusion in `audit_entries is never
- *   given a foreign key` skips such a statement whole, by its leading
- *   keyword, so anything appended after it in the same string is invisible
- *   too. Adversarial rather than accidental. (Quoting and schema-
- *   qualification of `audit_entries` itself — `"audit_entries"`,
- *   `public.audit_entries` — are no longer gaps: every guard in this file
- *   that names the table now matches both spellings, closed in round 2 of
- *   Task 9's review after they diverged between two guards. This bullet is
- *   about a statement's *composition*, not the table name's spelling.)
  *
  * None of these is a way to weaken the database. They are ways to weaken this
  * file, and what stands behind it is D13: Task 19 runs the real statement
@@ -382,6 +379,47 @@ describe('audit_entries is never given a foreign key', () => {
       .toBeGreaterThanOrEqual(3);
     expect(statementsMatching(/\baudit_entries\b[\s\S]*?(?:REFERENCES|FOREIGN KEY)/i, notComments))
       .toEqual([]);
+  });
+
+  // Round 3 of this file's review found the gap the test above actually has:
+  // not the `OWNER TO`-behind-`COMMENT ON` shape a since-corrected disclosure
+  // named (that one is unanchored `.test()` over the *ALTER TABLE* allow-list
+  // below, and a leading `COMMENT ON` does not hide anything from a scan of
+  // the whole string), but `CREATE TABLE audit_entries (…)` itself carrying a
+  // `REFERENCES` in its own column list, composed behind a leading
+  // `COMMENT ON …;` in the same `query()` call:
+  //
+  //   COMMENT ON TABLE audit_entries IS 'x';
+  //   CREATE TABLE audit_entries (id uuid, user_id uuid REFERENCES users(id));
+  //
+  // The test above cannot see this: its `COMMENT ON` exclusion is by the
+  // statement's *leading* keyword, so a statement that opens `COMMENT ON` and
+  // then goes on to create the table is skipped whole. The `ALTER TABLE`
+  // allow-list does not apply — wrong keyword, this is a `CREATE`. The reverse
+  // `REFERENCES audit_entries` guard does not apply either — wrong direction,
+  // `audit_entries` is the FK's *source* here, not its target. And this
+  // matters precisely because it is the CREATE, not the ALTER: a `REFERENCES
+  // users(id)` smuggled into the table's own construction is exactly the
+  // referential-action hazard `IdentityFoundation` refused for
+  // `actor_user_id` — delete a user and the reference rewrites or erases an
+  // audit row through a statement aimed at `users`, past the REVOKE.
+  //
+  // Closed rather than disclosed, because the fix is genuinely cheap and does
+  // not touch the COMMENT exclusion above (which stays, for the reason its own
+  // comment gives — the real `COMMENT ON COLUMN audit_entries…` this schema
+  // ships literally contains the words "foreign key" in its prose, and
+  // dropping that exclusion to reach this case would turn a legitimate comment
+  // into a false positive). Anchored on the one substring no legitimate
+  // comment contains — `CREATE TABLE audit_entries (` itself, however quoted
+  // or schema-qualified — rather than on the statement's leading keyword, so a
+  // `COMMENT ON` prefix has nothing to hide behind.
+  it('and no migration creates it with a foreign key inside its own CREATE TABLE, whatever precedes the statement', () => {
+    const createBody = /CREATE\s+TABLE\s+(?:public\.)?"?audit_entries"?\s*\(([\s\S]*)\)/i;
+    const offenders = allStatements()
+      .map(([name, statement]) => [name, createBody.exec(statement)?.[1]] as const)
+      .filter((entry): entry is readonly [string, string] => entry[1] !== undefined)
+      .filter(([, body]) => /REFERENCES|FOREIGN KEY/i.test(body));
+    expect(offenders).toEqual([]);
   });
 
   it('and AuditEntryRecord declares no relation for migration:generate to emit', () => {
