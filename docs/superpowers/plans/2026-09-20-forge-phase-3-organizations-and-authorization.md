@@ -1449,7 +1449,7 @@ hydrator is what applies it (design ruling R2)."
 Phase 2 shipped `AuditEntry.organizationId` nullable and **deliberately unpinned by any assertion**, because no world could hold two tenants. Phase 3 is that world. The roadmap's second finding is that `runIAuditServiceContract.ts:439-473` checks ten wire fields of which three are null-symmetric in the backend driver — measured: dropping `organizationId` from `AuditService.toEntity` leaves 499/499 green.
 
 **Files:**
-- Modify: `template/libs/core/src/audit/enums/AuditAction.ts` — nine new members
+- Modify: `template/libs/core/src/audit/enums/AuditAction.ts` — ten new members
 - Modify: `template/libs/core/src/audit/types/AuditQuery.ts`, `AuditEntryProps.ts`, `AuditEntryJSON.ts`, `RecordAuditEntryInput.ts` — `organizationId` becomes `OrganizationId | null`
 - Modify: `template/libs/core/src/audit/testing/runIAuditServiceContract.ts` — the masked assertions
 - Modify: `template/libs/core/src/audit/testing/IAuditServiceContractDeps.ts` — the world must seed a non-null organization
@@ -1522,7 +1522,7 @@ two tenants. Measured then and reproduced now: dropping organizationId from the
 backend's mapper left the whole suite green — three of ten compared fields were
 null === null.
 
-Tenancy is the world that makes them checkable. Nine action members added for
+Tenancy is the world that makes them checkable. Ten action members added for
 the events Tasks 10-14 record; members are appended and never reordered."
 ```
 
