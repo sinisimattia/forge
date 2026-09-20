@@ -130,19 +130,30 @@ describe('LoginForm', () => {
     // Three failures that differ in every way the component could notice: an
     // address nothing answers to, an address something answers to with the wrong
     // secret, and a transport that never reaches a backend (a `catch`, not a
-    // rejection). The rendered text must be identical, character for character.
+    // rejection). The rendered **markup** must be identical, byte for byte.
+    //
+    // `html()` and not `text()`, and the difference is the whole assertion.
+    // `text()` is `textContent`: it discards every attribute. `AppAlert` is a
+    // single-root element, so anything put on `<AppAlert>` falls through onto it
+    // — and four differentiators with byte-identical text all passed this suite
+    // while it compared `text()`: `:title`, `:aria-live`, `:class` and
+    // `:data-failure`. The `title` one is a native tooltip that assistive
+    // technology reads aloud, so it republishes in prose exactly what the
+    // backend's identical `401` withholds; the `aria-live` one arrives looking
+    // like an accessibility improvement. Both are likelier regressions than a
+    // second message, precisely because both look like kindnesses.
     const rendered: string[] = [];
 
-    rendered.push((await signIn(UNKNOWN_EMAIL, PLAINTEXT)).text());
-    rendered.push((await signIn(ACTOR_EMAIL, WRONG_PLAINTEXT)).text());
+    rendered.push((await signIn(UNKNOWN_EMAIL, PLAINTEXT)).html());
+    rendered.push((await signIn(ACTOR_EMAIL, WRONG_PLAINTEXT)).html());
 
     const unreachable: ApiClient = () => Promise.reject(new Error('the backend is not there'));
     useAuthStore().adoptTransport(unreachable);
-    rendered.push((await signIn(ACTOR_EMAIL, PLAINTEXT)).text());
+    rendered.push((await signIn(ACTOR_EMAIL, PLAINTEXT)).html());
 
     // Each one really did fail — otherwise three identical *success* screens
     // would satisfy the comparison below.
-    for (const text of rendered) expect(text).toContain('auth.signIn.failed');
+    for (const markup of rendered) expect(markup).toContain('auth.signIn.failed');
     expect(new Set(rendered).size).toBe(1);
   });
 
