@@ -11,12 +11,13 @@ import type { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
  * statement rather than trusting nobody writes it. Two things follow that are
  * easy to get wrong from here:
  *
- * - **Do not add a `@ManyToOne` to `UserRecord`.** TypeORM would create a
- *   foreign key, and a foreign key's referential action runs with the table
- *   owner's privileges rather than the caller's — an `ON DELETE CASCADE` or
- *   `SET NULL` would hand the application a way to delete or rewrite an audit
- *   row through a statement aimed at `users`. `actorUserId` is a bare column
- *   for that reason, and its value may name a user that no longer exists.
+ * - **Do not add a `@ManyToOne` to `UserRecord` or `OrganizationRecord`.**
+ *   TypeORM would create a foreign key, and a foreign key's referential action
+ *   runs with the table owner's privileges rather than the caller's — an
+ *   `ON DELETE CASCADE` or `SET NULL` would hand the application a way to
+ *   delete or rewrite an audit row through a statement aimed at `users` or
+ *   `organizations`. `actorUserId` and `organizationId` are bare columns for
+ *   that reason, and either may name a row that no longer exists.
  * - **Do not update a row through this class.** The database will refuse it;
  *   the point of saying so here is that the refusal arrives at runtime, in
  *   whatever request was unlucky, rather than at review.
@@ -31,12 +32,23 @@ export class AuditEntryRecord {
   /**
    * The tenant it happened in, or `null` when it belonged to none.
    *
-   * `text` and not a foreign key because no organization table exists until
-   * Phase 3. The column is here now rather than then precisely because this
-   * table is append-only: adding a column later means backfilling rows the
-   * application is not permitted to update (ADR-0007).
+   * `uuid` since `OrganizationsAndAuthorization1758000003000`. It shipped as
+   * `text` in Phase 2 because no organization table existed yet and core had
+   * no `OrganizationId` to brand it with; the column was added that early
+   * rather than later precisely because this table is append-only, and adding
+   * a column later would mean backfilling rows the application is not
+   * permitted to update (ADR-0007). Phase 3's migration widens the type with
+   * `USING organization_id::uuid`, verified safe because nothing had ever
+   * written a non-null value into it.
+   *
+   * **Still no foreign key to `organizations`, on purpose — see
+   * `OrganizationsAndAuthorization1758000003000`'s own TSDoc and
+   * `AuditEntryRecord`'s class doc below.** A `uuid` column that names a table
+   * which now exists is exactly the moment a foreign key looks like finishing
+   * the job rather than breaking it; ADR-0009 and discriminating test D13 are
+   * why it stays absent.
    */
-  @Column({ name: 'organization_id', type: 'text', nullable: true })
+  @Column({ name: 'organization_id', type: 'uuid', nullable: true })
   organizationId!: string | null;
 
   /**

@@ -376,15 +376,28 @@ describe('audit_entries is never given a foreign key', () => {
       .toEqual([]);
   });
 
-  it('and no migration alters the table at all', () => {
-    // Belt and braces, and it earns its place on its own: this table is
-    // append-only, so every structural change to it is something a reviewer has
-    // to see rather than something a migration can slip in. `ALTER TABLE
-    // audit_entries ADD CONSTRAINT … FOREIGN KEY` is caught by the assertion
-    // above as well; this one is what covers a statement that assertion skips,
-    // and vice versa — this regex is blind to `ALTER TABLE public.audit_entries`,
-    // which the assertion above catches. Neither is complete on its own.
-    expect(statementsMatching(/ALTER TABLE\s+(?:ONLY\s+)?audit_entries\b/i)).toEqual([]);
+  it('and no migration adds a constraint to the table', () => {
+    // Belt and braces, and it earns its place on its own: a constraint added
+    // to this table by `ALTER TABLE` is caught by the assertion above as well;
+    // this one is what covers a statement that assertion skips, and vice
+    // versa — this regex is blind to `ALTER TABLE public.audit_entries`, which
+    // the assertion above catches. Neither is complete on its own.
+    //
+    // Narrowed to "adds a constraint" rather than "alters the table at all"
+    // for Task 9: `OrganizationsAndAuthorization1758000003000` legitimately
+    // runs `ALTER TABLE audit_entries ALTER COLUMN organization_id TYPE uuid`
+    // — a column-type change, verified safe because the column has never held
+    // a non-null value (this file's own report), and reviewed as a structural
+    // change precisely because it is not hidden from this guard. A blanket
+    // "no ALTER TABLE at all" rule would make that legitimate, reviewed
+    // migration indistinguishable from the thing this describe block exists to
+    // catch, which is a constraint — `ADD CONSTRAINT`, `REFERENCES`, `FOREIGN
+    // KEY` — arriving through this table's own `ALTER TABLE`.
+    expect(
+      statementsMatching(
+        /ALTER TABLE\s+(?:ONLY\s+)?audit_entries\b[\s\S]*?(?:ADD\s+CONSTRAINT|REFERENCES|FOREIGN KEY)/i,
+      ),
+    ).toEqual([]);
   });
 
   it('and AuditEntryRecord declares no relation for migration:generate to emit', () => {
@@ -404,6 +417,50 @@ describe('audit_entries is never given a foreign key', () => {
     expect(record).not.toMatch(
       /^\s*@(?:ManyToOne|OneToOne|OneToMany|ManyToMany|JoinColumn|JoinTable)\s*\(/m,
     );
+  });
+});
+
+describe('the organizations-and-authorization migration', () => {
+  // The guarantee this protects is not a property of `audit_entries` alone: it
+  // is a property of every foreign key anyone ever adds to it. So the assertion
+  // is over the whole migration directory, not over one file, and it is written
+  // as "no statement anywhere references audit_entries in a REFERENCES clause"
+  // rather than as a check of the one migration that creates it.
+  //
+  // This is the reverse direction from `audit_entries is never given a foreign
+  // key` above: that block catches `audit_entries` declaring a FK to something
+  // else (`audit_entries`, then later, `REFERENCES`); this one catches some
+  // *other* table declaring a FK that points AT `audit_entries` (`REFERENCES
+  // audit_entries`), which the word-order-sensitive regex above does not see
+  // when nothing else in the same statement mentions `audit_entries` first.
+  it('adds no foreign key to audit_entries, in any migration', () => {
+    const offenders = allMigrations
+      .flatMap(([, source]) => sqlStatements(source))
+      .filter((sql) => /REFERENCES\s+audit_entries/i.test(sql));
+    expect(offenders).toEqual([]);
+  });
+
+  it.each([
+    'uq_organizations_slug',
+    'uq_memberships_org_user',
+    'uq_organization_invitations_token_hash',
+  ])('creates the four Phase 3 tables with the uniqueness constraint %s', (constraint) => {
+    // `expect(actual, message)` is not a Jest signature — Jest's `expect` takes
+    // one argument, unlike Jasmine/Chai's. `it.each` is what gets the failing
+    // constraint's name into the test's own title instead.
+    //
+    // `statementsMatching` takes STATEMENTS, never sources — and, less
+    // obviously, never a plain `string[]` of statements either: its signature
+    // is `readonly (readonly [string, string])[]`, `[filename, statement]`
+    // pairs, because `[, statement]` destructuring a bare string treats the
+    // string itself as the array and silently reads its second *character*.
+    // `sqlStatements` alone returns `string[]`, so it is tagged with the
+    // filename here the same way `inUp` is tagged in `audit_entries is created
+    // once and never rebuilt` above.
+    const name = '1758000003000-OrganizationsAndAuthorization.ts';
+    const statements = sqlStatements(migrationSource('OrganizationsAndAuthorization'))
+      .map((statement) => [name, statement] as const);
+    expect(statementsMatching(new RegExp(constraint), statements)).toHaveLength(1);
   });
 });
 

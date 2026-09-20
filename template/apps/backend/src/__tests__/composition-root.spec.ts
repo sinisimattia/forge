@@ -26,11 +26,15 @@ import { SessionRecord } from '../auth/entities/session-record.entity';
 import { REFRESH_COOKIE } from '../auth/refresh-cookie';
 import { ACCESS_TOKEN_TTL_SECONDS, SessionService } from '../auth/session/session.service';
 import { JwtStrategy } from '../auth/strategies';
+import { ResourceGrantRecord } from '../authorization/resource-grant-record.entity';
 import { HealthModule } from '../health/health.module';
 import { AuthIdentityRecord } from '../identities/auth-identity-record.entity';
 import { IdentitiesModule } from '../identities/identities.module';
 import { IdentitiesService } from '../identities/identities.service';
 import { MailModule } from '../mail';
+import { InvitationRecord } from '../organizations/invitation-record.entity';
+import { MembershipRecord } from '../organizations/membership-record.entity';
+import { OrganizationRecord } from '../organizations/organization-record.entity';
 import { UserRecord } from '../users/user-record.entity';
 import { UsersModule } from '../users/users.module';
 
@@ -64,6 +68,10 @@ import { UsersModule } from '../users/users.module';
  * | `app.module.ts`: `AuditModule` from `imports` | `AppModule › imports AuditModule` |
  * | `app.module.ts`: `I18nModule` from `imports` | `AppModule › registers I18nModule` |
  * | `app.module.ts`: an entity from the list | `the database connection › lists every entity` |
+ * | `app.module.ts`: `OrganizationRecord` from the entity list | `the database connection › lists every entity` — a repository for it resolves nothing, and every `organizations` read or write in Task 10 fails at start-up |
+ * | `app.module.ts`: `MembershipRecord` from the entity list | `the database connection › lists every entity` — same fault, for every membership Task 11 reads or writes |
+ * | `app.module.ts`: `InvitationRecord` from the entity list | `the database connection › lists every entity` — same fault, for every invitation Task 12 reads or writes |
+ * | `app.module.ts`: `ResourceGrantRecord` from the entity list | `the database connection › lists every entity` — same fault, for every grant Task 13 reads or writes |
  * | `app.module.ts`: `providers: GLOBAL_PROVIDERS` replaced by a copy | `AppModule › uses the exported provider array itself` |
  * | `app.setup.ts`: `credentials: true` on CORS | `configureApp › lets a cross-origin caller send the renewal cookie` |
  * | `health.controller.ts`: `@Public()` | `health › is reachable with no credential` |
@@ -226,6 +234,10 @@ describe('the composition root', () => {
         EmailVerificationTokenRecord,
         PasswordResetTokenRecord,
         AuditEntryRecord,
+        OrganizationRecord,
+        MembershipRecord,
+        InvitationRecord,
+        ResourceGrantRecord,
       ]);
     });
 
