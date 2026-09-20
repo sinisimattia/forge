@@ -78,6 +78,19 @@ Phase 2 created it as `text NULL` because core had no `OrganizationId` to brand 
 
 ---
 
+### Core test conventions — verified against the shipped config, correcting this plan
+
+Discovered during execution, after Tasks 3–7 had been written against wrong assumptions. Every core task must follow these; the earlier drafts of this plan did not.
+
+- **`libs/core` runs jest, not vitest.** `libs/core/package.json` → `"test": "jest"`, `"test:coverage": "jest --coverage"`, and `libs/core/jest.config.js` is the config.
+- **Core tests live in `libs/core/tests/`, mirroring `src/`'s domain structure — NOT co-located in `src/**/__tests__/`.** `testMatch` is `['<rootDir>/tests/**/*.spec.ts']`. A spec written under `src/` is never executed, which is this phase's signature defect authored into its own plan.
+- **Tests import through core's own subpaths**, not relative paths: `import { Organization } from '__FORGE_SCOPE__/core/organizations/entities';`. `moduleNameMapper` maps `^__FORGE_SCOPE__/core/(.*)$` to `<rootDir>/src/$1/index.ts`, so tests exercise source and a new domain needs no config edit — but it also means **a test cannot import a symbol the domain's barrel does not export**.
+- **`describe`/`it`/`expect` are jest globals.** No import line.
+- **Coverage excludes** barrels, `types/**`, `contracts/**`, `testing/*ContractDeps.ts`, `ConformanceExpect.ts` and `ConformanceRunner.ts` — they emit no runtime JS. Conformance suites (`testing/run*.ts`) ARE covered, which is why Task 5's reference implementation exists.
+- **Conformance suites are driven through `jestConformanceExpect`** (`libs/core/tests/shared/testing/jestConformanceExpect.ts`) and an in-memory implementation beside the spec, e.g. `tests/auth/testing/InMemoryAuthService.ts`. Read `tests/auth/testing/runIAuthServiceContract.spec.ts` for the exact shape before writing Task 5's.
+
+---
+
 ## File structure
 
 New files, and the one responsibility each carries.
@@ -361,7 +374,7 @@ Re-run Step 1's injection. Expected now: all three of `core`, `backend` and `web
 
 - [ ] **Step 4: Put `libs/core`'s coverage thresholds in a CI tier**
 
-`libs/core` declares 100/100/100/100 and nothing runs it — not `ci.yml`, not `project.json`, not the integration gate. Add a `coverage` target to `template/libs/core/project.json` that runs `vitest run --coverage`, and add it to the `unit` tier in `template/.github/workflows/ci.yml` so it runs on every push rather than only on a pull request.
+`libs/core` declares 100/100/100/100 in `jest.config.js` and **no CI runs it**. Corrected during execution: a `coverage` target already exists in `template/libs/core/project.json` (it runs `npm run test:coverage`, i.e. `jest --coverage`) — the gap is only that nothing invokes it. Add it to the `unit` tier in `template/.github/workflows/ci.yml` so it runs on every push rather than only on a pull request. Do not add a target that already exists, and do not switch the runner.
 
 Verify the thresholds are real before wiring them, and that the wiring is real after:
 
@@ -425,7 +438,7 @@ shape — a check that passes because it never ran.
 - Create: `template/libs/core/src/organizations/types/{OrganizationId,MembershipId,OrganizationProps,OrganizationJSON,MembershipProps,MembershipJSON,CreateOrganizationInput,UpdateOrganizationInput,OrganizationQuery,MemberQuery,index}.ts`
 - Create: `template/libs/core/src/organizations/errors/{OrganizationNotFoundError,OrganizationNameRequiredError,InvalidOrganizationSlugError,MembershipNotFoundError,AlreadyAMemberError,LastOwnerError,index}.ts`
 - Modify: `template/libs/core/package.json` — four new `exports` subpaths
-- Test: `template/libs/core/src/organizations/entities/__tests__/{Organization,Membership}.spec.ts`
+- Test: `template/libs/core/tests/organizations/entities/{Organization,Membership}.spec.ts`
 
 **Interfaces:**
 - Consumes: `Brand` from `shared/types`, `DomainError` from `shared/errors`, `UserId` from `users/types`.
@@ -440,10 +453,10 @@ Tasks 4–8, 9–16 all import from these subpaths.
 
 - [ ] **Step 1: Write the failing entity tests**
 
-`template/libs/core/src/organizations/entities/__tests__/Organization.spec.ts`:
+`template/libs/core/tests/organizations/entities/Organization.spec.ts`:
 
 ```ts
-import { describe, expect, it } from 'vitest';
+// jest globals — core's runner is jest (libs/core/jest.config.js); no import.
 import { Organization } from '../Organization';
 import { InvalidOrganizationSlugError } from '../../errors/InvalidOrganizationSlugError';
 import { OrganizationNameRequiredError } from '../../errors/OrganizationNameRequiredError';
@@ -504,7 +517,7 @@ describe('Organization', () => {
 - [ ] **Step 2: Run to verify they fail**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx vitest run libs/core/src/organizations --root libs/core
+cd /Users/sinisimattia/Progetti/forge/template && npx nx test core -- tests/organizations
 ```
 
 Expected: FAIL, cannot resolve `../Organization`.
@@ -582,7 +595,7 @@ Mirror `libs/core/src/users/errors/UserNotFoundError.ts` — each extends `Domai
 - [ ] **Step 6: Run the tests to verify they pass**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx vitest run libs/core/src/organizations --root libs/core
+cd /Users/sinisimattia/Progetti/forge/template && npx nx test core -- tests/organizations
 ```
 
 - [ ] **Step 7: Wire the four subpaths**
@@ -640,7 +653,7 @@ Spec §9.4: invitations are email-based, single-use, expiring, and carry the int
 - Create: `template/libs/core/src/organizations/types/{InvitationId,InvitationProps,InvitationJSON,InviteMemberInput,InvitationQuery}.ts`
 - Create: `template/libs/core/src/organizations/errors/{InvitationNotFoundError,InvitationNoLongerOpenError,InvitationAddressMismatchError}.ts`
 - Modify: the four barrels from Task 3
-- Test: `template/libs/core/src/organizations/entities/__tests__/Invitation.spec.ts`
+- Test: `template/libs/core/tests/organizations/entities/Invitation.spec.ts`
 
 **Interfaces:**
 - Consumes: `OrgRole`, `OrganizationId` (Task 3); `normalizeEmail` from `shared/policies`; `UserId`.
@@ -653,7 +666,7 @@ Spec §9.4: invitations are email-based, single-use, expiring, and carry the int
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-import { describe, expect, it } from 'vitest';
+// jest globals — core's runner is jest (libs/core/jest.config.js); no import.
 import { Invitation } from '../Invitation';
 import { InvitationStatus } from '../../enums/InvitationStatus';
 import { OrgRole } from '../../enums/OrgRole';
@@ -709,7 +722,7 @@ describe('Invitation', () => {
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx vitest run libs/core/src/organizations/entities/__tests__/Invitation.spec.ts --root libs/core
+cd /Users/sinisimattia/Progetti/forge/template && npx nx test core -- tests/organizations/entities/Invitation.spec.ts
 ```
 
 - [ ] **Step 3: Write `InvitationStatus`, with the reason expiry is absent from it**
@@ -940,14 +953,14 @@ Assertions 2, 10, 11 and 14 are the ones with a real chance of being written unf
 
 - [ ] **Step 3: Write the in-memory reference implementation and run the suite against it**
 
-`template/libs/core/src/organizations/testing/__tests__/reference.spec.ts` builds a `Map`-backed `IOrganizationService` and drives the suite through vitest via the existing adapter. This is what makes the suite's own 100% coverage achievable and proves the suite is satisfiable at all before any app tries.
+`template/libs/core/tests/organizations/testing/reference.spec.ts` builds a `Map`-backed `IOrganizationService` and drives the suite through vitest via the existing adapter. This is what makes the suite's own 100% coverage achievable and proves the suite is satisfiable at all before any app tries.
 
 - [ ] **Step 4: Watch four assertions fail**
 
 For each of #2, #10, #11 and #14, break the reference implementation in the one way the assertion exists to catch, run, record the failure, restore:
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx vitest run libs/core/src/organizations --root libs/core
+cd /Users/sinisimattia/Progetti/forge/template && npx nx test core -- tests/organizations
 ```
 
 - #2: create the organization without a membership → assertion 2 red.
@@ -983,7 +996,7 @@ The roadmap's instruction is exact: **extend `can()`, do not restructure it.** I
 - Modify: `template/libs/core/src/authorization/types/Permission.ts`, `Principal.ts`
 - Create: `template/libs/core/src/authorization/policies/ROLE_PERMISSIONS.ts`
 - Modify: `template/libs/core/src/authorization/policies/can.ts`, both barrels
-- Test: `template/libs/core/src/authorization/policies/__tests__/{can,ROLE_PERMISSIONS}.spec.ts`
+- Test: `template/libs/core/tests/authorization/policies/{can,ROLE_PERMISSIONS}.spec.ts`
 
 **Interfaces:**
 - Consumes: `OrgRole`, `OrganizationId` (Task 3).
@@ -1135,7 +1148,7 @@ it('lets a platform administrator through with no membership at all', () => {
 - [ ] **Step 2: Run to verify they fail**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx vitest run libs/core/src/authorization --root libs/core
+cd /Users/sinisimattia/Progetti/forge/template && npx nx test core -- tests/authorization
 ```
 
 - [ ] **Step 3: Write `ROLE_PERMISSIONS`**
@@ -1214,7 +1227,7 @@ The organization permissions reaching the switch are the ones asked *without* a 
 - [ ] **Step 5: Run the tests, then watch the exhaustiveness forcing function fire**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx vitest run libs/core/src/authorization --root libs/core
+cd /Users/sinisimattia/Progetti/forge/template && npx nx test core -- tests/authorization
 ```
 
 Then add a sixteenth `Permission` member with no case and no `ROLE_PERMISSIONS` entry:
