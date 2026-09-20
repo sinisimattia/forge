@@ -1261,7 +1261,7 @@ Then add a sixteenth `Permission` member with no case and no `ROLE_PERMISSIONS` 
 cd "$PROBE" && npx nx run-many -t typecheck -p core backend webapp
 ```
 
-Expected: all three fail. `core` and `backend` on `assertNever` (TS2345 `'never'`); `webapp` too, because Task 2 made its consumers exhaustive — if the webapp passes here, Task 2 did not land and this task stops until it has. Record all three. Revert.
+Expected: **`core` ❌ and `backend` ❌** on `assertNever` (TS2345), and **`webapp` ✅**. Corrected during execution: the webapp has no `can()` or `Permission` consumer at all until Task 17 adds `useCan`, verified by grep. This plan originally expected the webapp to fail here by conflating two different unions — Task 2 made the webapp's *`AuthenticationOutcome`* consumers exhaustive, which says nothing about `Permission`. A passing webapp is correct, not a regression. **Task 17 owes the webapp-side exhaustiveness for `Permission`.** Record all three. Revert.
 
 - [ ] **Step 6: Update `PlatformAdminGuard` for the renamed type**
 
