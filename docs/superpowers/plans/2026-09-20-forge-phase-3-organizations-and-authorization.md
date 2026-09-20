@@ -78,6 +78,28 @@ Phase 2 created it as `text NULL` because core had no `OrganizationId` to brand 
 
 ---
 
+### Running the gates — you cannot run them inside `template/`
+
+Discovered during execution, after every task had been written assuming otherwise. `template/package.json` is `"name": "__FORGE_NAME__"` and `template/libs/core/package.json` is `"name": "__FORGE_SCOPE__/core"` — the tree carries unsubstituted tokens by design, so `npm install` inside it fails and `npx nx` has nothing to run. **Twenty-three commands in the original draft of this plan were wrong this way.**
+
+Every gate runs against a freshly generated probe project:
+
+```bash
+cd /Users/sinisimattia/Progetti/forge
+PROBE=$(mktemp -d)/probe
+node tools/create/index.mjs --name gateapp --out "$PROBE" --yes --no-git
+cd "$PROBE" && npm ci
+```
+
+`$PROBE` in every command below means that directory. Two consequences that matter:
+
+- **You edit `template/`, you verify in `$PROBE`.** A probe is a copy: regenerate it after every change you want to test. Never fix a bug by editing the probe — the edit is thrown away and the real defect ships.
+- **Probes are disposable and they are not small.** Delete each one when you are done with it. Phase 1 and Phase 2 between them leaked 23 GB across 2,624 abandoned `forge-*` directories and another 9.2 GB of generated projects; that is the failure mode, and `mktemp -d` plus a delete at the end of the task is what avoids repeating it.
+
+Forge's own suites are the exception — `npm test` and `npm run sanitize` run from the repo root and need no probe.
+
+---
+
 ### Core test conventions — verified against the shipped config, correcting this plan
 
 Discovered during execution, after Tasks 3–7 had been written against wrong assumptions. Every core task must follow these; the earlier drafts of this plan did not.
@@ -336,7 +358,7 @@ Phase 2's final review returned MERGE with six findings. Three are the same shap
 Add a fourth member to `AuthenticationStatus` temporarily:
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && sed -i '' "s/^}/  MFA_REQUIRED = 'MFA_REQUIRED',\n}/" libs/core/src/auth/enums/AuthenticationStatus.ts && npx nx run-many -t typecheck -p core backend webapp
+cd "$PROBE" && sed -i '' "s/^}/  MFA_REQUIRED = 'MFA_REQUIRED',\n}/" libs/core/src/auth/enums/AuthenticationStatus.ts && npx nx run-many -t typecheck -p core backend webapp
 ```
 
 Expected, and this is the finding being fixed: `core` and `backend` fail with TS2345 `'never'`, and **`webapp` passes**. Record all three results. Then revert:
@@ -379,7 +401,7 @@ Re-run Step 1's injection. Expected now: all three of `core`, `backend` and `web
 Verify the thresholds are real before wiring them, and that the wiring is real after:
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run core:coverage
+cd "$PROBE" && npx nx run core:coverage
 ```
 
 Expected: passes at 100% on all four axes. Then delete one branch of `can()`'s switch, re-run, and watch it fail the threshold. Restore.
@@ -402,7 +424,7 @@ if (files.length === 0 || components === 0 || routed === 0) {
 - [ ] **Step 6: Watch that guard fail**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template/apps/webapp && mv app/pages /tmp/pages-aside && mv app/layouts /tmp/layouts-aside && node scripts/check-atomic-layers.mjs; echo "EXIT=$?"; mv /tmp/pages-aside app/pages && mv /tmp/layouts-aside app/layouts
+cd "$PROBE/apps/webapp" && mv app/pages /tmp/pages-aside && mv app/layouts /tmp/layouts-aside && node scripts/check-atomic-layers.mjs; echo "EXIT=$?"; mv /tmp/pages-aside app/pages && mv /tmp/layouts-aside app/layouts
 ```
 
 Expected: `EXIT=1` with the new message. Before the fix this printed clean and exited 0 — run it both ways and record both.
@@ -410,7 +432,7 @@ Expected: `EXIT=1` with the new message. Before the fix this printed clean and e
 - [ ] **Step 7: Run every gate and commit**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run-many -t lint typecheck test -p core backend webapp && cd /Users/sinisimattia/Progetti/forge && npm run sanitize
+cd "$PROBE" && npx nx run-many -t lint typecheck test -p core backend webapp && cd /Users/sinisimattia/Progetti/forge && npm run sanitize
 ```
 
 ```bash
@@ -517,7 +539,7 @@ describe('Organization', () => {
 - [ ] **Step 2: Run to verify they fail**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx test core -- tests/organizations
+cd "$PROBE" && npx nx test core -- tests/organizations
 ```
 
 Expected: FAIL, cannot resolve `../Organization`.
@@ -554,7 +576,7 @@ export enum OrgRole {
 
 - [ ] **Step 4: Write the six errors**
 
-Mirror `libs/core/src/users/errors/UserNotFoundError.ts` — each extends `DomainError`, each carries a stable `code`. The codes are `ORGANIZATION_NOT_FOUND`, `ORGANIZATION_NAME_REQUIRED`, `INVALID_ORGANIZATION_SLUG`, `MEMBERSHIP_NOT_FOUND`, `ALREADY_A_MEMBER`, `LAST_OWNER`. `LastOwnerError`'s message states the invariant it protects: an organization always has at least one `OWNER`, so the last one can neither leave nor be demoted (spec §9.4).
+Mirror `libs/core/src/users/errors/UserNotFoundError.ts` — each extends `DomainError`. **Corrected during execution: core errors carry NO `code` property.** `DomainError` sets `this.name = new.target.name` and that class name is the stable identifier; the `code` field this plan originally called for exists only in the backend's HTTP envelope, which its exception filter produces from the error class. Name the six classes `OrganizationNotFoundError`, `OrganizationNameRequiredError`, `InvalidOrganizationSlugError`, `MembershipNotFoundError`, `AlreadyAMemberError`, `LastOwnerError`. `LastOwnerError`'s message states the invariant it protects: an organization always has at least one `OWNER`, so the last one can neither leave nor be demoted (spec §9.4).
 
 - [ ] **Step 5: Write the two entities**
 
@@ -595,7 +617,7 @@ Mirror `libs/core/src/users/errors/UserNotFoundError.ts` — each extends `Domai
 - [ ] **Step 6: Run the tests to verify they pass**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx test core -- tests/organizations
+cd "$PROBE" && npx nx test core -- tests/organizations
 ```
 
 - [ ] **Step 7: Wire the four subpaths**
@@ -623,7 +645,7 @@ cd /Users/sinisimattia/Progetti/forge && node --test tests/integration/generated
 - [ ] **Step 8: Run every core gate**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run-many -t lint typecheck test coverage -p core && node libs/core/scripts/check-purity.mjs
+cd "$PROBE" && npx nx run-many -t lint typecheck test coverage -p core && node libs/core/scripts/check-purity.mjs
 ```
 
 Expected: all pass, coverage still 100/100/100/100 (Task 2 made that a gate), purity clean. If coverage drops, the new code has an unreached branch — add the case, do not lower the threshold.
@@ -722,7 +744,7 @@ describe('Invitation', () => {
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx test core -- tests/organizations/entities/Invitation.spec.ts
+cd "$PROBE" && npx nx test core -- tests/organizations/entities/Invitation.spec.ts
 ```
 
 - [ ] **Step 3: Write `InvitationStatus`, with the reason expiry is absent from it**
@@ -769,7 +791,7 @@ The three errors mirror Task 3's shape. `InvitationNoLongerOpenError` covers rev
 - [ ] **Step 5: Run the tests, extend the barrels, run every core gate**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run-many -t lint typecheck test coverage -p core && node libs/core/scripts/check-purity.mjs
+cd "$PROBE" && npx nx run-many -t lint typecheck test coverage -p core && node libs/core/scripts/check-purity.mjs
 ```
 
 - [ ] **Step 6: Commit**
@@ -960,7 +982,7 @@ Assertions 2, 10, 11 and 14 are the ones with a real chance of being written unf
 For each of #2, #10, #11 and #14, break the reference implementation in the one way the assertion exists to catch, run, record the failure, restore:
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx test core -- tests/organizations
+cd "$PROBE" && npx nx test core -- tests/organizations
 ```
 
 - #2: create the organization without a membership → assertion 2 red.
@@ -971,7 +993,7 @@ cd /Users/sinisimattia/Progetti/forge/template && npx nx test core -- tests/orga
 - [ ] **Step 5: Run every core gate and commit**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run-many -t lint typecheck test coverage -p core && node libs/core/scripts/check-purity.mjs && cd /Users/sinisimattia/Progetti/forge && npm run sanitize
+cd "$PROBE" && npx nx run-many -t lint typecheck test coverage -p core && node libs/core/scripts/check-purity.mjs && cd /Users/sinisimattia/Progetti/forge && npm run sanitize
 ```
 
 ```bash
@@ -1148,7 +1170,7 @@ it('lets a platform administrator through with no membership at all', () => {
 - [ ] **Step 2: Run to verify they fail**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx test core -- tests/authorization
+cd "$PROBE" && npx nx test core -- tests/authorization
 ```
 
 - [ ] **Step 3: Write `ROLE_PERMISSIONS`**
@@ -1227,13 +1249,13 @@ The organization permissions reaching the switch are the ones asked *without* a 
 - [ ] **Step 5: Run the tests, then watch the exhaustiveness forcing function fire**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx test core -- tests/authorization
+cd "$PROBE" && npx nx test core -- tests/authorization
 ```
 
 Then add a sixteenth `Permission` member with no case and no `ROLE_PERMISSIONS` entry:
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run-many -t typecheck -p core backend webapp
+cd "$PROBE" && npx nx run-many -t typecheck -p core backend webapp
 ```
 
 Expected: all three fail. `core` and `backend` on `assertNever` (TS2345 `'never'`); `webapp` too, because Task 2 made its consumers exhaustive — if the webapp passes here, Task 2 did not land and this task stops until it has. Record all three. Revert.
@@ -1253,7 +1275,7 @@ It constructs a principal inline. It now needs `memberships: []` and the type is
 - [ ] **Step 7: Run every gate and commit**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run-many -t lint typecheck test coverage -p core backend webapp && node libs/core/scripts/check-purity.mjs && cd /Users/sinisimattia/Progetti/forge && npm run sanitize
+cd "$PROBE" && npx nx run-many -t lint typecheck test coverage -p core backend webapp && node libs/core/scripts/check-purity.mjs && cd /Users/sinisimattia/Progetti/forge && npm run sanitize
 ```
 
 ```bash
@@ -1405,7 +1427,7 @@ Break the reference implementation three ways — drop `organizationId` from the
 - [ ] **Step 6: Run every gate and commit**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run-many -t lint typecheck test coverage -p core backend webapp && node libs/core/scripts/check-purity.mjs && cd /Users/sinisimattia/Progetti/forge && npm run sanitize && git add -A template/ && git commit -m "feat(core): can() gains layer three — resource grants
+cd "$PROBE" && npx nx run-many -t lint typecheck test coverage -p core backend webapp && node libs/core/scripts/check-purity.mjs && cd /Users/sinisimattia/Progetti/forge && npm run sanitize && git add -A template/ && git commit -m "feat(core): can() gains layer three — resource grants
 
 Grants are additive only and confined to one tenant: the match is on
 organization, type, id and permission together, because matching on the record
@@ -1438,7 +1460,7 @@ Task 1 is what lets `INVITATION_REVOKED` and `INVITATION_ACCEPTED` past the sani
 - [ ] **Step 1: Measure the mask before touching it**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && sed -i '' 's/organizationId: row.organizationId/organizationId: null/' apps/backend/src/audit/audit.service.ts && npx nx test backend; git checkout apps/backend/src/audit/audit.service.ts
+cd "$PROBE" && sed -i '' 's/organizationId: row.organizationId/organizationId: null/' apps/backend/src/audit/audit.service.ts && npx nx test backend; git checkout apps/backend/src/audit/audit.service.ts
 ```
 
 Expected: the whole backend suite stays green. Record the count. This is the finding, reproduced, and it is what Step 5 must overturn.
@@ -1482,7 +1504,7 @@ Do the same for `clientAddress` and `clientLabel`.
 - [ ] **Step 5: Re-run the measurement and watch it fail this time**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && sed -i '' 's/organizationId: row.organizationId/organizationId: null/' apps/backend/src/audit/audit.service.ts && npx nx test backend; git checkout apps/backend/src/audit/audit.service.ts
+cd "$PROBE" && sed -i '' 's/organizationId: row.organizationId/organizationId: null/' apps/backend/src/audit/audit.service.ts && npx nx test backend; git checkout apps/backend/src/audit/audit.service.ts
 ```
 
 Expected now: **red**, in the wire-shape test specifically. Record the test name and the count. Repeat for the two client columns; the roadmap records that dropping those currently fails a *different* test while the wire-shape test stays green, so the evidence wanted here is that the wire-shape test now fails too.
@@ -1490,7 +1512,7 @@ Expected now: **red**, in the wire-shape test specifically. Record the test name
 - [ ] **Step 6: Run every gate and commit**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run-many -t lint typecheck test coverage -p core backend webapp && node libs/core/scripts/check-purity.mjs && cd /Users/sinisimattia/Progetti/forge && npm run sanitize && git add -A template/ && git commit -m "feat(core): unmask the audit contract's three null-symmetric assertions
+cd "$PROBE" && npx nx run-many -t lint typecheck test coverage -p core backend webapp && node libs/core/scripts/check-purity.mjs && cd /Users/sinisimattia/Progetti/forge && npm run sanitize && git add -A template/ && git commit -m "feat(core): unmask the audit contract's three null-symmetric assertions
 
 Phase 2 shipped organizationId deliberately unpinned because no world could hold
 two tenants. Measured then and reproduced now: dropping organizationId from the
@@ -1630,7 +1652,7 @@ ALTER TABLE audit_entries
 - [ ] **Step 2: Run to verify the new guards fail**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx test backend -- migration-sql
+cd "$PROBE" && npx nx test backend -- migration-sql
 ```
 
 - [ ] **Step 3: Write the migration**
@@ -1650,7 +1672,7 @@ Follow `user-record.entity.ts` exactly: explicit `@Entity('…')`, explicit colu
 - [ ] **Step 6: Run it against a real database**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && docker compose -f compose.yaml up -d db && npm run migration:run -w apps/backend
+cd "$PROBE" && docker compose -f compose.yaml up -d db && npm run migration:run -w apps/backend
 ```
 
 Then verify the privilege position holds for the new tables, as the application role:
@@ -1664,7 +1686,7 @@ Expected: `ins` is `t` (default privileges reached the new tables), `upd` and `d
 - [ ] **Step 7: Run every gate and commit**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run-many -t lint typecheck test -p backend && cd /Users/sinisimattia/Progetti/forge && npm run sanitize && git add -A template/ && git commit -m "feat(backend): organizations, memberships, invitations and grants
+cd "$PROBE" && npx nx run-many -t lint typecheck test -p backend && cd /Users/sinisimattia/Progetti/forge && npm run sanitize && git add -A template/ && git commit -m "feat(backend): organizations, memberships, invitations and grants
 
 audit_entries.organization_id becomes uuid — safe because nothing ever wrote a
 non-null value into it, verified before the alter. It gains NO foreign key to
@@ -1727,7 +1749,7 @@ Nothing here is `@Public()`.
 - [ ] **Step 6: Run the gates and commit**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run-many -t lint typecheck test -p backend && cd /Users/sinisimattia/Progetti/forge && npm run sanitize && git add -A template/ && git commit -m "feat(backend): organization CRUD, with the owner membership created atomically
+cd "$PROBE" && npx nx run-many -t lint typecheck test -p backend && cd /Users/sinisimattia/Progetti/forge && npm run sanitize && git add -A template/ && git commit -m "feat(backend): organization CRUD, with the owner membership created atomically
 
 listOrganizations joins through memberships on the actor and never scans
 organizations. That difference is the whole of tenant isolation on this
@@ -2009,7 +2031,7 @@ const principal = await this.principals.hydrate(request.params.id as UserId, new
 ```
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx test backend
+cd "$PROBE" && npx nx test backend
 ```
 
 Record exactly which tests go red. **At least the R3 test from Step 2 must.** If the suite stays green, this task is not done — the guard's most important property has no test, which is the defect this whole phase is organized around. Revert the injection.
@@ -2021,7 +2043,7 @@ Delete `@UseGuards(PermissionsGuard)` from `PATCH /organizations/:id` and run th
 - [ ] **Step 9: Run every gate and commit**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run-many -t lint typecheck test -p backend && cd /Users/sinisimattia/Progetti/forge && npm run sanitize && git add -A template/ && git commit -m "feat(backend): PermissionsGuard, @RequirePermission and the principal hydrator
+cd "$PROBE" && npx nx run-many -t lint typecheck test -p backend && cd /Users/sinisimattia/Progetti/forge && npm run sanitize && git add -A template/ && git commit -m "feat(backend): PermissionsGuard, @RequirePermission and the principal hydrator
 
 The principal is hydrated from the credential's subject and never from the route
 parameter being judged. Hydrating from the parameter makes can() compare the
@@ -2149,7 +2171,7 @@ R2's cost-if-wrong. This is the assertion that makes `expiresAt` non-decorative:
 - [ ] **Step 4: Run the whole backend suite**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx test backend
+cd "$PROBE" && npx nx test backend
 ```
 
 Record the total. Phase 2 closed at 499.
@@ -2196,7 +2218,7 @@ Replace one `fromJSON` with a cast. Expected: the suite's `instanceof` assertion
 - [ ] **Step 5: Run the gates and commit**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run-many -t lint typecheck test -p webapp && cd /Users/sinisimattia/Progetti/forge && npm run sanitize
+cd "$PROBE" && npx nx run-many -t lint typecheck test -p webapp && cd /Users/sinisimattia/Progetti/forge && npm run sanitize
 ```
 
 ---
@@ -2281,7 +2303,7 @@ Every user-visible string goes in `en.json`. No literal prose in a template.
 - [ ] **Step 4: Run every gate, including the layer checker and Storybook**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && node apps/webapp/scripts/check-atomic-layers.mjs && npx nx run-many -t lint typecheck test -p webapp
+cd "$PROBE" && node apps/webapp/scripts/check-atomic-layers.mjs && npx nx run-many -t lint typecheck test -p webapp
 ```
 
 Storybook's build failure is a known open issue (`[vite:build-html] Missing field 'moduleType'`), root cause unknown and dependency drift falsified. If it fails the same way, record it and move on — it is not this task's regression. **Neither a `0` exit nor the presence of `storybook-static/` is evidence here:** a zsh `command_not_found_handler` can return `EXIT=0` with no output directory, and a failed run still leaves the directory behind. Check for the built `index.html` and a recent mtime.
@@ -2349,7 +2371,7 @@ Expected: the credential is absent from the payload, and the page still hydrates
 - [ ] **Step 7: Run every gate and commit**
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge/template && npx nx run-many -t lint typecheck test -p webapp && cd /Users/sinisimattia/Progetti/forge && npm run sanitize && git add -A template/ && git commit -m "fix(webapp): take the access credential out of the SSR payload
+cd "$PROBE" && npx nx run-many -t lint typecheck test -p webapp && cd /Users/sinisimattia/Progetti/forge && npm run sanitize && git add -A template/ && git commit -m "fix(webapp): take the access credential out of the SSR payload
 
 Ruled in Phase 2 and carried here because Phase 3 reopens the renewal path for
 tenancy anyway. Four pieces, none of which is a deletion: seed status and the
