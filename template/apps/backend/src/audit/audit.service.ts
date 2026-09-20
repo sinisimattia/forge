@@ -140,10 +140,10 @@ export class AuditService implements IAuditService {
     if (query.asOf !== undefined) where.occurredAt = LessThanOrEqual(query.asOf);
     if (query.organizationId !== undefined) {
       // An explicit `null` narrows to the entries that belonged to no tenant.
-      // `AuditQuery` says outright that this filter's semantics are not pinned by
-      // the conformance suite, so this is this implementation's reading and not a
-      // contract: anything that comes to rely on it must make it an assertion
-      // there first.
+      // This is a contract, not this implementation's private reading of one:
+      // `runIAuditServiceContract`'s `describe('organizationId, the tenant
+      // filter', ...)` pins all three cases — omitted, explicit `null`, and a
+      // value — and this line is what makes this implementation satisfy it.
       where.organizationId = query.organizationId === null ? IsNull() : query.organizationId;
     }
 
