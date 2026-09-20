@@ -211,7 +211,7 @@ else. The same property holds in `libs/core` — see its `STANDARDS.md`.
 
 | ID | Check | Signal | Severity | Source |
 |----|-------|--------|----------|--------|
-| B1 | Controllers hold no business logic | `grep -rn "Repository\|getRepository" src/ --include='*.controller.ts'` | blocking | STANDARDS.md — Service/controller split |
+| B1 | Controllers hold no business logic | `grep -rn -e Repository -e getRepository src/ --include='*.controller.ts'` | blocking | STANDARDS.md — Service/controller split |
 | B2 | Every module follows the module/controller/service/dto layout | directory listing of the changed module | blocking | STANDARDS.md — Module layout |
 | B3 | Entity change is accompanied by a migration | a changed `*.entity.ts` with no new file in `src/db/migrations/` | blocking | STANDARDS.md — Migrations |
 | B4 | No `synchronize: true` anywhere | `grep -rn "synchronize: true" src/` | blocking | STANDARDS.md — Migrations |
@@ -221,3 +221,16 @@ else. The same property holds in `libs/core` — see its `STANDARDS.md`.
 | B8 | Every route is authenticated unless it explicitly opts out | `grep -rn "@Public()" src/ --include='*.controller.ts'` — every hit must be a route that genuinely needs anonymous access (sign-in, registration, email verification, password recovery, health) **and** confirm the global authentication guard is registered in `app.module.ts`: with no guard registered there are zero hits and the row reads green while nothing is authenticated | blocking | STANDARDS.md — Route authentication is default-deny |
 | B9 | Secret material never reaches a response | `grep -rni -e hash -e secret -e token src/ --include='*.dto.ts'` — a response DTO carrying any of them is a violation unless it is a single-use credential the caller just asked to be issued. **Covers `*.dto.ts` only**: a secret returned through a controller's inline return type, a directly-serialized entity, or a core wire shape is invisible to it, so read the changed controller's return types too | blocking | ADR-0005 — identities carry no secret material |
 | B10 | A state change worth reconstructing later is audited | **read and judge** — a changed `*.service.ts` method that writes and does not call `IAuditService.record()`. No grep separates a write that matters from one that does not; the reviewer reads the diff. | warning | ADR-0007 — the audit record carries the tenant it happened in |
+
+**No `Signal` in this table contains a pipe.** A markdown table cell cannot carry a bare `|`,
+so a pipe has to ship escaped as `\|`, and that escape is read two different ways: rendered it
+is a pipe, read raw (which is how an agent reads this file) it is a literal backslash-pipe.
+Under `grep -E` a raw `\|` matches nothing; as a *shell* pipe it escapes into a literal `|`
+argument, so the command does not pipe and the first grep scans a file named `|`. Both
+failures are silent, and a signal that matches nothing reads exactly like a clean codebase.
+Basic `grep` is the one case where `\|` *is* correct alternation — which is precisely why it is
+not used here: a row that is right for a reason the next editor has to know is a row that stops
+being right the moment somebody adds `-E`. Write alternation as repeated `-e` patterns, correct
+under every reading, and quote every `--include` glob so zsh cannot expand it against the
+current directory and abort the command before grep runs. `libs/core` and `apps/webapp` carry
+the same constraint.

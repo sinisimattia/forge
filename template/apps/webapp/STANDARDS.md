@@ -282,8 +282,10 @@ import to a different name and a path rule cannot.
 
 **No `Signal` in this table contains a pipe.** A markdown table cell cannot carry a bare `|`, so
 a pipe ships escaped as `\|` — read raw (which is how an agent reads this file) that is a literal
-backslash-pipe, and under `grep -E` it matches nothing at all. W1, W2, W4 and W7 each shipped
-with one and each was silently broken: W1/W2/W4 matched no violation, and W7 (`-L`) listed every
-page including compliant ones. Write alternation as repeated `-e` patterns, which are correct
-whether the cell is read raw or rendered. Quote every `--include` glob for the same reason:
-unquoted, zsh expands it against the current directory and aborts the command before grep runs.
+backslash-pipe, and under `grep -E` it matches nothing at all. Both ways that fails are silent,
+and they fail differently: a match-based signal reports no violations and reads exactly like a
+clean codebase, while a `-L` signal inverted by the same escape lists *every* file including the
+compliant ones, which is worse — a row that cries wolf on everything is the row that gets the
+whole table ignored. Write alternation as repeated `-e` patterns, which are correct whether the
+cell is read raw or rendered. Quote every `--include` glob for the same reason: unquoted, zsh
+expands it against the current directory and aborts the command before grep runs.

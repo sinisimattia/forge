@@ -24,6 +24,17 @@ import type { IUserServiceContractDeps } from './IUserServiceContractDeps';
  * @param deps - the host runner's primitives, a fresh-world factory, and an id
  * well-formed for the host's store that no world contains
  */
+/**
+ * How many accounts a conforming world holds: `actor`, `other` and `admin`.
+ *
+ * Not a number chosen for this file — it is `IUserServiceContractDeps`'s own
+ * obligation, which says the world "must contain exactly the three users it
+ * returns". The pagination assertions below are only meaningful because the
+ * host is forbidden to seed a fourth, so they read that obligation by name
+ * instead of repeating its arithmetic as a literal.
+ */
+const SEEDED_ACCOUNTS = 3;
+
 export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
   const { describe, it, expect, makeContext, absentId } = deps;
 
@@ -157,7 +168,7 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
       it('counts every account in meta.total and derives meta.totalPages from it', async () => {
         const { service, admin } = await makeContext();
         const page = await service.listUsers(admin.id, { page: 1, limit: 2 });
-        expect.equal(page.meta.total, 3);
+        expect.equal(page.meta.total, SEEDED_ACCOUNTS);
         expect.equal(page.meta.page, 1);
         expect.equal(page.meta.limit, 2);
         expect.equal(page.meta.totalPages, Math.ceil(page.meta.total / page.meta.limit));
@@ -169,7 +180,7 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
         const { service, admin } = await makeContext();
         const first = await service.listUsers(admin.id, { page: 1, limit: 2 });
         const second = await service.listUsers(admin.id, { page: 2, limit: 2 });
-        expect.equal(second.data.length, 1);
+        expect.equal(second.data.length, SEEDED_ACCOUNTS - 2);
 
         const firstIds = first.data.map((user) => String(user.id));
         const repeated = second.data.filter((user) => firstIds.includes(String(user.id)));
@@ -183,6 +194,7 @@ export function runIUserServiceContract(deps: IUserServiceContractDeps): void {
         expect.ok(actor.canAuthenticate(), 'the world must start with an authenticable actor');
 
         const suspended = await service.setStatus(admin.id, actor.id, UserStatus.SUSPENDED);
+        expect.ok(suspended instanceof User, 'setStatus must return a real entity');
         expect.equal(suspended.status, UserStatus.SUSPENDED);
         expect.equal(suspended.canAuthenticate(), false);
       });

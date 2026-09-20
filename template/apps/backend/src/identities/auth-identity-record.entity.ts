@@ -23,7 +23,7 @@ import type { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
 // against the migration's, so the mirror cannot quietly stop matching.
 @Index('uq_auth_identities_one_password_per_user', ['userId'], {
   unique: true,
-  where: "provider = 'PASSWORD'",
+  where: 'provider = \'PASSWORD\'',
 })
 export class AuthIdentityRecord {
   @PrimaryGeneratedColumn('uuid')

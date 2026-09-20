@@ -22,14 +22,18 @@ is actually wrong.
 Default mode is **unit**. Run **e2e** mode when the user asks for end-to-end /
 integration tests.
 
-**e2e mode.** A generated project ships no e2e harness — the skeleton has no `test/`
-directory, no `jest-e2e.json`, and no `test:e2e` script; it also has no `supertest` or
-`@types/supertest` installed, which every conventional Nest e2e spec imports to drive
-requests against the app instance. The first time e2e tests are requested, create the
-harness as part of that work: `apps/backend/test/jest-e2e.json`, a `test:e2e` script in
-`apps/backend/package.json`, `supertest` and `@types/supertest` added as devDependencies,
-and specs under `test/` with the `.e2e-spec.ts` suffix. Thereafter run `npm run test:e2e`.
-Never assume the harness already exists.
+**e2e mode.** A generated project ships no e2e *harness* — no `test/` directory, no
+`jest-e2e.json`, no `test:e2e` script. It does already ship `supertest` and
+`@types/supertest` as devDependencies of `apps/backend`, and several specs under
+`src/**/__tests__/` drive a real Nest application with them (`global-guard.spec.ts` and
+`enumeration-safety.spec.ts` are the two worth reading first). So the request is never
+"add supertest"; adding it again desyncs `package-lock.json`, which the generated
+project's own gate installs with `npm ci` and will refuse.
+
+The first time e2e tests are requested, create the missing half: `apps/backend/test/
+jest-e2e.json`, a `test:e2e` script in `apps/backend/package.json`, and specs under
+`test/` with the `.e2e-spec.ts` suffix. Thereafter run `npm run test:e2e`. Never assume
+the harness already exists — and check `package.json` before adding any dependency to it.
 
 ## 1. Write tests from scratch
 
