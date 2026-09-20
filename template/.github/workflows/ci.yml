@@ -29,8 +29,8 @@ jobs:
           cache: npm
       - run: npm ci
       - uses: nrwl/nx-set-shas@v5
-      - name: Lint, typecheck, test, build, purity, layers (affected)
-        run: npx nx affected -t lint typecheck test build purity layers --base=$NX_BASE --head=$NX_HEAD
+      - name: Lint, typecheck, test, build, purity, layers, coverage (affected)
+        run: npx nx affected -t lint typecheck test build purity layers coverage --base=$NX_BASE --head=$NX_HEAD
 
   docker:
     runs-on: ubuntu-latest

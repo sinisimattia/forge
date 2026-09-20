@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { AuthenticationStatus } from '__FORGE_SCOPE__/core/auth/enums';
-import { normalizeEmail } from '__FORGE_SCOPE__/core/shared/policies';
+import { assertNever, normalizeEmail } from '__FORGE_SCOPE__/core/shared/policies';
 
 /**
  * Proving who you are.
@@ -60,12 +60,21 @@ async function submit(): Promise<void> {
     // definition in one place. Its visible effect is on a pasted address with
     // surrounding whitespace, which is otherwise sent as typed.
     const outcome = await login(normalizeEmail(emailInput.value), secretInput.value);
-    if (outcome.status === AuthenticationStatus.AUTHENTICATED) {
-      emit('authenticated');
-      return;
+    switch (outcome.status) {
+      case AuthenticationStatus.AUTHENTICATED:
+        emit('authenticated');
+        return;
+      case AuthenticationStatus.REJECTED:
+        // A refusal. `outcome.reason` is deliberately not read — see above.
+        failed.value = true;
+        break;
+      default:
+        // Reachable only from outside the type system. A status member added
+        // without a branch here is a compile error, which is the whole point:
+        // Phase 5 adds MFA_REQUIRED, and rendering it as a sign-in refusal would
+        // be silent and wrong.
+        return assertNever(outcome);
     }
-    // A refusal. `outcome.reason` is deliberately not read — see above.
-    failed.value = true;
   } catch {
     // A fault rather than a refusal: the backend was unreachable, answered
     // something unparseable, or the store found no credential beside a

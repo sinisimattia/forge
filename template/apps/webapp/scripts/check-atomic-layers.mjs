@@ -160,15 +160,20 @@ async function main() {
   }
 
   const components = files.filter((one) => one.layer.rank < 4).length;
+  const routed = files.length - components;
 
   // Zero means the scan found nothing to check — a renamed directory, a bad cwd, a readdir
   // that failed quietly. Reporting that as "clean" would be a vacuous pass indistinguishable
   // from a real one, which is the failure this check exists to end. Components are counted
-  // separately from the total, because pages and layouts existing would otherwise mask a
-  // component tree that had gone missing entirely.
-  if (files.length === 0 || components === 0) {
-    console.error(`Atomic layering: FAILED — nothing was scanned under ${APP}.`);
-    console.error(`  ${components} component(s), ${files.length} file(s) in total.`);
+  // separately from pages/layouts, because either axis existing would otherwise mask the other
+  // having gone missing entirely — `components` alone does not catch `app/pages`/`app/layouts`
+  // moving aside, and `routed` alone does not catch `app/components` moving aside.
+  if (files.length === 0 || components === 0 || routed === 0) {
+    console.error(
+      'Atomic layering: FAILED — nothing was scanned on at least one axis. '
+      + `components=${components}, pages/layouts=${routed}. `
+      + 'A checker that finds nothing to check reports clean, which reads as evidence.',
+    );
     process.exit(1);
   }
 

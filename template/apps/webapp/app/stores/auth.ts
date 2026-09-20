@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { AuthenticationStatus } from '__FORGE_SCOPE__/core/auth/enums';
 import type { AuthenticationOutcome, ClientContext } from '__FORGE_SCOPE__/core/auth/types';
+import { assertNever } from '__FORGE_SCOPE__/core/shared/policies';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
 import type { UserJSON } from '__FORGE_SCOPE__/core/users/types';
 import { createApiClient, postLogout, postRefresh } from '~/fetchers';
@@ -226,10 +227,19 @@ export const useAuthStore = defineStore('auth', () => {
    */
   async function login(email: string, secret: string): Promise<AuthenticationOutcome> {
     const outcome = await service.authenticate({ email, secret, client: NO_CLIENT });
-    if (outcome.status !== AuthenticationStatus.AUTHENTICATED) {
-      // A refusal is not an error and is not a state change: somebody who was
-      // already signed in and mistyped a second password is still signed in.
-      return outcome;
+    switch (outcome.status) {
+      case AuthenticationStatus.AUTHENTICATED:
+        break;
+      case AuthenticationStatus.REJECTED:
+        // A refusal is not an error and is not a state change: somebody who was
+        // already signed in and mistyped a second password is still signed in.
+        return outcome;
+      default:
+        // Reachable only from outside the type system. A status member added
+        // without a branch here is a compile error, which is the whole point:
+        // Phase 5 adds MFA_REQUIRED, and rendering it as a sign-in refusal would
+        // be silent and wrong.
+        return assertNever(outcome);
     }
     // **Once.** `takeIssuedCredential` clears as it hands over, which is the
     // property `auth.service.seam.spec.ts` pins; reading it twice here would get
