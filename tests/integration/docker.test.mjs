@@ -197,6 +197,33 @@ async function waitForMessage(target, predicate) {
   );
 }
 
+/**
+ * The connection strings `compose.yaml` hands the backend, read out of the file.
+ *
+ * Read rather than retyped, because a retyped literal is a second place the role
+ * names live and the D13 block is the one test whose whole point is that it
+ * connects as the *application* role and not the owner. A comment here once said
+ * these were read from the file while a literal sat underneath it — the claim was
+ * false and the mechanism did not exist. This is the mechanism.
+ *
+ * `@postgres:` becomes `@localhost:` because `psql` is executed *inside* the
+ * `postgres` container, where the service's own name is not a host it can reach.
+ *
+ * @param target - the generated project directory
+ * @returns the application role's URL and the schema owner's URL
+ * @throws Error when either variable is missing, which means the compose file
+ *   changed shape and this test is no longer testing what it says it is
+ */
+async function connectionUrlsFrom(target) {
+  const yaml = await fs.readFile(path.join(target, 'compose.yaml'), 'utf8');
+  const read = (name) => {
+    const match = yaml.match(new RegExp(`^\\s*${name}:\\s*(postgresql://\\S+)\\s*$`, 'm'));
+    assert.ok(match, `compose.yaml no longer pins ${name} — this test cannot tell which role it is using`);
+    return match[1].replace('@postgres:', '@localhost:');
+  };
+  return { app: read('DATABASE_URL'), owner: read('MIGRATION_DATABASE_URL') };
+}
+
 test(
   'the generated stack walks the whole identity flow, and the audit log is append-only',
   { skip: !enabled && 'set FORGE_E2E=1' },
@@ -261,7 +288,7 @@ test(
       assert.deepEqual(health.json, { status: 'ok' });
 
       await walkTheIdentityFlow(base, target);
-      await proveTheAuditLogIsAppendOnly(compose, projectName);
+      await proveTheAuditLogIsAppendOnly(compose, projectName, target);
       await proveWhatTheFakeCannotExpress(compose, base, target);
     } catch (error) {
       const diagnostics = await composeDiagnostics(target, projectName);
@@ -457,11 +484,11 @@ async function walkTheIdentityFlow(base, target) {
  * @param compose - the project-scoped compose runner
  * @param projectName - the compose project, for error messages
  */
-async function proveTheAuditLogIsAppendOnly(compose, projectName) {
-  // These are the values `compose.yaml` pins for the `dockerapp` project. They
-  // are read from the file rather than retyped so that a change to either one
-  // fails here loudly instead of silently testing a role that does not exist.
-  const url = 'postgresql://dockerapp-app:dockerapp-app@localhost:5432/dockerapp';
+async function proveTheAuditLogIsAppendOnly(compose, projectName, target) {
+  // The RESTRICTED role's URL, taken out of `compose.yaml` itself — see
+  // `connectionUrlsFrom`. Retyping it here would mean this test could go on
+  // passing against a role that no longer exists or, worse, against the owner.
+  const { app: url } = await connectionUrlsFrom(target);
 
   /** Runs one statement as the application role; resolves `{ ok, out }` either way. */
   const psql = async (...args) =>
@@ -470,6 +497,13 @@ async function proveTheAuditLogIsAppendOnly(compose, projectName) {
       (error) => ({ ok: false, out: `${error.stdout ?? ''}${error.stderr ?? ''}${error.message}` }),
     );
 
+  // `TRUNCATE` is here on different grounds from the other two, and it is worth
+  // being precise: the app role was never GRANTED `TRUNCATE`
+  // (`AppRoleAndDefaultPrivileges` grants `SELECT, INSERT, UPDATE, DELETE` and no
+  // more), so this line is refused whether or not `AuditAppendOnly`'s `REVOKE`
+  // ever ran. It therefore discriminates the OWNERSHIP fault — an owner can
+  // truncate — and nothing about the revoke. `UPDATE` and `DELETE` are the two
+  // that speak to the revoke.
   for (const statement of [
     "UPDATE audit_entries SET action = 'TAMPERED' WHERE true",
     'DELETE FROM audit_entries WHERE true',
@@ -544,7 +578,7 @@ async function proveTheAuditLogIsAppendOnly(compose, projectName) {
  * @param target - the generated project directory
  */
 async function proveWhatTheFakeCannotExpress(compose, base, target) {
-  const owner = 'postgresql://dockerapp:dockerapp@localhost:5432/dockerapp';
+  const { owner } = await connectionUrlsFrom(target);
   const ask = async (sql) => {
     const { stdout } = await compose('exec', '-T', 'postgres', 'psql', owner, '-tAc', sql);
     return stdout.trim();
@@ -582,6 +616,28 @@ async function proveWhatTheFakeCannotExpress(compose, base, target) {
     await ask(`SELECT count(*) FROM auth_identities WHERE provider_account_id = '${contested}'`),
     '1',
     'the race produced more than one password identity for one address',
+  );
+
+  // "Exactly one account" is NOT enough on its own, and that is the whole point
+  // of this block. `AuthService.register` reaches it two ways: the check-then-
+  // insert (`findOne` says the address exists → audited with the owner as actor
+  // and empty metadata) and the `23505` catch (audited with a NULL actor and
+  // `{lostRace:true}`). If the four requests fail to genuinely interleave, the
+  // pre-check alone produces one account — and the count above passes with no
+  // unique constraint in the database at all, which is exactly the property this
+  // is here to prove. The two branches are already distinguishable in the audit
+  // table, so this asserts the constraint branch actually fired. Same shape as
+  // the second mechanism behind D8's reuse detection.
+  const lostRace = await ask(
+    "SELECT count(*) FROM audit_entries WHERE action = 'DUPLICATE_REGISTRATION_ATTEMPTED'"
+    + " AND actor_user_id IS NULL AND metadata->>'lostRace' = 'true'",
+  );
+  assert.equal(
+    Number(lostRace) >= 1,
+    true,
+    'not one of the concurrent registrations lost on a UNIQUE violation — every duplicate was '
+    + 'caught by the check-then-insert instead, so this run proves nothing about the constraint. '
+    + `Audit rows on the losing branch: ${lostRace}.`,
   );
 
   // ---- Entity-versus-migration drift. ----
@@ -660,7 +716,7 @@ async function proveWhatTheFakeCannotExpress(compose, base, target) {
 }
 
 /**
- * The production image, booted — which until this test nothing had ever done.
+ * The production images, booted — which until this test nothing had ever done.
  *
  * A smoke check and not a second walk. Two prod-only defects were found by hand
  * in this phase and both were invisible to jest and to the dev stack because
@@ -669,13 +725,24 @@ async function proveWhatTheFakeCannotExpress(compose, base, target) {
  * path the compiled `app.module.js` does not resolve, so the image did not boot
  * at all. One build, `GET /health`, gone — that is what would have caught either.
  *
- * Only `backend` is brought up (with the `postgres` and `migrate` services it
- * depends on). The Nuxt production build is a second multi-gigabyte image that
- * answers no question this test asks, and disk headroom on a developer machine
- * is not free.
+ * **The webapp's production image is booted too, and it is not a formality.**
+ * `apps/webapp/Dockerfile`'s prod stage copies `.output` and **no
+ * `node_modules`**, while the webapp imports runtime *values* — not only types —
+ * from the workspace core package on the SSR path (`normalizeEmail` and
+ * `AuthenticationStatus` in `LoginForm.vue`, `User` in `stores/auth.ts`, the
+ * error classes in `pages/reset-password.vue`). If Nitro externalises that
+ * package instead of bundling it, `node .output/server/index.mjs` dies at its
+ * first import with `MODULE_NOT_FOUND`. That is the identical failure shape to
+ * the prod stage that never copied `libs/core/dist`, which only an image build
+ * found. `nx build webapp` in the generated-project tier proves `.output` is
+ * *produced*; nothing proved it *runs*.
+ *
+ * The two images are built one after the other rather than together, so a
+ * machine that runs out of disk does so with one build's worth of diagnosis
+ * rather than two.
  */
 test(
-  'the production image boots and serves /health',
+  'the production images boot: the backend serves /health and the webapp serves a page',
   { skip: !enabled && 'set FORGE_E2E=1' },
   async () => {
     const { target, projectName } = await generateProject('prodapp');
@@ -694,7 +761,11 @@ test(
       'APP_DB_ROLE=prodapp-app',
       'APP_DB_PASSWORD=prodapp-app-local-smoke-test',
       'JWT_SECRET=prodapp-local-smoke-test-signing-key',
-      'PUBLIC_WEBAPP_URL=http://localhost:3001',
+      // The origin every mail link is built from, and now also the origin the
+      // backend is told to allow: `compose.prod.yaml` derives `CORS_ORIGIN` from
+      // `WEBAPP_PORT`, so naming a different port here would be a stack that
+      // mails links to one place and accepts requests from another.
+      `PUBLIC_WEBAPP_URL=http://localhost:${webappPort}`,
       `BACKEND_PORT=${backendPort}`,
       `WEBAPP_PORT=${webappPort}`,
       '',
@@ -750,11 +821,37 @@ test(
         `the production migrations ran but created almost nothing (${tables.trim()} tables). `
         + 'That is what `migration:run:prod` reporting "No migrations are pending" looks like.',
       );
+
+      // ---- the webapp's production image, second and separately ----
+      try {
+        await prod('up', '-d', '--build', '--wait', '--wait-timeout', '900', 'webapp');
+      } catch (error) {
+        const diagnostics = await composeDiagnostics(target, projectName, ['compose.prod.yaml']);
+        throw new Error(
+          'the production WEBAPP image did not come up. The prod stage copies `.output` and no '
+          + '`node_modules`; if Nitro externalised the workspace core package rather than '
+          + `bundling it, this is MODULE_NOT_FOUND at the first import. ${error.message}`
+          + `\n\n${diagnostics}`,
+        );
+      }
+
+      const page = await call(`http://localhost:${webappPort}`, 'GET', '/');
+      // 200 and not merely "the container is up": a Nitro server whose SSR throws
+      // still answers, with a 500 error page, from a container the healthcheck
+      // may well have passed on an earlier request.
+      assert.equal(page.status, 200, `the production webapp answered ${page.status}:\n${page.text}`);
+      assert.match(page.text, /<!DOCTYPE html>/i, `not an HTML document:\n${page.text.slice(0, 500)}`);
+      assert.match(
+        page.text,
+        /id="__nuxt"/,
+        `the page carries no Nuxt root, so this is not the app:\n${page.text.slice(0, 500)}`,
+      );
     } finally {
-      // `--rmi local` does NOT remove the backend image here: compose.prod.yaml
-      // gives it an explicit `image:` tag, which makes it a custom-tagged image
-      // compose declines to delete. It is removed by name instead, and by name
-      // only — nothing on this machine is removed that this test did not build.
+      // `--rmi local` removes `<project>-webapp` (no explicit `image:` in the
+      // compose file) but NOT the backend: `x-backend-image` gives that one an
+      // explicit tag, which makes it a custom-tagged image compose declines to
+      // delete. It is removed by name instead, and by name only — nothing on this
+      // machine is removed that this test did not build.
       await prod('down', '-v', '--rmi', 'local').catch((error) => {
         process.stderr.write(`warning: production down -v failed: ${error.message}\n`);
       });

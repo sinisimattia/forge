@@ -17,7 +17,7 @@ export const AUDIT_TABLE = 'audit_entries';
  * have set.
  */
 export const OVER_PRIVILEGED_MESSAGE
-  = `This connection holds UPDATE on ${AUDIT_TABLE}, so the audit log is not append-only and `
+  = `This connection can UPDATE ${AUDIT_TABLE}, so the audit log is not append-only and `
     + 'the application could rewrite its own history. That happens when migrations were run as '
     + 'the same role the application connects as: the role then OWNS the table, and a revoke '
     + 'cannot hold against an owner. Set MIGRATION_DATABASE_URL to the schema owner\'s '
@@ -44,14 +44,38 @@ export const OVER_PRIVILEGED_MESSAGE
  * guarantee that depends on which YAML file you deployed with is a property of a
  * deployment rather than of this program. This check makes it the program's.
  *
- * ## Why it cannot have a false positive
+ * ## Why it cannot have a false positive, and why the question is about COLUMNS
  *
  * In a correctly configured deployment the application role genuinely lacks
- * `UPDATE` on this table — that is the whole of what the audit migration does,
- * and it is exactly what `has_table_privilege` reports. `f` is the configured
- * answer; `t` means the configuration this file describes did not happen. There
- * is no third state and no timing in it: privileges are not cached, and the
- * question is asked of the same connection the application will serve on.
+ * `UPDATE` on this table — that is the whole of what the audit migration does.
+ * `f` is the configured answer; `t` means the configuration this file describes
+ * did not happen. There is no timing in it either: privileges are not cached,
+ * and the question is asked of the same connection the application will serve
+ * on.
+ *
+ * **This asked `has_table_privilege` and that was not enough.** A review probed
+ * four routes to the privilege against Postgres 16: granted to `PUBLIC`, granted
+ * to a group role the application role belongs to (with and without `INHERIT`),
+ * and the application role owning the table. `has_table_privilege` reports `t`
+ * for all four, so all four are refused. The fifth is a **column** grant —
+ * `GRANT UPDATE (action) ON audit_entries TO <app>` — for which
+ * `has_table_privilege` reports `f` while the role can execute
+ * `UPDATE audit_entries SET action = 'TAMPERED'`, which is the literal statement
+ * the e2e's D13 block asserts is refused. This file used to claim in this
+ * paragraph that no third state existed. It did, and the claim is what kept
+ * anyone from looking for it.
+ *
+ * `has_any_column_privilege` answers the question that was meant all along: can
+ * this connection write to ANY part of a row in this table. It is `t` wherever
+ * `has_table_privilege` is `t` (a table grant implies every column), `t` under
+ * the column grant, and `f` under the shipped configuration — verified in all
+ * three states, so closing the hole costs no false positive. Both are read, and
+ * both are reported, because "you own it" and "somebody granted you one column"
+ * are different mistakes with different fixes.
+ *
+ * Nothing in this template issues a column grant, so that route needs a
+ * deliberate act by an operator. It is in the check because a guard that only
+ * covers the mistakes its author thought of is a guard nobody can rely on.
  *
  * ## What it does not do
  *
@@ -90,8 +114,9 @@ export class AuditPrivilegeCheck implements OnApplicationBootstrap {
     // the ways to arrive here. Parameterised, because a table name reaching SQL
     // by concatenation is a habit worth not having even where the value is a
     // module constant.
-    const rows: Array<{ granted: boolean }> = await this.dataSource.query(
-      'SELECT has_table_privilege(current_user, $1, \'UPDATE\') AS granted',
+    const rows: Array<{ granted: boolean; wholeTable: boolean }> = await this.dataSource.query(
+      'SELECT has_any_column_privilege(current_user, $1, \'UPDATE\') AS "granted", '
+      + 'has_table_privilege(current_user, $1, \'UPDATE\') AS "wholeTable"',
       [AUDIT_TABLE],
     );
 
@@ -100,7 +125,17 @@ export class AuditPrivilegeCheck implements OnApplicationBootstrap {
     // tell" as "all clear" is one that stops working the first time the driver's
     // shape changes underneath it. Fails closed.
     if (rows[0]?.granted !== false) {
-      throw new Error(OVER_PRIVILEGED_MESSAGE);
+      // Which of the two mistakes it is, appended rather than branched into a
+      // different message: the sentence about `MIGRATION_DATABASE_URL` is right
+      // for the common case and useless for a column grant, and an operator
+      // reading a refusal needs to know which one they are looking at.
+      throw new Error(
+        `${OVER_PRIVILEGED_MESSAGE} (${
+          rows[0]?.wholeTable === true
+            ? `the whole of ${AUDIT_TABLE} is writable by this role`
+            : `some column of ${AUDIT_TABLE} carries a column-level UPDATE grant`
+        }.)`,
+      );
     }
 
     this.logger.log(`${AUDIT_TABLE} is append-only to this connection.`);

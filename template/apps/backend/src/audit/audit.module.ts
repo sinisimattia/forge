@@ -18,8 +18,12 @@ import { AuditService } from './audit.service';
  * {@link AuditPrivilegeCheck} is provided here rather than in `AppModule` because it
  * is a statement about this module's own table: the application refuses to serve
  * over a connection that can rewrite `audit_entries`. It is a provider with a
- * lifecycle hook and no consumer, so nothing imports it — which is exactly why
- * `__tests__/composition-root.spec.ts` asserts it is in this list.
+ * lifecycle hook and no consumer, so nothing imports it, so no test reaches it
+ * by using it — which is exactly why `../db/__tests__/audit-privilege-check.spec.ts`
+ * reads this array off the decorator and asserts the class is in it. (That
+ * pointer named `__tests__/composition-root.spec.ts` for one commit, which
+ * contains no such assertion; a reader following it found nothing and would have
+ * concluded the provider was unguarded.)
  *
  * It provides `PlatformAdminGuard` itself rather than importing it from
  * `AuthModule`, which would be a cycle: `AuthModule` imports this module, so

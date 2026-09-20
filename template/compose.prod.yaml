@@ -79,7 +79,12 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${APP_DB_ROLE:?required}:${APP_DB_PASSWORD:?required}@postgres:5432/${POSTGRES_DB:?required}
       PORT: '3000'
-      CORS_ORIGIN: http://localhost:3001
+      # The host-published origin the browser actually reaches the webapp on, which
+      # is `${WEBAPP_PORT}` below and not necessarily 3001. Hardcoding 3001 here
+      # while the port is overridable means every cross-origin request from the
+      # webapp is refused on any machine that had to dodge a busy 3001 — the exact
+      # case the override exists for.
+      CORS_ORIGIN: http://localhost:${WEBAPP_PORT:-3001}
       # Required, with no default, and the absence of a default is the point: this is
       # the origin every verification and recovery link is built from, and a wrong value
       # here is a working link pointing at somebody else's domain. See
@@ -126,7 +131,10 @@ services:
       - '${WEBAPP_PORT:-3001}:3000'
     environment:
       NODE_ENV: production
-      NUXT_PUBLIC_API_BASE: http://localhost:3000
+      # Read by the BROWSER, so it must name the host-published backend port —
+      # `${BACKEND_PORT}`, not the fixed container-internal 3000. (`NUXT_API_BASE_SERVER`
+      # below is the SSR side and correctly stays on the compose network.)
+      NUXT_PUBLIC_API_BASE: http://localhost:${BACKEND_PORT:-3000}
       # SSR runs inside this container, where `localhost` is not the backend.
       # Reach it over the compose network instead (container-internal port is fixed at 3000).
       NUXT_API_BASE_SERVER: http://backend:3000

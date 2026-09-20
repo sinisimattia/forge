@@ -25,10 +25,11 @@ import {
  *
  * | Fault | Caught by |
  * |---|---|
- * | the check asks about the wrong table or privilege | `asks the database exactly one question` |
- * | it is written `=== true` and a driver answers `'t'`/`1` | `refuses to start on …` |
- * | the guard is deleted from `AuditModule` | `AuditModule registers it` |
- * | the message stops naming the variable an operator has to set | `names MIGRATION_DATABASE_URL` |
+ * | it asks about the wrong table or privilege | `asks the database about this table and this privilege` |
+ * | it asks only `has_table_privilege`, so a column grant boots | `refuses to start when only a column of the table is writable` |
+ * | it is written `=== true`, so `'t'`/`1`/`undefined` boot | `refuses to start on %s, rather than reading it as all clear` |
+ * | the guard is dropped from `AuditModule` | `is registered by AuditModule, or it never runs at all` |
+ * | the message stops naming the variable an operator must set | `names MIGRATION_DATABASE_URL` |
  *
  * `FakeDataSource` is deliberately not used: it answers domain queries, and what
  * is under test here is one literal SQL statement and what is done with its
@@ -48,18 +49,38 @@ describe('AuditPrivilegeCheck', () => {
   };
 
   it('starts when the connection cannot update the audit table', async () => {
-    const { dataSource } = stub([{ granted: false }]);
+    const { dataSource } = stub([{ granted: false, wholeTable: false }]);
     const check = new AuditPrivilegeCheck(dataSource);
 
     await expect(check.onApplicationBootstrap()).resolves.toBeUndefined();
   });
 
-  it('refuses to start when the connection can update the audit table', async () => {
-    const { dataSource } = stub([{ granted: true }]);
+  it('refuses to start when the whole audit table is writable', async () => {
+    const { dataSource } = stub([{ granted: true, wholeTable: true }]);
 
-    await expect(new AuditPrivilegeCheck(dataSource).onApplicationBootstrap()).rejects.toThrow(
-      OVER_PRIVILEGED_MESSAGE,
-    );
+    const failure = new AuditPrivilegeCheck(dataSource).onApplicationBootstrap();
+
+    await expect(failure).rejects.toThrow(OVER_PRIVILEGED_MESSAGE);
+    await expect(failure).rejects.toThrow(`the whole of ${AUDIT_TABLE} is writable`);
+  });
+
+  /**
+   * The state this guard did not see until a review found it.
+   *
+   * `GRANT UPDATE (action) ON audit_entries TO <app>` leaves
+   * `has_table_privilege` reporting `f` while the role can run
+   * `UPDATE audit_entries SET action = 'TAMPERED'` — the literal statement the
+   * e2e asserts is refused. The old check read only `has_table_privilege`, so
+   * the process booted. Nothing in this template issues a column grant, which is
+   * exactly why nothing would have found this by accident.
+   */
+  it('refuses to start when only a column of the table is writable', async () => {
+    const { dataSource } = stub([{ granted: true, wholeTable: false }]);
+
+    const failure = new AuditPrivilegeCheck(dataSource).onApplicationBootstrap();
+
+    await expect(failure).rejects.toThrow(OVER_PRIVILEGED_MESSAGE);
+    await expect(failure).rejects.toThrow('column-level UPDATE grant');
   });
 
   it.each([
@@ -75,13 +96,17 @@ describe('AuditPrivilegeCheck', () => {
     );
   });
 
-  it('asks the database exactly one question, about this table and this privilege', async () => {
-    const { dataSource, calls } = stub([{ granted: false }]);
+  it('asks the database about this table and this privilege, in one query', async () => {
+    const { dataSource, calls } = stub([{ granted: false, wholeTable: false }]);
 
     await new AuditPrivilegeCheck(dataSource).onApplicationBootstrap();
 
     expect(calls).toHaveLength(1);
     const [sql, params] = calls[0] as [string, unknown[]];
+    // `has_any_column_privilege` is the one that decides; `has_table_privilege`
+    // only tells the operator which mistake they made. Asserting both means a
+    // silent swap back to the table-only question fails here.
+    expect(sql).toContain('has_any_column_privilege');
     expect(sql).toContain('has_table_privilege');
     expect(sql).toContain('current_user');
     expect(sql).toContain('\'UPDATE\'');
