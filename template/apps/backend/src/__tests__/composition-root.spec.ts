@@ -35,6 +35,7 @@ import { MailModule } from '../mail';
 import { InvitationRecord } from '../organizations/invitation-record.entity';
 import { MembershipRecord } from '../organizations/membership-record.entity';
 import { OrganizationRecord } from '../organizations/organization-record.entity';
+import { OrganizationsModule } from '../organizations/organizations.module';
 import { UserRecord } from '../users/user-record.entity';
 import { UsersModule } from '../users/users.module';
 
@@ -77,6 +78,7 @@ import { UsersModule } from '../users/users.module';
  * | `health.controller.ts`: `@Public()` | `health › is reachable with no credential` |
  * | `auth.module.ts`: `controllers: [AuthController]` | `AuthModule › registers the controller` |
  * | `app.module.ts`: `UsersModule` from `imports` | `AppModule › imports UsersModule` |
+ * | `app.module.ts`: `OrganizationsModule` from `imports` | `AppModule › imports OrganizationsModule` — without it `/organizations` exists nowhere |
  * | `app.module.ts`: `IdentitiesModule` from `imports` | `AppModule › imports IdentitiesModule` |
  * | `auth.module.ts`: `IdentitiesModule` from `imports` | `AuthModule › gets its identity service from one place` |
  * | `users.module.ts`: `controllers`/`providers` | `users/__tests__/users.controller.spec.ts › UsersModule wires it` |
@@ -197,6 +199,7 @@ describe('the composition root', () => {
       ['IdentitiesModule', IdentitiesModule],
       ['AuthModule', AuthModule],
       ['UsersModule', UsersModule],
+      ['OrganizationsModule', OrganizationsModule],
     ])('imports %s', (_name, imported) => {
       expect(moduleImports(AppModule)).toContain(imported);
     });

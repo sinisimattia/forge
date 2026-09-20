@@ -454,6 +454,14 @@ function matches(row: Row, criteria: Criteria): boolean {
           const body = pattern.split('%').map(escapeForPattern).join('.*');
           return new RegExp(`^${body}$`, 'i').test(String(value));
         }
+        case 'in':
+          // `OrganizationsService.listOrganizations` reads `organizations`
+          // narrowed to the ids a membership lookup produced — see that
+          // method's own comment for why the narrowing is what makes the read
+          // tenant-scoped. `[].includes` is the whole of SQL `IN (...)`'s
+          // semantics for a plain value list, which is the only shape this
+          // backend ever passes here.
+          return (expected.value as unknown[]).includes(value);
         default:
           // Loudly, rather than by quietly matching everything: a criterion this
           // fake does not understand would otherwise silently widen a test's

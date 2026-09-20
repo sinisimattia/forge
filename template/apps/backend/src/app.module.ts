@@ -22,6 +22,7 @@ import { MailModule } from './mail';
 import { InvitationRecord } from './organizations/invitation-record.entity';
 import { MembershipRecord } from './organizations/membership-record.entity';
 import { OrganizationRecord } from './organizations/organization-record.entity';
+import { OrganizationsModule } from './organizations/organizations.module';
 import { UserRecord } from './users/user-record.entity';
 import { UsersModule } from './users/users.module';
 
@@ -197,6 +198,7 @@ export const GLOBAL_PROVIDERS: Provider[] = [
     IdentitiesModule,
     AuthModule,
     UsersModule,
+    OrganizationsModule,
   ],
   providers: GLOBAL_PROVIDERS,
 })
