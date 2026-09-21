@@ -2,6 +2,8 @@ import { ConfigService } from '@nestjs/config';
 import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
 import type { FederatedAccount } from '__FORGE_SCOPE__/core/identities/types';
 import { DevOAuthProvider } from './adapters/DevOAuthProvider';
+import { GoogleOAuthProvider } from './adapters/GoogleOAuthProvider';
+import { OidcOAuthProvider } from './adapters/OidcOAuthProvider';
 import type { IOAuthProvider } from './IOAuthProvider';
 
 /** A config key is "configured" when it is present and non-empty — never merely truthy. */
@@ -173,7 +175,10 @@ export function buildOAuthProviders(config: ConfigService): IOAuthProvider[] {
 
   const providers: IOAuthProvider[] = [];
   if (googleConfigured) {
-    providers.push(new UnimplementedOAuthProvider(AuthProvider.GOOGLE));
+    providers.push(new GoogleOAuthProvider({
+      clientId: config.getOrThrow<string>('OAUTH_GOOGLE_CLIENT_ID'),
+      clientSecret: config.getOrThrow<string>('OAUTH_GOOGLE_CLIENT_SECRET'),
+    }));
   }
   if (githubConfigured) {
     providers.push(new UnimplementedOAuthProvider(AuthProvider.GITHUB));
@@ -182,7 +187,13 @@ export function buildOAuthProviders(config: ConfigService): IOAuthProvider[] {
   // guard above throws before this point whenever both are true, so at most one of
   // these two branches ever runs and AuthProvider.OIDC is never pushed twice.
   if (oidcConfigured) {
-    providers.push(new UnimplementedOAuthProvider(AuthProvider.OIDC));
+    providers.push(new OidcOAuthProvider(
+      config.getOrThrow<string>('OAUTH_OIDC_ISSUER_URL'),
+      {
+        clientId: config.getOrThrow<string>('OAUTH_OIDC_CLIENT_ID'),
+        clientSecret: config.getOrThrow<string>('OAUTH_OIDC_CLIENT_SECRET'),
+      },
+    ));
   }
   if (devEnabled) {
     providers.push(new DevOAuthProvider(publicApiUrl));
