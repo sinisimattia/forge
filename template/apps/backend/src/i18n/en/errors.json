@@ -40,5 +40,8 @@
       "NEEDS_DIGIT": "Include at least one digit",
       "BREACHED": "That password appears in a public list of known passwords. Choose a different one"
     }
+  },
+  "oauth": {
+    "invalid_redirect": "That redirect destination is not allowed"
   }
 }
