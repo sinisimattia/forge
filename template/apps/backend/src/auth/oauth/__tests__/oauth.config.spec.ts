@@ -92,14 +92,33 @@ describe('buildOAuthProviders', () => {
         .toThrow(/OAUTH_DEV_ENABLED/);
     });
 
-    it('does not refuse when only the real OIDC side is configured', () => {
+    it('registers the real OIDC provider when only it is configured — not a silent no-op', () => {
+      // A fully configured provider is never silently dropped, same as Google or GitHub
+      // (see "registers each fully configured provider once" above) — "does not refuse
+      // the collision" must not be confused with "does not register". An earlier version
+      // of this test asserted `toEqual([])` here, which encoded exactly that confusion: it
+      // read as coverage for the collision guard while actually pinning a defect where a
+      // correctly configured OIDC deployment booted with an empty provider list.
       const oidcOnly = {
         PUBLIC_API_URL: 'http://localhost:3000',
         OAUTH_OIDC_CLIENT_ID: 'id',
         OAUTH_OIDC_CLIENT_SECRET: 'OAUTH_OIDC_CLIENT_SECRET',
         OAUTH_OIDC_ISSUER_URL: 'https://issuer.example.test',
       };
-      expect(buildOAuthProviders(configOf(oidcOnly))).toEqual([]);
+      const built = buildOAuthProviders(configOf(oidcOnly));
+      expect(built.map((p) => p.provider)).toEqual([AuthProvider.OIDC]);
+    });
+
+    it('refuses to start when only the real OIDC provider is configured but PUBLIC_API_URL is not', () => {
+      // The direct regression case for the same gap: OIDC's three variables must gate
+      // PUBLIC_API_URL exactly as Google's and GitHub's two do (see "refuses to start when
+      // a provider is configured but PUBLIC_API_URL is not" above) — this is that same
+      // assertion, with OIDC as the configured provider instead of Google.
+      expect(() => buildOAuthProviders(configOf({
+        OAUTH_OIDC_CLIENT_ID: 'id',
+        OAUTH_OIDC_CLIENT_SECRET: 'OAUTH_OIDC_CLIENT_SECRET',
+        OAUTH_OIDC_ISSUER_URL: 'https://issuer.example.test',
+      }))).toThrow(/PUBLIC_API_URL/);
     });
 
     it('does not refuse when only the development side is configured', () => {

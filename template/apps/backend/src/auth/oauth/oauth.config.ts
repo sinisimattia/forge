@@ -78,6 +78,16 @@ export class UnimplementedOAuthProvider implements IOAuthProvider {
  * deployment that never touched this provider are indistinguishable from here,
  * and both are safe to treat as "not offered."
  *
+ * A **fully** configured provider is never silently dropped, which is the other
+ * half of that same rule and just as load-bearing: all four presence flags
+ * (`devEnabled`, `googleConfigured`, `githubConfigured`, `oidcConfigured`) feed
+ * the same "is anything configured" decision and the same `PUBLIC_API_URL`
+ * requirement below, on identical terms. None of the four is a special case
+ * that skips either — a deployment that correctly set every `OAUTH_OIDC_*`
+ * variable and nothing else must not boot cleanly with an empty provider list
+ * just because it configured the one provider that also participates in the
+ * refusal below.
+ *
  * ## `PUBLIC_API_URL`
  *
  * Required, with no default, the moment any provider is about to be built —
@@ -154,7 +164,7 @@ export function buildOAuthProviders(config: ConfigService): IOAuthProvider[] {
     config, 'OAUTH_GITHUB_CLIENT_ID', 'OAUTH_GITHUB_CLIENT_SECRET',
   );
 
-  if (!googleConfigured && !githubConfigured && !devEnabled) {
+  if (!googleConfigured && !githubConfigured && !oidcConfigured && !devEnabled) {
     return [];
   }
 
@@ -166,6 +176,12 @@ export function buildOAuthProviders(config: ConfigService): IOAuthProvider[] {
   }
   if (githubConfigured) {
     providers.push(new UnimplementedOAuthProvider(AuthProvider.GITHUB));
+  }
+  // oidcConfigured and devEnabled are mutually exclusive by construction: the PF-1
+  // guard above throws before this point whenever both are true, so at most one of
+  // these two branches ever runs and AuthProvider.OIDC is never pushed twice.
+  if (oidcConfigured) {
+    providers.push(new UnimplementedOAuthProvider(AuthProvider.OIDC));
   }
   if (devEnabled) {
     providers.push(new UnimplementedOAuthProvider(AuthProvider.OIDC));
