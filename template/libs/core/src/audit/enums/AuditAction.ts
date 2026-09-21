@@ -57,4 +57,18 @@ export enum AuditAction {
   MEMBER_REMOVED = 'MEMBER_REMOVED',
   GRANT_CREATED = 'GRANT_CREATED',
   GRANT_REVOKED = 'GRANT_REVOKED',
+  /** A second way in was attached to an account that had proven itself first. */
+  IDENTITY_LINKED = 'IDENTITY_LINKED',
+  /**
+   * A federated provider asserted an address that already belongs to an account,
+   * and the assertion was refused rather than linked.
+   *
+   * The whole of discriminating test D11 lives on the other side of this entry.
+   * Whoever made the attempt is told only that it failed; this is where the
+   * server writes down what actually happened, and it is the entry a reader
+   * looking for an attempted takeover would search for. The actor is the account
+   * that already existed — nothing has been established about whoever made the
+   * attempt, which is the point.
+   */
+  FEDERATED_LINK_REFUSED = 'FEDERATED_LINK_REFUSED',
 }
