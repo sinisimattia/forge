@@ -1,4 +1,5 @@
 import { AppModule } from '../app.module';
+import { PlatformAdminGuard } from '../auth/guards/platform-admin.guard';
 import { PermissionsGuard } from '../authorization/permissions.guard';
 
 /**
@@ -6,7 +7,7 @@ import { PermissionsGuard } from '../authorization/permissions.guard';
  *
  * ## The defect this was written after, and why nothing else saw it
  *
- * `OrganizationAuditController` carries `@UseGuards(PermissionsGuard)` and lives
+ * `OrganizationAuditController` carried `@UseGuards(PermissionsGuard)` and lives
  * in `AuditModule`. `AuditModule` imported `AuthorizationModule`, which exports
  * `PermissionsGuard`, and that looks like enough. It is not: **a guard named in
  * `@UseGuards` is instantiated in the module context of the controller that
@@ -33,15 +34,26 @@ import { PermissionsGuard } from '../authorization/permissions.guard';
  * real graph was the Docker e2e, which was PR-only, so a `main` that could not
  * start was reachable by pushing.
  *
- * ## What this asserts, and why it is derived rather than listed
+ * ## What this asserts, and why all three inputs are derived rather than listed
  *
- * The guard's requirements come from Nest's own `self:paramtypes` metadata — the
- * tokens `@InjectRepository` recorded — and the modules come from walking
- * `AppModule`'s `imports`. So a fourth controller that starts using this guard,
- * or a fourth dependency added to the guard's constructor, is covered without
- * anybody remembering this file exists. A hand-written list of "modules that
- * need `OrganizationRecord`" would have been three names that were already
- * right, and would have stayed right while the fourth was wrong.
+ * The **guards** come from the `@UseGuards` metadata of every controller in the
+ * graph; the **modules** from walking `AppModule`'s `imports`; the
+ * **requirements** from Nest's own `self:paramtypes` — the tokens
+ * `@InjectRepository` recorded. So a fourth controller adopting a guard, a third
+ * guard, or a fourth dependency on an existing one, is covered without anybody
+ * remembering this file exists.
+ *
+ * All three being derived is a correction rather than an original virtue. This
+ * file shipped naming `PermissionsGuard` in three places, and so caught **one
+ * member** of the class of faults it was written for. `PlatformAdminGuard`
+ * injects `Repository<UserRecord>` and is named by `audit.controller.ts`,
+ * `organization-audit.controller.ts` and `users.controller.ts`; it works only
+ * because both host modules happen to register that entity. A fourth controller
+ * adopting it from a module that does not would fail to boot in exactly the way
+ * this file exists to prevent, and this file would have been green — a hardcoded
+ * list of "modules that need `OrganizationRecord`" would likewise have been
+ * three names that were already right, and would have stayed right while the
+ * fourth was wrong.
  *
  * It is a static check and not a boot: resolving the real graph for real needs a
  * database, which is what the Docker tier is for. This one runs in milliseconds
@@ -104,6 +116,18 @@ const moduleGraph = (root: Ctor): Ctor[] => {
  * A module's own providers are deliberately NOT included: this asks what an
  * *enhancer* instantiated in this context can reach, and the question that
  * matters is whether the imports supply it.
+ *
+ * **That makes this check stricter than Nest, on purpose — do not "fix" it.**
+ * Nest would also resolve a token a module declares in its own `providers`, so a
+ * module that both declared `OrganizationRecordRepository` itself and named the
+ * guard would boot while failing here. That is a false RED, and it is the safe
+ * direction: the cost is somebody adding an import they did not strictly need,
+ * where the cost of modelling providers too generously is a false GREEN — this
+ * file reporting that an application boots when it does not, which is the exact
+ * failure it was written after. Every module in this application registers its
+ * repositories through `TypeOrmModule.forFeature` in `imports`, so the stricter
+ * model costs nothing today; if that ever stops being true, widen this with an
+ * assertion that watches the widening, not by deleting the sentence.
  */
 const resolvableFrom = (module: Ctor): Set<string> => {
   const tokens = new Set<string>();
@@ -143,8 +167,8 @@ const injectedTokens = (target: Ctor): string[] =>
   ((Reflect.getMetadata(SELF_PARAMTYPES, target) as { param: unknown }[] | undefined) ?? [])
     .map((entry) => tokenOf(entry.param));
 
-/** Whether any route of `controller`, or the controller itself, names `guard`. */
-const usesGuard = (controller: Ctor, guard: Ctor): boolean => {
+/** Every guard `controller` names, on the class or on any of its routes. */
+const guardsNamedBy = (controller: Ctor): Ctor[] => {
   const declared: unknown[] = [...((Reflect.getMetadata(GUARDS, controller) as unknown[]) ?? [])];
   const prototype = controller.prototype as unknown as Record<string, unknown>;
 
@@ -155,42 +179,76 @@ const usesGuard = (controller: Ctor, guard: Ctor): boolean => {
     declared.push(...((Reflect.getMetadata(GUARDS, handler) as unknown[]) ?? []));
   }
 
-  return declared.includes(guard);
+  // Classes only. `@UseGuards(new Thing())` and `@UseGuards('TOKEN')` are legal
+  // Nest and neither is something this check can read a constructor off; they
+  // are skipped rather than guessed at.
+  return [...new Set(declared.filter((entry): entry is Ctor => typeof entry === 'function'))];
 };
 
-describe('a module whose controllers name PermissionsGuard can construct it', () => {
+describe('every module whose controllers name a guard can construct it', () => {
   const modules = moduleGraph(AppModule as unknown as Ctor);
 
-  /** Every `[module, controller]` pair where the controller names the guard. */
-  const hosts = modules.flatMap((module) => (
+  /**
+   * Every `[module, controller, guard]` the graph declares.
+   *
+   * **Discovered, not listed.** This file first hardcoded `PermissionsGuard`,
+   * which meant it caught one member of the class of faults it was written for:
+   * `PlatformAdminGuard` injects `Repository<UserRecord>` and is named by three
+   * controllers, and worked only because both host modules happen to register
+   * that entity. A fourth controller adopting it from a module that does not
+   * would have failed to boot in exactly the way this file exists to prevent,
+   * and this file would have been green. So the guards come from the same place
+   * the modules and the requirements already came from — the decorators.
+   */
+  const declarations = modules.flatMap((module) => (
     ((Reflect.getMetadata(CONTROLLERS, module) as Ctor[] | undefined) ?? [])
-      .filter((controller) => usesGuard(controller, PermissionsGuard as unknown as Ctor))
-      .map((controller) => [module, controller] as const)
+      .flatMap((controller) => guardsNamedBy(controller)
+        .map((guard) => [module, controller, guard] as const))
   ));
 
-  // The guard on the guard. If the walk finds nothing — a renamed metadata key,
-  // a module that stopped being imported, a controller list read the wrong way —
-  // every assertion below passes by having nothing to check, which is the exact
-  // shape of green this whole tier exists to refuse.
-  it('finds the controllers that name it, rather than passing by finding none', () => {
-    expect(hosts.length).toBeGreaterThan(1);
-    expect(injectedTokens(PermissionsGuard as unknown as Ctor)).toContain(
-      'OrganizationRecordRepository',
-    );
+  const guards = [...new Set(declarations.map(([, , guard]) => guard))];
+  /** The rows that can actually fail: a guard injecting nothing passes by having nothing to check. */
+  const demanding = declarations.filter(([, , guard]) => injectedTokens(guard).length > 0);
+
+  /**
+   * The guard on the guard, and a list-driven walk has more ways to pass by
+   * finding nothing than the single-class version did — an empty guard list, an
+   * empty host list, or a `self:paramtypes` read that quietly returns nothing
+   * would each make every assertion below vacuously true. All three are closed
+   * here, and the two guards are named rather than counted so that *losing* one
+   * is red rather than merely a smaller number.
+   */
+  it('discovers both guards, their hosts, and their requirements — rather than passing by finding none', () => {
+    expect(modules.length).toBeGreaterThan(1);
+    expect(declarations.length).toBeGreaterThan(1);
+
+    expect(guards.map((guard) => guard.name).sort())
+      .toEqual(['PermissionsGuard', 'PlatformAdminGuard']);
+
+    // Requirements actually read, not merely an empty array per guard. These are
+    // the two repositories the boot failure was about, one each.
+    expect(injectedTokens(PermissionsGuard as unknown as Ctor))
+      .toContain('OrganizationRecordRepository');
+    expect(injectedTokens(PlatformAdminGuard as unknown as Ctor))
+      .toContain('UserRecordRepository');
+
+    // And the rows below are rows that can fail, not rows that cannot.
+    expect(demanding.length).toBeGreaterThan(1);
   });
 
-  it.each(hosts.map(([module, controller]) => [module.name, controller.name, module] as const))(
-    '%s can resolve every dependency of the guard %s names',
-    (_moduleName, _controllerName, module) => {
+  it.each(declarations.map(([module, controller, guard]) => (
+    [module.name, guard.name, controller.name, module, guard] as const
+  )))(
+    '%s can construct %s, which %s names',
+    (_moduleName, _guardName, _controllerName, module, guard) => {
       const available = resolvableFrom(module);
-      const missing = injectedTokens(PermissionsGuard as unknown as Ctor)
-        .filter((token) => !available.has(token));
+      const missing = injectedTokens(guard).filter((token) => !available.has(token));
 
-      // `Nest can't resolve dependencies of the PermissionsGuard (…, ?)` at
-      // boot, if this is ever non-empty. A guard named in `@UseGuards` is
-      // instantiated in the module context of the controller that names it, so
-      // importing the module that EXPORTS the guard is not enough — its
-      // dependencies have to be reachable here too.
+      // `Nest can't resolve dependencies of the <Guard> (…, ?)` at boot, if this
+      // is ever non-empty. A guard named in `@UseGuards` is instantiated in the
+      // module context of the controller that names it, so importing the module
+      // that EXPORTS the guard — or providing the guard locally — is not enough:
+      // its own dependencies have to be reachable here too.
       expect(missing).toEqual([]);
     },
   );
