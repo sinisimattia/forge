@@ -19,10 +19,11 @@ export type OrganizationInvitationInput = {
 /**
  * Builds the message sent when somebody is invited to join an organization.
  *
- * Follows `verify-email.ts`'s shape exactly: one link, built from
- * `webappUrl` and carrying the token in a path segment, because this address
- * need not belong to an existing account — accepting while signed out routes
- * through registration first (spec §9.4) and the same link works either way.
+ * Follows `verify-email.ts`'s shape exactly: one link, built from `webappUrl`
+ * and carrying the token as a `token` query parameter (the same shape
+ * `buildVerifyEmailMessage` uses), because this address need not belong to
+ * an existing account — accepting while signed out routes through
+ * registration first (spec §9.4) and the same link works either way.
  */
 export function buildOrganizationInvitationMessage({
   to,

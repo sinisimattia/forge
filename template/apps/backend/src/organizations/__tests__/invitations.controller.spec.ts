@@ -584,6 +584,77 @@ describe('InvitationsController', () => {
       expect(entry!.organizationId).toBe(ORG_1);
       expect(entry!.actorUserId).toBe(INVITEE);
     });
+
+    // Fix round 1, Important finding: `inviteMember` refuses a SECOND
+    // invitation to an address that already has a membership, but nothing
+    // stops a SECOND invitation issued before the FIRST is accepted — the
+    // ordinary way this happens is an admin inviting twice because they were
+    // not sure the first mail arrived, and the recipient clicking both
+    // links. The sequential half of the guard: the first accept succeeds,
+    // the second is refused rather than creating a second membership row.
+    it('refuses accepting a second invitation once the first has already made the account a member', async () => {
+      seedOrganization(ORG_1, OWNER);
+      seedUser(INVITEE, INVITEE_EMAIL);
+      const first = seedInvitation('invitation-first', ORG_1, INVITEE_EMAIL);
+      const second = seedInvitation('invitation-second', ORG_1, INVITEE_EMAIL);
+
+      await request(app.getHttpServer())
+        .post(`/invitations/${first}/accept`)
+        .set('Authorization', bearer(INVITEE))
+        .expect(201);
+
+      const response = await request(app.getHttpServer())
+        .post(`/invitations/${second}/accept`)
+        .set('Authorization', bearer(INVITEE));
+
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('ALREADY_A_MEMBER');
+
+      // Exactly one membership, never two, for this account in this
+      // organization.
+      expect(
+        source
+          .all(MembershipRecord)
+          .filter((row) => row.organizationId === ORG_1 && row.userId === INVITEE),
+      ).toHaveLength(1);
+      // Refused, not consumed: the second invitation was never written to —
+      // it stays exactly as open as it was before this request.
+      expect(source.byId(InvitationRecord, 'invitation-second')?.status).toBe(
+        InvitationStatus.PENDING,
+      );
+    });
+
+    // The concurrent half of the same guard: two DIFFERENT tokens for the
+    // same address, redeemed at the same moment, each having just read no
+    // existing membership because neither transaction has committed yet.
+    // Nothing in this backend's own code can make that race happen against
+    // `FakeDataSource` (it enforces no unique constraints at all — see that
+    // class's own "Properties this double CANNOT express", item 4), so the
+    // `23505` Postgres would actually raise is injected directly, the same
+    // way `AuthService`'s own duplicate-registration race is proved.
+    it('maps a concurrent unique-violation on the membership insert to 409 ALREADY_A_MEMBER', async () => {
+      seedOrganization(ORG_1, OWNER);
+      seedUser(INVITEE, INVITEE_EMAIL);
+      const token = seedInvitation('invitation-race', ORG_1, INVITEE_EMAIL);
+
+      const insert = source.insert.bind(source);
+      source.insert = (entity, values, journal) => {
+        if (entity.name === MembershipRecord.name) {
+          throw Object.assign(
+            new Error('duplicate key value violates unique constraint "uq_memberships_org_user"'),
+            { code: '23505' },
+          );
+        }
+        return insert(entity, values, journal);
+      };
+
+      const response = await request(app.getHttpServer())
+        .post(`/invitations/${token}/accept`)
+        .set('Authorization', bearer(INVITEE));
+
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('ALREADY_A_MEMBER');
+    });
   });
 
   describe('OrganizationsModule wires it, which no probe application can show', () => {

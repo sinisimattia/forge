@@ -745,8 +745,37 @@ export class OrganizationsService implements IOrganizationService {
    * contract requires it: a second presentation of a spent token must be
    * answered the same way whoever presents it, and checking the address
    * first would tell the wrong holder "wrong address" while the right holder
-   * was told "already used" — two different facts leaking through the one
-   * channel the closed-state collapse exists to shut.
+   * was told "already used" — the reverse order leaks the WORSE thing: the
+   * right holder would get "no longer open" while a wrong holder — somebody
+   * who merely forwarded the mail, or received it forwarded — got "not your
+   * address", which tells them the token IS addressed to somebody, just not
+   * them. That is exactly the discrimination the closed-state collapse
+   * exists to shut.
+   *
+   * **Already being a member is checked too, inside this same transaction,
+   * under the same lock.** `inviteMember` refuses to issue a SECOND
+   * invitation to an address that already has a membership, but it cannot
+   * stop a SECOND invitation issued before the FIRST is accepted — two
+   * PENDING invitations to one address are not a fault `inviteMember` can
+   * see. Both are then redeemable, and a defaulting implementation inserts
+   * two membership rows for the same `(organizationId, userId)`: harmless
+   * against the zero-constraint `FakeDataSource` this backend's fast tests
+   * run against, and a bare, codeless `500` against the real schema, which
+   * enforces `uq_memberships_org_user` and gives `insert` a `23505` this
+   * method must expect. Two mechanisms close it, the same division
+   * `AuthService.register` draws for its own duplicate-insert race:
+   *
+   * - The `SELECT` here closes the SEQUENTIAL case — one token accepted,
+   *   then the other, with no overlap — the ordinary way this actually
+   *   happens (an admin invites twice because they were not sure the first
+   *   mail arrived, and the recipient clicks both links).
+   * - The `23505` mapping on the `INSERT` below closes the CONCURRENT case —
+   *   two DIFFERENT tokens for the same address, redeemed at the same time —
+   *   where two transactions can each run the `SELECT` above and each see no
+   *   existing membership, because neither has committed yet. No row this
+   *   method touches is shared between the two tokens, so there is nothing
+   *   for a lock taken on either one to serialize against; the unique index
+   *   is the only thing that sees both at once.
    *
    * @param actorId - the user on whose behalf the call is made
    * @param token - the opaque value the recipient was given
@@ -757,6 +786,9 @@ export class OrganizationsService implements IOrganizationService {
    * purpose
    * @throws InvitationAddressMismatchError when the account redeeming it does
    * not hold the address it was sent to
+   * @throws AlreadyAMemberError when the account redeeming it already holds a
+   * membership in the invitation's organization — from an earlier invitation
+   * to the same address, accepted first
    */
   public async acceptInvitation(actorId: UserId, token: string): Promise<Membership> {
     const presentedHash = hashOpaqueToken(token);
@@ -777,14 +809,42 @@ export class OrganizationsService implements IOrganizationService {
         throw new InvitationAddressMismatchError(invitation.id);
       }
 
-      const inserted = await manager.insert(MembershipRecord, {
-        organizationId: invitation.organizationId,
-        userId: actorId,
-        role: invitation.role,
-        createdAt: now,
-        updatedAt: now,
+      // The sequential half of the already-a-member guard — see this
+      // method's own TSDoc. Read under `manager`, inside this transaction,
+      // not through `this.memberships`: the state that decides whether the
+      // insert below may proceed has to be read under the same lock that
+      // guards the write, or the read and the write are two separate facts
+      // that can be overtaken by whatever else commits between them.
+      const existingMembership = await manager.findOne(MembershipRecord, {
+        where: { organizationId: invitation.organizationId, userId: actorId },
       });
-      const membershipId = inserted.identifiers[0].id as string;
+      if (existingMembership !== null) {
+        throw new AlreadyAMemberError(invitation.organizationId, actorId);
+      }
+
+      let membershipId: string;
+      try {
+        const inserted = await manager.insert(MembershipRecord, {
+          organizationId: invitation.organizationId,
+          userId: actorId,
+          role: invitation.role,
+          createdAt: now,
+          updatedAt: now,
+        });
+        membershipId = inserted.identifiers[0].id as string;
+      } catch (error) {
+        // The concurrent half of the same guard: two different tokens for
+        // the same address, redeemed at the same time, each having just run
+        // the `SELECT` above and each having seen no membership yet. Only
+        // `uq_memberships_org_user` sees both inserts at once, and the loser
+        // gets a `23505` — mapped here rather than left to fall through to
+        // `HttpExceptionFilter`'s generic 500 branch, the same duck-typed
+        // check `AuthService.isUniqueViolation` uses and for the same reason:
+        // the message is a driver string that a Postgres upgrade can reword,
+        // the SQLSTATE is not.
+        if (!OrganizationsService.isUniqueViolation(error)) throw error;
+        throw new AlreadyAMemberError(invitation.organizationId, actorId);
+      }
 
       // The same discriminating predicate `revokeInvitation` uses, and the
       // backstop the lock above is primary defense against: only one writer
@@ -878,5 +938,21 @@ export class OrganizationsService implements IOrganizationService {
     const row = await this.invitations.findOne({ where: { organizationId, id: invitationId } });
     if (row === null) throw new InvitationNotFoundError(invitationId);
     return row;
+  }
+
+  /**
+   * Whether a caught error is a Postgres unique-violation (`23505`).
+   *
+   * The same duck-typed check `AuthService.isUniqueViolation` uses, kept
+   * duck-typed here for the same reason: matched on SQLSTATE rather than the
+   * driver's message text, because the message is localized by the server's
+   * own settings and a match on it stops matching after a Postgres upgrade.
+   */
+  private static isUniqueViolation(error: unknown): boolean {
+    return (
+      typeof error === 'object'
+      && error !== null
+      && (error as { code?: unknown }).code === '23505'
+    );
   }
 }
