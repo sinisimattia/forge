@@ -49,6 +49,9 @@
       "needsDigit": "Include at least one digit.",
       "breached": "This password has appeared in a known data breach. Choose a different one."
     },
+    "oauth": {
+      "continueWith": "Continue with {provider}"
+    },
     "signIn": {
       "title": "Sign in",
       "subtitle": "Welcome back.",
