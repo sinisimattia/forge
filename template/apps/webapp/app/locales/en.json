@@ -136,5 +136,93 @@
       "providerGithub": "GitHub",
       "providerOidc": "Single sign-on"
     }
+  },
+  "organizations": {
+    "title": "Your organizations",
+    "subtitle": "Every organization you belong to.",
+    "empty": "You do not belong to any organization yet.",
+    "failed": "We could not read your organizations just now. Please try again.",
+    "create": "New organization",
+    "created": "Created.",
+    "open": "Open",
+    "nameRequired": "Give the organization a name.",
+    "invalidSlug": "Use lowercase letters, digits and single hyphens only.",
+    "columnName": "Name",
+    "columnSlug": "Slug",
+    "columnActions": "Actions",
+    "fieldName": "Name",
+    "fieldSlug": "Slug",
+    "roles": {
+      "owner": "Owner",
+      "admin": "Admin",
+      "member": "Member",
+      "viewer": "Viewer"
+    },
+    "settings": {
+      "title": "Settings",
+      "subtitle": "Rename this organization, change its slug, or remove it.",
+      "saved": "Saved.",
+      "failed": "We could not save that just now. Please try again.",
+      "deleteTitle": "Delete this organization",
+      "deleteWarning": "This removes the organization and everything in it. This cannot be undone.",
+      "delete": "Delete organization",
+      "deleteConfirmTitle": "Delete organization?",
+      "deleteConfirmMessage": "This removes the organization and everything in it. This cannot be undone.",
+      "grantsTitle": "Resource grants",
+      "grantsEmpty": "There are no grants to show.",
+      "grantsFailed": "We could not read the grants just now. Please try again.",
+      "grantsRevoke": "Revoke",
+      "columnSubject": "Subject",
+      "columnResource": "Resource",
+      "columnPermission": "Permission",
+      "columnExpires": "Expires",
+      "columnActions": "Actions",
+      "never": "Never"
+    },
+    "members": {
+      "title": "Members",
+      "subtitle": "Everyone who belongs to this organization, and their role.",
+      "empty": "There is nothing to show.",
+      "failed": "We could not read the members just now. Please try again.",
+      "remove": "Remove",
+      "columnMember": "Member",
+      "columnRole": "Role",
+      "columnActions": "Actions"
+    },
+    "invitations": {
+      "title": "Invitations",
+      "subtitle": "Offers to join this organization that have not yet been accepted or withdrawn.",
+      "empty": "There are no open invitations.",
+      "failed": "We could not read the invitations just now. Please try again.",
+      "invite": "Send invitation",
+      "revoke": "Revoke",
+      "emailRequired": "Enter an address to invite.",
+      "alreadyMember": "That address already belongs to this organization.",
+      "columnEmail": "Address",
+      "columnRole": "Role",
+      "columnExpires": "Expires",
+      "columnActions": "Actions",
+      "fieldEmail": "Email address",
+      "fieldRole": "Role"
+    },
+    "audit": {
+      "title": "Audit log",
+      "subtitle": "What has happened in this organization, newest first.",
+      "empty": "There is nothing to show.",
+      "failed": "We could not read the audit log just now. Please try again.",
+      "columnAction": "Action",
+      "columnActor": "Who",
+      "columnOccurredAt": "When",
+      "unknownActor": "Unknown"
+    },
+    "acceptInvitation": {
+      "title": "Join organization",
+      "subtitle": "Accept this invitation to become a member.",
+      "accept": "Accept invitation",
+      "notFound": "This invitation could not be found.",
+      "noLongerOpen": "This invitation has already been used or withdrawn.",
+      "addressMismatch": "This invitation was sent to a different address than the one you are signed in with.",
+      "failed": "We could not accept that just now. Please try again."
+    }
   }
 }

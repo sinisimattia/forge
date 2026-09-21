@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import { OrgRole } from '__FORGE_SCOPE__/core/organizations/enums';
+import {
+  InvalidOrganizationSlugError,
+  OrganizationNameRequiredError,
+} from '__FORGE_SCOPE__/core/organizations/errors';
 import type {
   MembershipId,
   OrganizationId,
@@ -162,5 +166,103 @@ describe('useOrganization / useInvitations', () => {
 
     expect(invitations.failed.value).toBe(false);
     expect(invitations.invitations.value).toEqual([]);
+  });
+
+  it('finds the active organization\'s own record among the list, not by a second request', async () => {
+    const auth = useAuthStore();
+    auth.adoptTransport(backend.client);
+    await auth.login(ACTOR.email, PLAINTEXT);
+    const organization = useOrganization();
+
+    expect(organization.activeOrganization.value).toBeNull();
+    await organization.load();
+    expect(organization.activeOrganization.value).toBeNull();
+    organization.setActive(ORG_ID);
+    expect(organization.activeOrganization.value?.id).toBe(ORG_ID);
+  });
+
+  it('creates an organization with the actor as its owner, and lists it afterward', async () => {
+    const auth = useAuthStore();
+    auth.adoptTransport(backend.client);
+    await auth.login(ACTOR.email, PLAINTEXT);
+    const organization = useOrganization();
+    await organization.load();
+    expect(organization.organizations.value).toHaveLength(1);
+
+    const created = await organization.create('Northwind Traders', 'northwind-traders');
+
+    expect(created.slug).toBe('northwind-traders');
+    expect(organization.organizations.value).toHaveLength(2);
+  });
+
+  it('rethrows the domain refusal rather than swallowing it into a flag', async () => {
+    const auth = useAuthStore();
+    auth.adoptTransport(backend.client);
+    await auth.login(ACTOR.email, PLAINTEXT);
+    const organization = useOrganization();
+
+    await expect(organization.create('', 'a-slug')).rejects.toBeInstanceOf(
+      OrganizationNameRequiredError,
+    );
+    await expect(organization.create('A Name', 'Not A Slug!')).rejects.toBeInstanceOf(
+      InvalidOrganizationSlugError,
+    );
+  });
+
+  it('updates the organization\'s own name and slug, and re-reads the list', async () => {
+    const auth = useAuthStore();
+    auth.adoptTransport(backend.client);
+    await auth.login(ACTOR.email, PLAINTEXT);
+    const organization = useOrganization();
+    await organization.load();
+
+    await organization.update(ORG_ID, { name: 'Acme Renamed', slug: 'acme-renamed' });
+
+    expect(organization.organizations.value[0]?.name).toBe('Acme Renamed');
+    expect(organization.organizations.value[0]?.slug).toBe('acme-renamed');
+  });
+
+  it('removes an organization, and it no longer lists', async () => {
+    const auth = useAuthStore();
+    auth.adoptTransport(backend.client);
+    await auth.login(ACTOR.email, PLAINTEXT);
+    const organization = useOrganization();
+    await organization.load();
+    expect(organization.organizations.value).toHaveLength(1);
+
+    await organization.remove(ORG_ID);
+
+    expect(organization.organizations.value).toEqual([]);
+  });
+
+  it('accepts an invitation by its token, with no organization known ahead of time', async () => {
+    const invitee: UserJSON = {
+      ...ACTOR,
+      id: 'stub-User-2' as UserId,
+      email: 'invitee@example.test',
+    };
+    backend.putUser(invitee, PLAINTEXT);
+    const owner = useAuthStore();
+    owner.adoptTransport(backend.client);
+    await owner.login(ACTOR.email, PLAINTEXT);
+    useOrganizationStore().setActiveOrganization(ORG_ID);
+    const invitations = useInvitations();
+    await invitations.invite(invitee.email, OrgRole.MEMBER);
+    const invitationId = invitations.invitations.value[0]?.id;
+    if (invitationId === undefined) throw new Error('setup did not create an invitation');
+    const token = backend.tokenForInvitation(invitationId);
+
+    setActivePinia(createPinia());
+    const auth = useAuthStore();
+    auth.adoptTransport(backend.client);
+    await auth.login(invitee.email, PLAINTEXT);
+    const organization = useOrganization();
+
+    const membership = await organization.acceptInvitation(token);
+
+    expect(membership.organizationId).toBe(ORG_ID);
+    expect(membership.userId).toBe(invitee.id);
+    await organization.load();
+    expect(organization.organizations.value).toHaveLength(1);
   });
 });

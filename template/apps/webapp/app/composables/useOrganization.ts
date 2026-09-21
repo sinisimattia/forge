@@ -1,7 +1,7 @@
 import type { ComputedRef, Ref } from 'vue';
 import type { PrincipalMembership } from '__FORGE_SCOPE__/core/authorization/types';
-import type { Organization } from '__FORGE_SCOPE__/core/organizations/entities';
-import type { OrganizationId } from '__FORGE_SCOPE__/core/organizations/types';
+import type { Membership, Organization } from '__FORGE_SCOPE__/core/organizations/entities';
+import type { OrganizationId, UpdateOrganizationInput } from '__FORGE_SCOPE__/core/organizations/types';
 import { OrganizationHttpService } from '~/services';
 import { useAuthStore } from '~/stores/auth';
 import { useOrganizationStore } from '~/stores/organization';
@@ -25,6 +25,16 @@ export interface UseOrganization {
    * fact, not a role reconstructed from the organization's own record.
    */
   readonly activeMembership: ComputedRef<PrincipalMembership | null>;
+  /**
+   * The active organization's own record, or `null` before {@link load}
+   * resolves or when nothing is active.
+   *
+   * Found in {@link organizations} rather than fetched on its own: every
+   * organization-scoped page already calls {@link load} to populate the
+   * switcher, and a second request for the one record this computed already
+   * has among them would be a request with nothing behind it to justify.
+   */
+  readonly activeOrganization: ComputedRef<Organization | null>;
   /** Reads the list again, replacing what is held. */
   readonly load: () => Promise<void>;
   /**
@@ -38,6 +48,39 @@ export interface UseOrganization {
    * have changed.
    */
   readonly setActive: (organizationId: OrganizationId | null) => void;
+  /**
+   * Creates an organization, with the actor as its OWNER, and re-reads the
+   * list.
+   *
+   * Domain refusals (`OrganizationNameRequiredError`,
+   * `InvalidOrganizationSlugError`) are rethrown rather than swallowed into
+   * {@link failed} — `useProfile.save`'s own shape — because the page maps
+   * each to the one field it names; a boolean flag cannot tell a caller
+   * which.
+   *
+   * @throws OrganizationNameRequiredError when the name is blank
+   * @throws InvalidOrganizationSlugError when the slug cannot be used in a path
+   */
+  readonly create: (name: string, slug: string) => Promise<Organization>;
+  /**
+   * Changes the active organization's name, its slug, or both, and re-reads
+   * the list. Rethrows the same two domain refusals {@link create} does.
+   */
+  readonly update: (
+    organizationId: OrganizationId,
+    changes: UpdateOrganizationInput,
+  ) => Promise<Organization>;
+  /** Soft-deletes an organization, and re-reads the list. */
+  readonly remove: (organizationId: OrganizationId) => Promise<void>;
+  /**
+   * Redeems an invitation by its token, creating the membership it offered,
+   * and re-reads the list so the newly joined organization appears in it.
+   *
+   * Not scoped to `activeOrganizationId`, unlike every other verb here: the
+   * whole point is that the actor is not yet a member of anything this call
+   * names, so there is no active organization for it to read.
+   */
+  readonly acceptInvitation: (token: string) => Promise<Membership>;
 }
 
 /**
@@ -84,6 +127,44 @@ export function useOrganization(): UseOrganization {
     orgStore.setActiveOrganization(organizationId);
   }
 
+  function service(): OrganizationHttpService {
+    return new OrganizationHttpService(authStore.authenticatedClient());
+  }
+
+  async function create(name: string, slug: string): Promise<Organization> {
+    const actor = authStore.user?.id;
+    if (actor === undefined) throw new Error('Nobody is signed in.');
+    const created = await service().createOrganization(actor, { name, slug });
+    await load();
+    return created;
+  }
+
+  async function update(
+    organizationId: OrganizationId,
+    changes: UpdateOrganizationInput,
+  ): Promise<Organization> {
+    const actor = authStore.user?.id;
+    if (actor === undefined) throw new Error('Nobody is signed in.');
+    const updated = await service().updateOrganization(actor, organizationId, changes);
+    await load();
+    return updated;
+  }
+
+  async function remove(organizationId: OrganizationId): Promise<void> {
+    const actor = authStore.user?.id;
+    if (actor === undefined) throw new Error('Nobody is signed in.');
+    await service().deleteOrganization(actor, organizationId);
+    await load();
+  }
+
+  async function acceptInvitation(token: string): Promise<Membership> {
+    const actor = authStore.user?.id;
+    if (actor === undefined) throw new Error('Nobody is signed in.');
+    const membership = await service().acceptInvitation(actor, token);
+    await load();
+    return membership;
+  }
+
   const activeMembership = computed<PrincipalMembership | null>(() => {
     const { principal, activeOrganizationId } = orgStore;
     if (principal === null || activeOrganizationId === null) return null;
@@ -92,13 +173,24 @@ export function useOrganization(): UseOrganization {
     ) ?? null;
   });
 
+  const activeOrganization = computed<Organization | null>(() => {
+    const { activeOrganizationId } = orgStore;
+    if (activeOrganizationId === null) return null;
+    return organizations.value.find((one) => one.id === activeOrganizationId) ?? null;
+  });
+
   return {
     organizations,
     loading,
     failed,
     activeOrganizationId: computed(() => orgStore.activeOrganizationId),
     activeMembership,
+    activeOrganization,
     load,
     setActive,
+    create,
+    update,
+    remove,
+    acceptInvitation,
   };
 }

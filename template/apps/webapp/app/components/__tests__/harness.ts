@@ -1,9 +1,15 @@
 import type { Component } from 'vue';
 import { defineComponent, h } from 'vue';
 import { vi } from 'vitest';
+import { useAudit } from '~/composables/useAudit';
 import { useAuth } from '~/composables/useAuth';
+import { useCan } from '~/composables/useCan';
 import { useCurrentUser } from '~/composables/useCurrentUser';
+import { useGrants } from '~/composables/useGrants';
 import { useIdentities } from '~/composables/useIdentities';
+import { useInvitations } from '~/composables/useInvitations';
+import { useMembers } from '~/composables/useMembers';
+import { useOrganization } from '~/composables/useOrganization';
 import { useProfile } from '~/composables/useProfile';
 import { usePasswordRecovery } from '~/composables/usePasswordRecovery';
 import { useRegistration } from '~/composables/useRegistration';
@@ -78,9 +84,14 @@ export const navigations: string[] = [];
  * `useRoute()` is an auto-import a page calls with no arguments: there is
  * nowhere to hand it one. A spec sets `route.query` before mounting.
  */
-export const route: { query: Record<string, unknown>; meta: Record<string, unknown> } = {
+export const route: {
+  query: Record<string, unknown>;
+  meta: Record<string, unknown>;
+  params: Record<string, unknown>;
+} = {
   query: {},
   meta: {},
+  params: {},
 };
 
 /** Every `useHead` argument, so a spec can assert a page set a title at all. */
@@ -111,6 +122,12 @@ export function stubAutoImports(): void {
   vi.stubGlobal('usePasswordRecovery', usePasswordRecovery);
   vi.stubGlobal('useRegistration', useRegistration);
   vi.stubGlobal('useSessions', useSessions);
+  vi.stubGlobal('useOrganization', useOrganization);
+  vi.stubGlobal('useInvitations', useInvitations);
+  vi.stubGlobal('useMembers', useMembers);
+  vi.stubGlobal('useGrants', useGrants);
+  vi.stubGlobal('useAudit', useAudit);
+  vi.stubGlobal('useCan', useCan);
   vi.stubGlobal('navigateTo', (to: string) => {
     navigations.push(to);
     return Promise.resolve();
@@ -131,5 +148,6 @@ export function stubAutoImports(): void {
   vi.stubGlobal('useRoute', () => route);
   route.query = {};
   route.meta = {};
+  route.params = {};
   heads.length = 0;
 }

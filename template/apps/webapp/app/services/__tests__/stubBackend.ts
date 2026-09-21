@@ -1,3 +1,5 @@
+import { AuditEntry } from '__FORGE_SCOPE__/core/audit/entities';
+import type { AuditEntryId, AuditEntryJSON } from '__FORGE_SCOPE__/core/audit/types';
 import { Session } from '__FORGE_SCOPE__/core/auth/entities';
 import type { ClientContext, SessionId, SessionJSON } from '__FORGE_SCOPE__/core/auth/types';
 import { isGrantLive } from '__FORGE_SCOPE__/core/authorization/policies';
@@ -169,6 +171,18 @@ export interface StubBackend {
   /** Puts a membership in the world. See `putOrganization` for why. */
   putMembership: (seed: MembershipJSON) => void;
   /**
+   * Puts an audit entry in the world, exactly as the backend would hold and
+   * emit one.
+   *
+   * There is no route that writes one — `record` is not modelled here, the
+   * same way `~/services/organizationAudit.service.ts` does not implement
+   * it — so a driver that wants `GET /organizations/:id/audit` to answer
+   * something seeds it directly, the same way `putOrganization` seeds the
+   * right-hand side of a comparison rather than asking a write route to
+   * produce it.
+   */
+  putAuditEntry: (seed: AuditEntryJSON) => void;
+  /**
    * The token this world minted when it issued one invitation.
    *
    * This is `tokenFor` from `IOrganizationServiceContractDeps`, made
@@ -298,6 +312,7 @@ export function stubBackend(): StubBackend {
   const invitationTokens = new Map<InvitationId, string>();
   const tokenToInvitation = new Map<string, InvitationId>();
   const grants = new Map<GrantId, ResourceGrantJSON>();
+  const auditEntries = new Map<AuditEntryId, AuditEntryJSON>();
   /** Which session an access credential stands for. */
   const credentials = new Map<string, SessionId>();
   /**
@@ -656,6 +671,24 @@ export function stubBackend(): StubBackend {
     refuse(405, 'errors.http.bad_request');
   };
 
+  /**
+   * One `/organizations/:id/audit` request.
+   *
+   * `GET` only — there is no `record` to model, exactly as
+   * `~/services/organizationAudit.service.ts` implements no `record` over
+   * the wire. No membership or permission check on `actor`, for the same
+   * reason `grantRoutes` above has none: that is `PermissionsGuard`'s own
+   * question, decided before a real `AuditService` would ever be called,
+   * and this store draws no finer line than the one route it models.
+   */
+  const auditRoutes = (request: ApiRequest, organizationId: OrganizationId): unknown => {
+    if (request.method !== 'GET') refuse(405, 'errors.http.bad_request');
+    const all = [...auditEntries.values()]
+      .filter((one) => one.organizationId === organizationId)
+      .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+    return paginate(all, request);
+  };
+
   /** One `/organizations` request. */
   const organizationRoutes = (request: ApiRequest, tail: string): unknown => {
     const { method } = request;
@@ -718,6 +751,11 @@ export function stubBackend(): StubBackend {
     const grantsMatch = /^\/([^/]+)\/grants(?:\/([^/]+))?$/.exec(tail);
     if (grantsMatch !== null) {
       return grantRoutes(request, grantsMatch[1] as OrganizationId, grantsMatch[2]);
+    }
+
+    const auditMatch = /^\/([^/]+)\/audit$/.exec(tail);
+    if (auditMatch !== null) {
+      return auditRoutes(request, auditMatch[1] as OrganizationId);
     }
 
     const idMatch = /^\/([^/]+)$/.exec(tail);
@@ -1336,6 +1374,10 @@ export function stubBackend(): StubBackend {
 
     putMembership(seed: MembershipJSON): void {
       memberships.set(seed.id, Membership.fromJSON(seed).toJSON());
+    },
+
+    putAuditEntry(seed: AuditEntryJSON): void {
+      auditEntries.set(seed.id, AuditEntry.fromJSON(seed).toJSON());
     },
 
     tokenForInvitation(invitationId: InvitationId): string {
