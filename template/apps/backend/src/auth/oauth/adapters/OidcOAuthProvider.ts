@@ -38,23 +38,24 @@ const DISCOVERY_PATH = '/.well-known/openid-configuration';
  * that fails this check is refused before a single request carries a secret
  * anywhere it named.
  *
- * ## Why `authorizationUrl` can throw before a browser is ever sent anywhere
+ * ## Discovery happens on first use, not at start-up
  *
- * `IOAuthProvider.authorizationUrl` is synchronous — it returns a `string`,
- * not a `Promise<string>` — because everything it returns is a URL the
- * *browser* carries, built with no network call of its own. Discovery,
- * however, is a network call, and this adapter has no endpoint to build that
- * URL from until it completes. The two are reconciled by {@link warmUp}: not
- * part of `IOAuthProvider` (same idiom as `DevOAuthProvider.mintAuthorizationCode`
- * — an adapter may carry more than its port requires), it performs discovery
- * ahead of the first request and is meant to be awaited once, at start-up,
- * before this adapter is reachable from any route. `authorizationUrl` throws,
- * with a message naming `warmUp`, rather than return a URL built from
- * nothing — a broken link discovered by whoever clicks it first is worse than
- * a start-up failure, the same reasoning `buildOAuthProviders` already
- * applies to a missing `PUBLIC_API_URL`. `fetchAccount` does not have this
- * problem: it is already `Promise`-returning, so it can simply await
- * discovery itself the first time it is called, `warmUp` or not.
+ * `IOAuthProvider.authorizationUrl` returns `Promise<string>` precisely so
+ * this adapter can await discovery inline rather than needing it to have
+ * completed already — see that interface's own doc. Both `authorizationUrl`
+ * and `fetchAccount` call {@link OidcOAuthProvider.ensureEndpoints}, which
+ * fetches the discovery document on the first call from either method and
+ * caches the *in-flight* promise (not merely the resolved value), so two
+ * concurrent first calls — one to each method, or two callers racing — share
+ * one fetch rather than issuing two.
+ *
+ * Discovery is deliberately lazy rather than performed eagerly at start-up:
+ * an issuer that is merely unreachable for a moment would otherwise fail this
+ * whole application's boot, which is a far larger outage than one federated
+ * provider being unavailable for the one person who tries it during that
+ * window. A failed discovery is not cached — the next call retries — so a
+ * transient outage costs one failed sign-in attempt, not every attempt for
+ * the rest of the process's life.
  */
 export class OidcOAuthProvider implements IOAuthProvider {
   public readonly provider = AuthProvider.OIDC;
@@ -73,20 +74,14 @@ export class OidcOAuthProvider implements IOAuthProvider {
 
   /**
    * @returns the URL to send the browser to, built from the discovered
-   *   authorization endpoint.
-   * @throws if discovery has not completed — call {@link warmUp} once at
-   *   start-up before this adapter serves a request.
+   *   authorization endpoint. Awaits discovery inline on the first call (see
+   *   this class's own doc); every call after the first, whether discovery
+   *   already succeeded or is still in flight, resolves without a second fetch.
    */
-  public authorizationUrl(params: AuthorizationUrlParams): string {
-    if (!this.endpoints) {
-      throw new Error(
-        'OidcOAuthProvider: discovery has not completed yet. Call warmUp() once at start-up, '
-        + 'before this adapter is reachable from a route — authorizationUrl is synchronous by '
-        + 'IOAuthProvider\'s own contract and cannot itself await the discovery document.',
-      );
-    }
+  public async authorizationUrl(params: AuthorizationUrlParams): Promise<string> {
+    const endpoints = await this.ensureEndpoints();
     return buildAuthorizationUrl(
-      this.endpoints.authorizationEndpoint, this.credentials.clientId, params,
+      endpoints.authorizationEndpoint, this.credentials.clientId, params,
     );
   }
 
@@ -103,16 +98,15 @@ export class OidcOAuthProvider implements IOAuthProvider {
   }
 
   /**
-   * Performs discovery ahead of the first request, so {@link authorizationUrl}
-   * has something to build from. Not part of `IOAuthProvider`. Idempotent and
-   * safe to call more than once — every call after the first resolves the
-   * same cached endpoints (or re-attempts discovery, if every prior attempt
-   * failed).
+   * The single path both public methods discover endpoints through. Caches
+   * the **in-flight promise**, not the resolved value, in `this.discovery` —
+   * assigned synchronously, before this method's first `await` runs — so a
+   * second call arriving before the first has resolved (whether from the
+   * other public method or a second caller of this one) sees that promise
+   * already set and awaits the same fetch rather than starting another one.
+   * `OidcOAuthProvider.spec.ts`'s "fetches the discovery document only once
+   * under concurrent first calls" is what turns red if that guarantee breaks.
    */
-  public async warmUp(): Promise<void> {
-    await this.ensureEndpoints();
-  }
-
   private ensureEndpoints(): Promise<OidcEndpoints> {
     if (this.endpoints) {
       return Promise.resolve(this.endpoints);

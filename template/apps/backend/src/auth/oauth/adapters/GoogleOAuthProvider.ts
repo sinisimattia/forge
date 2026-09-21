@@ -36,8 +36,14 @@ export class GoogleOAuthProvider implements IOAuthProvider {
     private readonly http: typeof fetch = fetch,
   ) {}
 
-  /** @returns the URL to send the browser to at Google's own authorization endpoint. */
-  public authorizationUrl(params: AuthorizationUrlParams): string {
+  /**
+   * @returns the URL to send the browser to at Google's own authorization
+   *   endpoint. `async` for no reason of this method's own — building it is
+   *   pure string work, no I/O — but `IOAuthProvider.authorizationUrl` returns
+   *   `Promise<string>` for every adapter, because `OidcOAuthProvider` needs
+   *   to. See that interface's own doc for why.
+   */
+  public async authorizationUrl(params: AuthorizationUrlParams): Promise<string> {
     return buildAuthorizationUrl(AUTHORIZATION_ENDPOINT, this.credentials.clientId, params);
   }
 

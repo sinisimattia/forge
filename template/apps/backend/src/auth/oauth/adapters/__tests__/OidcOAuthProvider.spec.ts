@@ -82,22 +82,10 @@ function adapterWith(http: jest.Mock): OidcOAuthProvider {
 
 describe('OidcOAuthProvider', () => {
   describe('authorizationUrl', () => {
-    it('throws when called before discovery has completed', () => {
-      // authorizationUrl is synchronous by IOAuthProvider's own contract and
-      // cannot itself await the discovery document — a URL built from nothing
-      // would be a broken link discovered by whoever clicks it first.
+    it('builds a URL at the discovered authorization endpoint, awaiting discovery inline', async () => {
       const adapter = adapterWith(stubHttp({}));
 
-      expect(() => adapter.authorizationUrl({
-        state: 's', codeChallenge: 'c', redirectUri: 'https://app.example.test/cb',
-      })).toThrow(/warmUp/);
-    });
-
-    it('builds a URL at the discovered authorization endpoint once warmed up', async () => {
-      const adapter = adapterWith(stubHttp({}));
-      await adapter.warmUp();
-
-      const url = new URL(adapter.authorizationUrl({
+      const url = new URL(await adapter.authorizationUrl({
         state: 'state-value',
         codeChallenge: 'challenge-value',
         redirectUri: 'https://app.example.test/auth/oauth/callback',
@@ -109,14 +97,58 @@ describe('OidcOAuthProvider', () => {
       expect(url.searchParams.get('code_challenge')).toBe('challenge-value');
       expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     });
+  });
 
-    it('fetches the discovery document only once across repeated warmUp calls', async () => {
+  describe('discovery is fetched once and cached for the process lifetime', () => {
+    it('fetches the discovery document only once across repeated authorizationUrl calls', async () => {
       const http = stubHttp({});
       const adapter = adapterWith(http);
 
-      await adapter.warmUp();
-      await adapter.warmUp();
-      adapter.authorizationUrl({ state: 's', codeChallenge: 'c', redirectUri: 'https://app.example.test/cb' });
+      await adapter.authorizationUrl({ state: 's1', codeChallenge: 'c1', redirectUri: 'https://app.example.test/cb' });
+      await adapter.authorizationUrl({ state: 's2', codeChallenge: 'c2', redirectUri: 'https://app.example.test/cb' });
+
+      const discoveryCalls = http.mock.calls.filter(([url]) => String(url) === DISCOVERY_URL);
+      expect(discoveryCalls).toHaveLength(1);
+    });
+
+    it('fetches the discovery document only once across repeated fetchAccount calls', async () => {
+      const http = stubHttp({});
+      const adapter = adapterWith(http);
+
+      await adapter.fetchAccount(EXCHANGE_PARAMS);
+      await adapter.fetchAccount(EXCHANGE_PARAMS);
+
+      const discoveryCalls = http.mock.calls.filter(([url]) => String(url) === DISCOVERY_URL);
+      expect(discoveryCalls).toHaveLength(1);
+    });
+
+    it('fetches the discovery document only once under two concurrent first calls to authorizationUrl', async () => {
+      // The property that matters: the in-flight promise is cached, not just the
+      // resolved value. Two calls racing before the first fetch has resolved must
+      // share that one fetch rather than each starting their own — the cheap way
+      // to get this subtly wrong is to check `if (this.endpoints)` and otherwise
+      // just re-await `this.discover()` inline, which lets a second caller arrive
+      // in the window before the first has stored anything.
+      const http = stubHttp({});
+      const adapter = adapterWith(http);
+
+      await Promise.all([
+        adapter.authorizationUrl({ state: 's1', codeChallenge: 'c1', redirectUri: 'https://app.example.test/cb' }),
+        adapter.authorizationUrl({ state: 's2', codeChallenge: 'c2', redirectUri: 'https://app.example.test/cb' }),
+      ]);
+
+      const discoveryCalls = http.mock.calls.filter(([url]) => String(url) === DISCOVERY_URL);
+      expect(discoveryCalls).toHaveLength(1);
+    });
+
+    it('fetches the discovery document only once when authorizationUrl and fetchAccount race on the first call', async () => {
+      const http = stubHttp({});
+      const adapter = adapterWith(http);
+
+      await Promise.all([
+        adapter.authorizationUrl({ state: 's', codeChallenge: 'c', redirectUri: 'https://app.example.test/cb' }),
+        adapter.fetchAccount(EXCHANGE_PARAMS),
+      ]);
 
       const discoveryCalls = http.mock.calls.filter(([url]) => String(url) === DISCOVERY_URL);
       expect(discoveryCalls).toHaveLength(1);
@@ -272,17 +304,6 @@ describe('OidcOAuthProvider', () => {
       }));
 
       await expect(adapter.fetchAccount(EXCHANGE_PARAMS)).rejects.toThrow();
-    });
-
-    it('reuses a warmed-up discovery result rather than fetching it again', async () => {
-      const http = stubHttp({});
-      const adapter = adapterWith(http);
-
-      await adapter.warmUp();
-      await adapter.fetchAccount(EXCHANGE_PARAMS);
-
-      const discoveryCalls = http.mock.calls.filter(([url]) => String(url) === DISCOVERY_URL);
-      expect(discoveryCalls).toHaveLength(1);
     });
 
     it('reports the account the provider actually returned, subject and all', async () => {

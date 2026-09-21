@@ -39,12 +39,32 @@ export interface ExchangeParams {
  * access credential, no refresh credential, no raw provider payload. A provider
  * credential this application keeps is a provider credential this application
  * can leak, and nothing here needs one after the exchange.
+ *
+ * **`authorizationUrl` returns `Promise<string>`, not `string`.** Building the
+ * URL itself is pure string work for every adapter, and for two of the three
+ * (`GoogleOAuthProvider`, `DevOAuthProvider`) that is the whole of it — neither
+ * does any I/O to answer this method, and `async` on them is nothing more than
+ * the keyword. The third, `OidcOAuthProvider`, does not have that luxury: it
+ * has no authorization endpoint of its own to build a URL from until it has
+ * fetched the issuer's discovery document, and that is a network call. Making
+ * every implementation's method asynchronous, rather than carving out a
+ * synchronous exception for two adapters and an asynchronous one for the
+ * third, keeps this a single contract with one shape — a caller awaits once,
+ * regardless of which adapter is behind it, instead of needing to know which
+ * providers happen to require a network round trip before they can answer.
+ * The alternative — a synchronous signature plus an adapter-specific
+ * "call this first" warm-up step with no place in the port for the compiler
+ * or a test to see it — was tried and rejected: a deployment that forgot the
+ * warm-up call would boot cleanly and fail only when the first person clicked
+ * "sign in," which is exactly the "button that fails when someone presses it"
+ * ADR-0008 rules out for an unconfigured provider, reintroduced here for a
+ * configured one instead.
  */
 export interface IOAuthProvider {
   /** Which provider this is. Never `AuthProvider.PASSWORD`. */
   readonly provider: AuthProvider;
   /** @returns the absolute URL to send the browser to */
-  authorizationUrl(params: AuthorizationUrlParams): string;
+  authorizationUrl(params: AuthorizationUrlParams): Promise<string>;
   /** @returns what the provider asserts about the account that just approved this */
   fetchAccount(params: ExchangeParams): Promise<FederatedAccount>;
 }

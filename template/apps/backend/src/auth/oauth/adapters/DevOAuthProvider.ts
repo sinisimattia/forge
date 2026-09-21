@@ -94,8 +94,15 @@ export class DevOAuthProvider implements IOAuthProvider {
    */
   public constructor(private readonly publicApiUrl: string) {}
 
-  /** @returns the address-collection page's URL, carrying everything it needs to complete the round trip. */
-  public authorizationUrl(params: AuthorizationUrlParams): string {
+  /**
+   * @returns the address-collection page's URL, carrying everything it needs
+   *   to complete the round trip. `async` for no reason of this method's
+   *   own — it does no I/O — but `IOAuthProvider.authorizationUrl` returns
+   *   `Promise<string>` for every adapter, because `OidcOAuthProvider` needs
+   *   to and a port is one shape for every implementation behind it. See
+   *   that interface's own doc for why.
+   */
+  public async authorizationUrl(params: AuthorizationUrlParams): Promise<string> {
     const query = new URLSearchParams({
       state: params.state,
       code_challenge: params.codeChallenge,

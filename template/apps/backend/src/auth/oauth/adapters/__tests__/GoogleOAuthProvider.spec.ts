@@ -64,10 +64,10 @@ function adapterWith(http: jest.Mock): GoogleOAuthProvider {
 
 describe('GoogleOAuthProvider', () => {
   describe('authorizationUrl', () => {
-    it('builds a URL at Google\'s own authorization endpoint, carrying state and the PKCE challenge', () => {
+    it('builds a URL at Google\'s own authorization endpoint, carrying state and the PKCE challenge', async () => {
       const adapter = adapterWith(stubHttp({}));
 
-      const url = new URL(adapter.authorizationUrl({
+      const url = new URL(await adapter.authorizationUrl({
         state: 'state-value',
         codeChallenge: 'challenge-value',
         redirectUri: 'https://app.example.test/auth/oauth/callback',
@@ -80,14 +80,28 @@ describe('GoogleOAuthProvider', () => {
       expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     });
 
-    it('never carries the client secret', () => {
+    it('never carries the client secret', async () => {
       const adapter = adapterWith(stubHttp({}));
 
-      const url = adapter.authorizationUrl({
+      const url = await adapter.authorizationUrl({
         state: 's', codeChallenge: 'c', redirectUri: 'https://app.example.test/cb',
       });
 
       expect(url).not.toContain(OAUTH_GOOGLE_CLIENT_SECRET);
+    });
+
+    it('resolves without ever calling http — this adapter has no discovery to await', async () => {
+      // GoogleOAuthProvider.authorizationUrl is `async` only because
+      // IOAuthProvider requires it of every adapter (see that interface's own
+      // doc); it does no I/O of its own, unlike OidcOAuthProvider's.
+      const http = stubHttp({});
+      const adapter = adapterWith(http);
+
+      await adapter.authorizationUrl({
+        state: 's', codeChallenge: 'c', redirectUri: 'https://app.example.test/cb',
+      });
+
+      expect(http).not.toHaveBeenCalled();
     });
   });
 

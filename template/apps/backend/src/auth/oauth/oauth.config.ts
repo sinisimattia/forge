@@ -51,7 +51,7 @@ function hasCredentialPair(config: ConfigService, idKey: string, secretKey: stri
 export class UnimplementedOAuthProvider implements IOAuthProvider {
   constructor(public readonly provider: AuthProvider) {}
 
-  authorizationUrl(): string {
+  async authorizationUrl(): Promise<string> {
     return this.notImplemented();
   }
 
