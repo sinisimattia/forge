@@ -60,8 +60,21 @@ describe('buildOAuthProviders', () => {
       NODE_ENV: 'development',
       PUBLIC_API_URL: 'http://localhost:3000',
       OAUTH_DEV_ENABLED: '1',
+      OAUTH_DEV_EMAIL: 'dev-signin@example.test',
     }));
     expect(built.map((p) => p.provider)).toEqual([AuthProvider.OIDC]);
+  });
+
+  it('refuses to start when the development provider is enabled but OAUTH_DEV_EMAIL is not', () => {
+    // Same shape as the PUBLIC_API_URL regression case just below: the one
+    // address this adapter will ever assert has to come from configuration,
+    // fail at start-up when it is missing, and never fall back to a
+    // placeholder nobody chose.
+    expect(() => buildOAuthProviders(configOf({
+      NODE_ENV: 'development',
+      PUBLIC_API_URL: 'http://localhost:3000',
+      OAUTH_DEV_ENABLED: '1',
+    }))).toThrow(/OAUTH_DEV_EMAIL/);
   });
 
   it('refuses to start when a provider is configured but PUBLIC_API_URL is not', () => {
@@ -129,6 +142,7 @@ describe('buildOAuthProviders', () => {
       const built = buildOAuthProviders(configOf({
         PUBLIC_API_URL: 'http://localhost:3000',
         OAUTH_DEV_ENABLED: '1',
+        OAUTH_DEV_EMAIL: 'dev-signin@example.test',
       }));
       expect(built.map((p) => p.provider)).toEqual([AuthProvider.OIDC]);
     });
@@ -165,6 +179,7 @@ describe('buildOAuthProviders', () => {
       const built = buildOAuthProviders(configOf({
         PUBLIC_API_URL: 'http://localhost:3000',
         OAUTH_DEV_ENABLED: '1',
+        OAUTH_DEV_EMAIL: 'dev-signin@example.test',
         OAUTH_GOOGLE_CLIENT_ID: 'id', OAUTH_GOOGLE_CLIENT_SECRET: 'OAUTH_GOOGLE_CLIENT_SECRET',
         OAUTH_GITHUB_CLIENT_ID: 'id', OAUTH_GITHUB_CLIENT_SECRET: 'OAUTH_GITHUB_CLIENT_SECRET',
       }));

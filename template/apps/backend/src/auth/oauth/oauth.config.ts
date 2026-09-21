@@ -53,6 +53,26 @@ function hasCredentialPair(config: ConfigService, idKey: string, secretKey: stri
  * authorization URL, so a missing value is a boot failure and not a broken
  * sign-in link discovered by whoever clicks it first.
  *
+ * (Since Task 12, `OAuthService` — the one consumer of whatever this function
+ * returns — reads this same variable unconditionally, in its own constructor,
+ * whether or not any provider is configured. The check here is not made
+ * redundant by that: `OAuthProviderRegistry`, which is built from this
+ * function's own return value, is one of `OAuthService`'s dependencies, so
+ * Nest constructs this function's result before `OAuthService` ever runs —
+ * this is still the first place a missing value is caught, and the only place
+ * that catches it *only* when a provider was actually configured, which is
+ * what the four tests below this doc pin.)
+ *
+ * ## `OAUTH_DEV_EMAIL`
+ *
+ * Required whenever `OAUTH_DEV_ENABLED` is, on the same terms as every other
+ * provider's own credentials: absent it, this factory refuses to build the
+ * development provider rather than falling back to a placeholder address
+ * nobody chose. It is the one address {@link DevOAuthProvider} will ever
+ * assert — see that class's own doc for why a fixed, configured address
+ * (never a page, never a request) is what makes it a *development* adapter
+ * rather than an unauthenticated sign-in form with extra steps.
+ *
  * ## Two refusals, not one
  *
  * **Production never runs the development provider.** `OAUTH_DEV_ENABLED`
@@ -119,7 +139,15 @@ export function buildOAuthProviders(config: ConfigService): IOAuthProvider[] {
     return [];
   }
 
-  const publicApiUrl = config.getOrThrow<string>('PUBLIC_API_URL');
+  // Required the moment any provider is about to be built, including the
+  // development one — see this function's own `## PUBLIC_API_URL` doc above.
+  // The value itself is not needed below: every real adapter's redirect URI
+  // is built by `OAuthService`, not here, and Task 12 stopped
+  // `DevOAuthProvider` needing it too (its `authorizationUrl` now echoes back
+  // `params.redirectUri`, which is already that same value). Called for the
+  // throw alone, so a deployment missing it still fails here rather than on
+  // whichever adapter happens to be built first.
+  config.getOrThrow<string>('PUBLIC_API_URL');
 
   const providers: IOAuthProvider[] = [];
   if (googleConfigured) {
@@ -147,7 +175,12 @@ export function buildOAuthProviders(config: ConfigService): IOAuthProvider[] {
     ));
   }
   if (devEnabled) {
-    providers.push(new DevOAuthProvider(publicApiUrl));
+    // Required whenever the development provider is enabled, on the same
+    // "fail at start-up, not on first click" terms as every other
+    // provider's own credentials above — see `DevOAuthProvider`'s own doc
+    // for why this is the one and only address it will ever assert, and why
+    // that has to come from configuration rather than a page.
+    providers.push(new DevOAuthProvider(config.getOrThrow<string>('OAUTH_DEV_EMAIL')));
   }
 
   return providers;

@@ -34,13 +34,34 @@ export const DEV_OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
  * account behind it does not. See `NoOpBreachedPasswordRegistry` for the same
  * argument made about a different port.
  *
- * **It is not a stub that can be left alone; it is a bypass with a green light
- * on.** `fetchAccount` hands back `emailVerified: true` for whatever address
- * was typed into this adapter's own page, with no credential presented and no
- * party other than this process ever asked to confirm anything. That is a
- * total authentication bypass, on purpose, so a freshly generated project can
- * exercise the whole sign-in flow before anyone has registered a real
- * provider anywhere.
+ * **It auto-approves — no human step of any kind, and no page.** This is what
+ * makes it a *development* adapter rather than merely a convenient one:
+ * `authorizationUrl` mints a code for the one address this deployment
+ * configured (`OAUTH_DEV_EMAIL`) and returns `redirectUri` — this
+ * application's own callback, the same URL `OidcOAuthProvider`,
+ * `GoogleOAuthProvider` and `GitHubOAuthProvider` are redirected back to —
+ * with that code and the caller's `state` already attached. Pressing
+ * "sign in" redirects straight back into the real callback, which does
+ * everything a real provider's callback does: the row lookup under a write
+ * lock, single-use consumption, the exchange, `decideFederatedSignIn` or
+ * `decideFederatedLink`, session issuance. **There has never been a page, and
+ * Task 12 ruled out building one**: the first cut of this adapter left
+ * `authorizationUrl` pointing at an unbuilt `GET /auth/oauth/dev/authorize`
+ * that 404'd — exactly the "button that fails when someone presses it"
+ * ADR-0008 forbids, and it also made an end-to-end walk through this adapter
+ * impossible. Routing straight back into the real callback closes both at
+ * once, with no HTML ever served from this REST API and no open-redirect
+ * trust decision to make about a caller-supplied destination — see
+ * {@link DevOAuthProvider.authorizationUrl}'s own doc for exactly what it
+ * returns and why nothing here reads a redirect target from anywhere but
+ * `params.redirectUri`, which this application itself constructed.
+ *
+ * `fetchAccount` hands back `emailVerified: true` for `OAUTH_DEV_EMAIL` with
+ * no credential presented and no party other than this process ever asked to
+ * confirm anything. That is a total authentication bypass, on purpose, so a
+ * freshly generated project can exercise the whole sign-in flow — and,
+ * config permitting, the link-conflict flow Task 19's own walk needs — before
+ * anyone has registered a real provider anywhere.
  *
  * **This class does not itself refuse to run in production — that refusal is
  * not its job.** `buildOAuthProviders` in `../oauth.config.ts` owns both
@@ -81,23 +102,17 @@ export const DEV_OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
  * one past `exp`, or one already redeemed by this instance (`consumed`,
  * below) — is refused, with the same shape of error for every case (see that
  * method's own doc for why the refusals are deliberately indistinguishable).
+ * A minted code replaying indefinitely was a real weakness even while nothing
+ * called `mintAuthorizationCode` (Task 6's own carried note); now something
+ * does, on every single sign-in through this adapter, so `exp` and `consumed`
+ * are load-bearing rather than merely prudent.
  *
- * `authorizationUrl` cannot mint a code itself: it is called before this
- * adapter knows any address, with only a state value, a PKCE challenge and a
- * redirect URI to work with. It returns a URL, on this deployment's own
- * origin, for a page that collects an address and mints the code once one is
- * given — the page and the route that serves it are still not this class's
- * job and are still not wired: Task 12 closed the `mintAuthorizationCode`
- * seam itself (expiry, single-use) rather than building that page ahead of a
- * design for it, and flagged the gap for the coordinator instead. This class
- * only has to be ready to mint and to verify.
- *
- * `codeVerifier` and `redirectUri` are accepted, to satisfy `IOAuthProvider`'s
- * shape, and deliberately not checked. PKCE exists to stop an authorization
- * code stolen in transit between a real provider and an untrusted client from
- * being redeemed by anyone but the party that started the request; here the
- * code is minted and redeemed inside this one process, by this one adapter,
- * for a flow with no such provider on the other end. Checking a value against
+ * `codeVerifier` is accepted, to satisfy `IOAuthProvider`'s shape, and
+ * deliberately not checked. PKCE exists to stop an authorization code stolen
+ * in transit between a real provider and an untrusted client from being
+ * redeemed by anyone but the party that started the request; here the code is
+ * minted and redeemed inside this one process, by this one adapter, for a
+ * flow with no such provider on the other end. Checking a value against
  * nothing it was ever compared to at mint time would be a check in name only.
  */
 export class DevOAuthProvider implements IOAuthProvider {
@@ -126,54 +141,66 @@ export class DevOAuthProvider implements IOAuthProvider {
   private readonly consumed = new Set<string>();
 
   /**
-   * @param publicApiUrl - this deployment's own origin (`PUBLIC_API_URL`),
-   *   the same value `buildOAuthProviders` already requires before building
-   *   any provider. Never derived from a request.
+   * @param address - the one address this adapter ever asserts, from this
+   *   deployment's own configuration (`OAUTH_DEV_EMAIL`, required whenever
+   *   `OAUTH_DEV_ENABLED` is — see `buildOAuthProviders`). Never taken from a
+   *   request, a query parameter, or anything a caller supplies: there is no
+   *   page and no per-request input of any kind, which is exactly what makes
+   *   this a "no human step" bypass rather than a form with a text field.
    */
-  public constructor(private readonly publicApiUrl: string) {}
+  public constructor(private readonly address: string) {}
 
   /**
-   * @returns the address-collection page's URL, carrying everything it needs
-   *   to complete the round trip. `async` for no reason of this method's
-   *   own — it does no I/O — but `IOAuthProvider.authorizationUrl` returns
-   *   `Promise<string>` for every adapter, because `OidcOAuthProvider` needs
-   *   to and a port is one shape for every implementation behind it. See
-   *   that interface's own doc for why.
+   * Mints a code for {@link DevOAuthProvider.address} and hands back
+   * `redirectUri` — this application's own callback — carrying that code and
+   * the caller's `state`. **No page, no separate address-collection step:**
+   * a browser sent to this URL lands directly back at
+   * `GET /auth/oauth/:provider/callback`, which does the whole of the real
+   * flow from there. `params.codeChallenge` and `params.codeVerifier` are
+   * accepted, to satisfy `IOAuthProvider`'s shape, and never read — see the
+   * class's own doc for why PKCE has nothing to check here.
+   *
+   * `async` for no reason of this method's own — it does no I/O — but
+   * `IOAuthProvider.authorizationUrl` returns `Promise<string>` for every
+   * adapter, because `OidcOAuthProvider` needs to and a port is one shape for
+   * every implementation behind it. See that interface's own doc for why.
    */
   public async authorizationUrl(params: AuthorizationUrlParams): Promise<string> {
-    const query = new URLSearchParams({
-      state: params.state,
-      code_challenge: params.codeChallenge,
-      // RFC 7636: an authorization request carrying `code_challenge` with no
-      // `code_challenge_method` defaults to `plain` — a challenge equal to its
-      // own verifier, the one method this phase forbids offering (see the
-      // three real adapters, which all assert `'S256'`). This adapter ignores
-      // PKCE entirely (see the class's own doc), so the omission was
-      // functionally inert; it is fixed anyway because this URL is what a
-      // generated project uses to rehearse the real flow, and it must not
-      // model the forbidden method.
-      code_challenge_method: 'S256',
-      redirect_uri: params.redirectUri,
-    });
-    return `${this.publicApiUrl}/auth/oauth/dev/authorize?${query.toString()}`;
+    const code = this.mintAuthorizationCode(this.address);
+    const query = new URLSearchParams({ code, state: params.state });
+    return `${params.redirectUri}?${query.toString()}`;
   }
 
   /**
-   * Mints a code asserting `address`, for the not-yet-wired page described
-   * above to hand back to the callback. Not part of {@link IOAuthProvider} —
-   * nothing upstream of a real address exists to call it yet (see this
-   * class's own doc: the page that collects an address and calls this method
-   * still has no route, and remains outside this task's scope — flagged for
-   * the coordinator rather than built ahead of a design for it).
+   * Mints a code asserting `address`. Not part of {@link IOAuthProvider} —
+   * `authorizationUrl` is this class's only caller in production, always
+   * with {@link DevOAuthProvider.address}; kept `public` and parameterised
+   * (rather than reading `this.address` directly) because this suite mints
+   * codes for arbitrary test addresses to exercise `fetchAccount` in
+   * isolation.
    *
    * The payload carries `exp` alongside `address`, signed together — Task
    * 12's seam-closing: a code minted here is good for
    * {@link DEV_OAUTH_CODE_TTL_MS} and no longer, checked in
    * {@link DevOAuthProvider.fetchAccount} the same way a real provider's own
    * authorization code would expire.
+   *
+   * `nonce` exists so that two codes minted for the same address within the
+   * same millisecond are never byte-identical — found by this class's own
+   * test for "mints a fresh code on every call" failing, the first time it
+   * was written, because `{ address, exp }` alone collides whenever `Date.now()`
+   * has not ticked between two calls. Two colliding codes would share one
+   * signature in {@link DevOAuthProvider.consumed}, so redeeming the first of
+   * two pending authorizations would silently spend the second's code too —
+   * a real, if narrow, correctness gap this field closes outright rather than
+   * leaving to timing.
    */
   public mintAuthorizationCode(address: string): string {
-    const encoded = DevOAuthProvider.encode({ address, exp: Date.now() + DEV_OAUTH_CODE_TTL_MS });
+    const encoded = DevOAuthProvider.encode({
+      address,
+      exp: Date.now() + DEV_OAUTH_CODE_TTL_MS,
+      nonce: randomBytes(9).toString('base64url'),
+    });
     return `${encoded}${CODE_DELIMITER}${this.sign(encoded)}`;
   }
 
@@ -255,10 +282,12 @@ export class DevOAuthProvider implements IOAuthProvider {
   /**
    * The inverse of {@link DevOAuthProvider.encode}, answering `null` for
    * anything that does not decode to exactly the shape this class ever
-   * wrote — including the pre-Task-12 shape, a bare address with no `exp` at
-   * all: this process never persists a code past its own lifetime, so there
-   * is no old shape in the wild to stay compatible with, and the safe
-   * default for anything unrecognised is to refuse it rather than guess.
+   * wrote — including every earlier shape this file has had (a bare address
+   * with no `exp` at all before Task 12; `{ address, exp }` with no `nonce`
+   * in Task 12's first pass): this process never persists a code past its
+   * own lifetime, so there is no old shape in the wild to stay compatible
+   * with, and the safe default for anything unrecognised is to refuse it
+   * rather than guess.
    */
   private static decode(encoded: string): DevOAuthCodePayload | null {
     let parsed: unknown;
@@ -271,6 +300,7 @@ export class DevOAuthProvider implements IOAuthProvider {
       typeof parsed !== 'object' || parsed === null
       || typeof (parsed as { address?: unknown }).address !== 'string'
       || typeof (parsed as { exp?: unknown }).exp !== 'number'
+      || typeof (parsed as { nonce?: unknown }).nonce !== 'string'
     ) {
       return null;
     }
@@ -282,4 +312,6 @@ export class DevOAuthProvider implements IOAuthProvider {
 interface DevOAuthCodePayload {
   readonly address: string;
   readonly exp: number;
+  /** Never read back out — present only so two codes are never byte-identical. */
+  readonly nonce: string;
 }
