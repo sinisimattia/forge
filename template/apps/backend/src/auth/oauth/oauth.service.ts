@@ -112,11 +112,15 @@ export type CompletedAuthorization
  * boundary and never a class anything outside this file has a reason to
  * name.
  *
- * Carries `redirectTo` because most of the checks it stands for find the row
- * before refusing it — expired, already consumed, or issued for a different
- * provider all read a real row first — and that row's own `redirectTo` is
- * still the right one to echo. Only "no row answers to this state at all"
- * has nothing to carry, and passes `null`.
+ * Carries `redirectTo` because one of the checks it stands for — expired —
+ * finds a real row before refusing it, and that row's own `redirectTo` is
+ * the right one to echo back so the browser lands where it asked to go.
+ * Every `AUTHORIZATION_UNKNOWN` refusal passes `null` instead, **even the
+ * ones that also found a row** (already consumed, wrong provider, the
+ * race-defensive re-check): those three and "no row answers to this state
+ * at all" are meant to be indistinguishable from outside, and echoing a
+ * row's `redirectTo` only on three of the four would let whoever presents a
+ * state learn that a row existed exactly when the fourth case wouldn't.
  */
 class AuthorizationRowRefusal extends Error {
   public constructor(
@@ -292,9 +296,28 @@ export class OAuthService {
     );
     const linkedIdentity = linkedRow === null ? null : IdentitiesService.toEntity(linkedRow);
 
-    return row.purpose === OAuthAuthorizationPurpose.LINK
-      ? this.completeLink(row, linkedIdentity, provider.provider, account.subject, now, client)
-      : this.completeSignIn(row, account, linkedIdentity, now, client);
+    // An explicit dispatch on both values `purpose` is ever written with,
+    // never a fallthrough default. `purpose` is plain `text` with no SQL
+    // constraint (see `OAuthAuthorizationPurpose`'s own TSDoc), so a row
+    // whose value is neither is reachable in principle — corruption, a
+    // future writer, a botched migration. A ternary that reads "not LINK,
+    // so treat it as a sign-in" would answer such a row by minting a
+    // session; the safe default on a security branch is to refuse, not to
+    // guess.
+    if (row.purpose === OAuthAuthorizationPurpose.SIGN_IN) {
+      return this.completeSignIn(row, account, linkedIdentity, provider.provider, now, client);
+    }
+    if (row.purpose === OAuthAuthorizationPurpose.LINK) {
+      return this.completeLink(
+        row,
+        linkedIdentity,
+        provider.provider,
+        account.subject,
+        now,
+        client,
+      );
+    }
+    return { status: 'REFUSED', code: 'AUTHORIZATION_UNKNOWN', redirectTo: null };
   }
 
   /**
@@ -318,10 +341,17 @@ export class OAuthService {
       lock: { mode: 'pessimistic_write' },
     });
 
+    // Every AUTHORIZATION_UNKNOWN throw below passes `null`, never
+    // `found.redirectTo`, even on the three branches that DID find a row —
+    // already consumed, wrong provider, and the race-defensive re-check
+    // after the update. Echoing the row's own `redirectTo` only on
+    // AUTHORIZATION_EXPIRED (below) and never on AUTHORIZATION_UNKNOWN is
+    // what makes "no row answers to this state" and "a row does, but this
+    // presentation of it is refused for a different reason" genuinely
+    // indistinguishable from outside, on every field of the response, not
+    // only on `code`.
     if (found === null) throw new AuthorizationRowRefusal('AUTHORIZATION_UNKNOWN', null);
-    if (found.consumedAt !== null) {
-      throw new AuthorizationRowRefusal('AUTHORIZATION_UNKNOWN', found.redirectTo);
-    }
+    if (found.consumedAt !== null) throw new AuthorizationRowRefusal('AUTHORIZATION_UNKNOWN', null);
     if (found.expiresAt.getTime() <= now.getTime()) {
       throw new AuthorizationRowRefusal('AUTHORIZATION_EXPIRED', found.redirectTo);
     }
@@ -330,9 +360,7 @@ export class OAuthService {
     // callback is indistinguishable, from here, from a state presented at
     // the right callback but naming the wrong one. Both are
     // AUTHORIZATION_UNKNOWN.
-    if (found.provider !== provider) {
-      throw new AuthorizationRowRefusal('AUTHORIZATION_UNKNOWN', found.redirectTo);
-    }
+    if (found.provider !== provider) throw new AuthorizationRowRefusal('AUTHORIZATION_UNKNOWN', null);
 
     // The `affected` count is read for the reason `AuthService.verifyEmail`
     // reads its own: redundant while the lock above is held, and the only
@@ -343,9 +371,7 @@ export class OAuthService {
       { id: found.id, consumedAt: IsNull() },
       { consumedAt: now },
     );
-    if (consumed.affected !== 1) {
-      throw new AuthorizationRowRefusal('AUTHORIZATION_UNKNOWN', found.redirectTo);
-    }
+    if (consumed.affected !== 1) throw new AuthorizationRowRefusal('AUTHORIZATION_UNKNOWN', null);
 
     return { ...found, consumedAt: now };
   }
@@ -363,6 +389,7 @@ export class OAuthService {
     row: OAuthAuthorizationRequestRecord,
     account: FederatedAccount,
     linkedIdentity: AuthIdentity | null,
+    provider: AuthProvider,
     now: Date,
     client: ClientContext,
   ): Promise<CompletedAuthorization> {
@@ -388,10 +415,18 @@ export class OAuthService {
         );
 
       case FederatedSignInOutcome.PROVISION_NEW:
+        // `provider` — the registry-resolved value, never `account.provider`
+        // (the adapter's own self-report) — is what a later sign-in's own
+        // `findByProviderAccount` lookup above is keyed on too. Every
+        // adapter today reports its own value correctly, so writing the
+        // wrong one is latent, not live — but if the two ever disagreed,
+        // this identity would be unfindable by that lookup, the next
+        // sign-in would re-provision, D11 would refuse it, and the account
+        // would be locked out with nothing pointing at why.
         return this.provisionAndSignIn(
           decision.email,
           decision.displayName,
-          account.provider,
+          provider,
           account.subject,
           row.redirectTo,
           now,
@@ -404,18 +439,40 @@ export class OAuthService {
         // established about whoever presented this assertion, which is the
         // point — and `decision.existingUserId` exists on this decision for
         // exactly this entry; it is never returned to the caller below.
+        // `client` IS passed here, unlike a first draft of this method:
+        // the actor being the incumbent makes the client address the only
+        // field in this row saying anything about whoever made the attempt,
+        // and this action's own TSDoc calls it the entry a reader looking
+        // for an attempted takeover would search for.
         await this.record(
           AuditAction.FEDERATED_LINK_REFUSED,
           decision.existingUserId,
-          { provider: account.provider },
+          { provider },
           now,
+          client,
         );
         return { status: 'REFUSED', code: 'EMAIL_ALREADY_REGISTERED', redirectTo: row.redirectTo };
 
       case FederatedSignInOutcome.REFUSE_UNVERIFIED_EMAIL:
-        // No account is established on this branch — the provider's own
-        // assertion is what was refused — so there is nobody to record it
-        // against.
+        // No account is established on this branch, but the attempt itself
+        // is not therefore invisible: `AuditService.record` takes a null
+        // actor exactly for this shape (see `signInExisting`'s
+        // UNKNOWN_ACCOUNT branch below, and `AuthService.register`'s
+        // lost-race branch), and an unverified or absent address asserted
+        // by a provider is a refusal somebody investigating abuse would
+        // come looking for. `LOGIN_FAILED` is the action already used for
+        // any rejected sign-in attempt; `code` in the metadata is this
+        // method's own `FederatedRefusalCode`, not
+        // `AuthenticationRejectionReason` — this is not a judgement about a
+        // local account's state, nothing local was ever reached, it is
+        // only what the provider itself said.
+        await this.record(
+          AuditAction.LOGIN_FAILED,
+          null,
+          { code: 'EMAIL_UNVERIFIED', provider },
+          now,
+          client,
+        );
         return { status: 'REFUSED', code: 'EMAIL_UNVERIFIED', redirectTo: row.redirectTo };
 
       default:
@@ -585,7 +642,16 @@ export class OAuthService {
     client: ClientContext,
   ): Promise<CompletedAuthorization> {
     // Set unconditionally by `beginLink`, and by nothing else: a LINK row
-    // always carries the actor it was opened for. See that method's own doc.
+    // always carries the actor it was opened for. See that method's own
+    // doc — but the column itself is nullable, with nothing enforcing that
+    // a LINK-purpose row actually has one, so a null here is answered
+    // rather than trusted with a cast, the same discipline
+    // `signInExisting`'s own unreachable-row branch holds itself to for the
+    // identical shape of gap: a null owner must never reach the write below
+    // that creates an identity.
+    if (row.userId === null) {
+      return { status: 'REFUSED', code: 'AUTHORIZATION_UNKNOWN', redirectTo: row.redirectTo };
+    }
     const actorId = row.userId as UserId;
 
     const input: FederatedLinkInput = { actorUserId: actorId, linkedIdentity };
@@ -632,11 +698,15 @@ export class OAuthService {
         // account that did nothing. See `AuditAction.IDENTITY_LINK_CONFLICT`'s
         // own TSDoc for the full argument — it is the useful part of having
         // two actions rather than one with two incompatible actor rules.
+        // `client` IS passed, matching `IDENTITY_LINKED` a few lines above —
+        // a refusal entry recording less about the request than its own
+        // sibling success entry would be an odd asymmetry to ship silently.
         await this.record(
           AuditAction.IDENTITY_LINK_CONFLICT,
           actorId,
           { provider },
           now,
+          client,
         );
         return { status: 'REFUSED', code: 'IDENTITY_ALREADY_LINKED', redirectTo: row.redirectTo };
 

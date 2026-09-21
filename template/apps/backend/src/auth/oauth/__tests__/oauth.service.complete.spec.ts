@@ -146,9 +146,10 @@ describe('OAuthService.complete', () => {
     userId: UserId,
     provider: AuthProvider,
     subject: string,
+    at: Date = new Date(),
   ): Promise<AuthIdentityId> => {
     const identity = await (source as unknown as DataSource).transaction((manager) =>
-      identities.createFederatedIdentityIn(manager, userId, provider, subject, new Date()));
+      identities.createFederatedIdentityIn(manager, userId, provider, subject, at));
     return identity.id as AuthIdentityId;
   };
 
@@ -196,9 +197,16 @@ describe('OAuthService.complete', () => {
   });
 
   it('refuses an unregistered provider before reading anything', async () => {
+    // A row for this exact state DOES exist — the point of this test is that
+    // it is never touched. Asserting only that no row exists (as an earlier
+    // draft did) is a check that cannot fail: nothing in `complete` ever
+    // inserts a row, so an empty table proves nothing about ordering.
+    await seedRow();
+
     const result = await service.complete('OIDC', CODE, STATE, CLIENT);
+
     expect(result).toEqual({ status: 'REFUSED', code: 'PROVIDER_UNAVAILABLE', redirectTo: null });
-    expect(source.all(OAuthAuthorizationRequestRecord)).toHaveLength(0);
+    expect(source.all(OAuthAuthorizationRequestRecord)[0].consumedAt).toBeNull();
   });
 
   describe('the authorization row', () => {
@@ -221,8 +229,13 @@ describe('OAuthService.complete', () => {
       });
     });
 
-    it('refuses a state that has already been consumed', async () => {
-      await seedRow({ consumedAt: new Date() });
+    it('refuses a state that has already been consumed, and does not echo its redirectTo', async () => {
+      // redirectTo is deliberately non-null here, and the assertion below is
+      // that it does NOT come back: AUTHORIZATION_UNKNOWN has to be the same
+      // answer whether or not a row was ever found, on every field, or
+      // whoever presents a state learns a row existed exactly when the "no
+      // row at all" case wouldn't disclose that.
+      await seedRow({ consumedAt: new Date(), redirectTo: '/somewhere' });
 
       const result = await service.complete('GOOGLE', CODE, STATE, CLIENT);
 
@@ -256,8 +269,10 @@ describe('OAuthService.complete', () => {
       // The row was issued for GOOGLE. This callback presents the same state
       // at GITHUB's — a provider this deployment did register, so the
       // registry lookup itself succeeds and the refusal has to come from
-      // comparing against the row.
-      await seedRow({ provider: AuthProvider.GOOGLE });
+      // comparing against the row. redirectTo is non-null for the same
+      // reason the "already consumed" case sets one: to prove it is not
+      // echoed, not merely to leave it at its default.
+      await seedRow({ provider: AuthProvider.GOOGLE, redirectTo: '/somewhere' });
 
       const result = await service.complete('GITHUB', CODE, STATE, CLIENT);
 
@@ -317,12 +332,17 @@ describe('OAuthService.complete', () => {
     });
 
     it('records LOGIN_SUCCEEDED and updates the identity lastUsedAt', async () => {
+      // Seeded with a `lastUsedAt` an hour in the past and asserted with a
+      // STRICT inequality against that exact value — not `toBeGreaterThanOrEqual`
+      // against an instant captured a few in-memory awaits after the seed,
+      // which is close enough in wall-clock time to pass whether or not
+      // `markUsed` ever runs. Delete the `markUsed` call and this now fails.
+      const OLD_LAST_USED_AT = new Date(Date.now() - 60 * 60 * 1000);
       const userId = await seedUser({ email: 'ada@example.test' });
-      const identityId = await seedIdentity(userId, AuthProvider.GOOGLE, 'subject-1');
+      const identityId = await seedIdentity(userId, AuthProvider.GOOGLE, 'subject-1', OLD_LAST_USED_AT);
       await seedRow();
       googleFetchAccount = async () => account({ subject: 'subject-1' });
 
-      const before = new Date();
       await service.complete('GOOGLE', CODE, STATE, CLIENT);
 
       const entries = auditOf(AuditAction.LOGIN_SUCCEEDED);
@@ -331,7 +351,8 @@ describe('OAuthService.complete', () => {
 
       const identityRow = source.all(AuthIdentityRecord).find((row) => row.id === identityId);
       expect(identityRow?.lastUsedAt).not.toBeNull();
-      expect((identityRow?.lastUsedAt as Date).getTime()).toBeGreaterThanOrEqual(before.getTime());
+      const lastUsedAt = identityRow?.lastUsedAt as Date;
+      expect(lastUsedAt.getTime()).toBeGreaterThan(OLD_LAST_USED_AT.getTime());
     });
 
     it('refuses a suspended account, and issues nothing', async () => {
@@ -401,6 +422,36 @@ describe('OAuthService.complete', () => {
       const [user] = source.all(UserRecord);
       expect(user.displayName).toBe('nameless');
     });
+
+    it('provisions the identity under the registry-resolved provider, not the adapter\'s own self-report', async () => {
+      // The adapter registered as GOOGLE answers with `provider: GITHUB` in
+      // the account it asserts — every real adapter agrees with itself, but
+      // nothing stops one that does not, and the value stored here has to
+      // be the one `findByProviderAccount` looks a subject up by, or the
+      // very next sign-in attempt cannot find this identity, re-provisions
+      // instead, D11 refuses the second account for the same address, and
+      // the person is locked out with nothing pointing at why.
+      await seedRow();
+      googleFetchAccount = async () => account({
+        provider: AuthProvider.GITHUB,
+        subject: 'self-report-mismatch-subject',
+        email: 'mismatch@example.test',
+        emailVerified: true,
+      });
+
+      await service.complete('GOOGLE', CODE, STATE, CLIENT);
+
+      const [identity] = source.all(AuthIdentityRecord);
+      expect(identity.provider).toBe(AuthProvider.GOOGLE);
+
+      // And the identity really is findable the way a later sign-in would
+      // look it up — by the registry value, not by what the account claimed.
+      const found = await identities.findByProviderAccount(
+        AuthProvider.GOOGLE,
+        'self-report-mismatch-subject',
+      );
+      expect(found).not.toBeNull();
+    });
   });
 
   describe('an unverified or absent address', () => {
@@ -423,6 +474,30 @@ describe('OAuthService.complete', () => {
       const result = await service.complete('GOOGLE', CODE, STATE, CLIENT);
 
       expect(result).toEqual({ status: 'REFUSED', code: 'EMAIL_UNVERIFIED', redirectTo: null });
+    });
+
+    it('is not invisible in the record: a LOGIN_FAILED entry, null actor, this refusal code', async () => {
+      // Nobody local is established on this branch, but the attempt itself
+      // is exactly the sort of thing somebody investigating abuse comes
+      // looking for — an earlier draft left this branch silent on the
+      // reasoning "nobody to record it against", which this repository has
+      // already argued against elsewhere for the identical shape (a null
+      // actor, not no entry): `signInExisting`'s own UNKNOWN_ACCOUNT branch,
+      // and `AuthService.register`'s lost-race branch.
+      await seedRow();
+      googleFetchAccount = async () => account({
+        subject: 'unverified-subject-2', email: 'nope@example.test', emailVerified: false,
+      });
+
+      await service.complete('GOOGLE', CODE, STATE, CLIENT);
+
+      const entries = auditOf(AuditAction.LOGIN_FAILED);
+      expect(entries).toHaveLength(1);
+      expect(entries[0].actorUserId).toBeNull();
+      expect(entries[0].metadata).toMatchObject({ code: 'EMAIL_UNVERIFIED' });
+      // Recorded with the client too, the same as every other entry
+      // `OAuthService` writes with one in scope.
+      expect(entries[0].clientAddress).toBe(CLIENT.address);
     });
   });
 
@@ -465,9 +540,18 @@ describe('OAuthService.complete', () => {
 
       await service.complete('GOOGLE', CODE, STATE, CLIENT);
 
+      const entry = auditOf(AuditAction.FEDERATED_LINK_REFUSED)[0];
       // The actor is the existing account, not whoever made the attempt —
       // nothing has been established about them, which is the point.
-      expect(auditOf(AuditAction.FEDERATED_LINK_REFUSED)[0].actorUserId).toBe(ada);
+      expect(entry.actorUserId).toBe(ada);
+      // The client address IS recorded, though — it is the one field in
+      // this row saying anything at all about whoever made the attempt,
+      // since the actor is deliberately the incumbent. This action's own
+      // TSDoc calls the entry "what a reader looking for an attempted
+      // takeover would search for"; blanking the one identifying field on
+      // it would make that claim hollow.
+      expect(entry.clientAddress).toBe(CLIENT.address);
+      expect(entry.clientLabel).toBe(CLIENT.label);
     });
   });
 
@@ -542,6 +626,12 @@ describe('OAuthService.complete', () => {
       expect(entries).toHaveLength(1);
       expect(entries[0].actorUserId).toBe(actor);
       expect(entries[0].actorUserId).not.toBe(owner);
+      // Recorded with the client too, matching IDENTITY_LINKED's own sibling
+      // success entry a few lines above it in the implementation — a
+      // refusal that recorded less about the request than its own success
+      // case would be an odd, silent asymmetry.
+      expect(entries[0].clientAddress).toBe(CLIENT.address);
+      expect(entries[0].clientLabel).toBe(CLIENT.label);
     });
 
     it('treats a subject the actor already holds as done, not as an error', async () => {
@@ -577,6 +667,41 @@ describe('OAuthService.complete', () => {
       expect(result).toEqual({ status: 'LINKED', redirectTo: null });
       const rows = source.all(AuthIdentityRecord).filter((row) => row.userId === actor);
       expect(rows).toHaveLength(1);
+    });
+  });
+
+  // `purpose` and `user_id` are both columns nothing in the schema
+  // constrains to the two values or the one relationship this service
+  // trusts them to hold (`purpose` is plain `text`, `user_id` is nullable
+  // with no CHECK tying it to `purpose`). These two cases exist because the
+  // safe default on a security-relevant branch is to refuse a row that does
+  // not make sense, never to guess which of the two known shapes it must
+  // have meant.
+  describe('a row whose purpose or owner does not make sense', () => {
+    it('refuses a purpose that is neither SIGN_IN nor LINK, rather than defaulting to sign-in', async () => {
+      // Not reachable through `begin`/`beginLink`, which write only the two
+      // known values — this models a row already in the table by some other
+      // means (corruption, a future writer, a botched migration).
+      await seedRow({ purpose: 'SOMETHING_ELSE' });
+      googleFetchAccount = async () => account({ subject: 'whatever-subject' });
+
+      const result = await service.complete('GOOGLE', CODE, STATE, CLIENT);
+
+      expect(result).toEqual({ status: 'REFUSED', code: 'AUTHORIZATION_UNKNOWN', redirectTo: null });
+      expect(source.all(SessionRecord)).toHaveLength(0);
+      expect(source.all(UserRecord)).toHaveLength(0);
+    });
+
+    it('refuses a LINK-purpose row with no owner, rather than creating an identity with a null actor', async () => {
+      // `seedRow`'s own `userId` override accepts `null` explicitly for
+      // exactly this case; `beginLink` itself never writes one.
+      await seedRow({ purpose: OAuthAuthorizationPurpose.LINK, userId: null });
+      googleFetchAccount = async () => account({ subject: 'whatever-subject' });
+
+      const result = await service.complete('GOOGLE', CODE, STATE, CLIENT);
+
+      expect(result).toEqual({ status: 'REFUSED', code: 'AUTHORIZATION_UNKNOWN', redirectTo: null });
+      expect(source.all(AuthIdentityRecord)).toHaveLength(0);
     });
   });
 });
