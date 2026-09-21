@@ -225,15 +225,27 @@ token substitution.
 
 - **unit** — every push and PR: `npm run sanitize` (must run first — it's the cheapest gate
   and the one that catches an extraction mistake), then `npm test`.
-- **generated-project** — PR-only: generate a real project and run its own gates (`npm run
-  test:integration`).
+- **generated-project** — every push and PR: generate a real project and run its own gates
+  (`npm run test:integration`).
 - **storybook** — PR-only, and currently **non-blocking** (`continue-on-error: true`):
   builds the template's Storybook (`nx run webapp:build-storybook`, a target `nx run-many
   -t build` never invokes on its own, so it needs its own step to be exercised at all). It
   is not yet a hard gate because it currently fails for a known, pre-existing reason — see
-  "Known limitations" below.
-- **docker** — PR-only and slowest: `npm run test:integration` with `FORGE_E2E=1`, which
-  boots the generated stack for real and asserts `/health` returns `{"status":"ok"}`.
+  "Known limitations" below. It is also the one slow tier deliberately **not** extended to
+  push: it is non-blocking and known-red, so running it on every push would buy no
+  protection and would spend every push producing an expected yellow annotation — which is
+  how a team learns to read a non-green CI page as normal. When the failure is root-caused,
+  it flips twice in one commit: `continue-on-error` off, and `if:` to match the two tiers
+  around it.
+- **docker** — every push and PR, and the slowest: `npm run test:integration` with
+  `FORGE_E2E=1`, which boots the generated stack for real and asserts `/health` returns
+  `{"status":"ok"}`.
+
+`generated-project` and `docker` used to be `if: pull_request`, which meant a direct push to
+`main` ran the `unit` tier and nothing else — everything a PR checked could be landed by
+pushing, including every discriminating test that lives inside a generated project. Both now
+run on push as well. A push to `main` costs ~30–45 minutes rather than ~10; a gate that runs
+only on the path somebody can choose not to take is not a gate.
 - **lockfile-refresh** — schedule-only (weekly): regenerates `template/package-lock.json`
   from scratch and runs the generated-project gate against the result, so dependency drift
   surfaces here rather than the day someone deletes `node_modules`. It never commits.

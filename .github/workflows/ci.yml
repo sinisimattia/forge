@@ -4,17 +4,33 @@ name: CI
 #   - unit:              fast, runs on every push and PR. Sanitize gates everything else,
 #                         because it is the cheapest check and the one that catches an
 #                         extraction mistake (a source-project trace or a populated secret).
-#   - generated-project: PR-only. Actually generates a project and runs its lint/typecheck/
-#                         test/build/purity/layers gates — slow (an npm ci plus a Nuxt
-#                         build), and it does that twice: once for the gate suite and once
-#                         for the inventory suite. It installs with `npm ci` so the committed
-#                         lockfile is exercised by the same command Docker and dev:up use.
-#   - storybook:          PR-only, non-blocking for now. `build-storybook` is a separate nx
-#                         target that `nx run-many -t build` never invokes; this job is the
-#                         only thing that exercises it. See its own comment below for why it
-#                         currently fails and doesn't yet block the PR.
-#   - docker:             PR-only and slowest. Boots the generated stack for real and checks
-#                         `/health`.
+#   - generated-project: push AND PR. Actually generates a project and runs its lint/
+#                         typecheck/test/build/purity/layers gates — slow (an npm ci plus a
+#                         Nuxt build), and it does that twice: once for the gate suite and
+#                         once for the inventory suite. It installs with `npm ci` so the
+#                         committed lockfile is exercised by the same command Docker and
+#                         dev:up use.
+#   - storybook:          PR-only, non-blocking. `build-storybook` is a separate nx target
+#                         that `nx run-many -t build` never invokes; this job is the only
+#                         thing that exercises it. See its own comment below for why it
+#                         currently fails, why it doesn't block the PR, and why — alone
+#                         among the slow tiers — it is deliberately NOT run on push.
+#   - docker:             push AND PR, and the slowest. Boots the generated stack for real
+#                         and checks `/health`.
+#
+# ## Why the slow tiers run on push (fixed in Phase 3, Task 20)
+#
+# They used to be `if: github.event_name == 'pull_request'`, every one of them. The
+# consequence was that a direct push to `main` — which this repository permits — ran the
+# `unit` tier and nothing else, so the gate that actually generates a project and runs its
+# suites did not run on the branch it exists to protect. Everything a PR checked could be
+# landed by pushing. `generated-project` is where the template's own discriminating tests
+# live (D2/D5/D9/D12/D14/D15 and the rest of spec §11's table), which made that gap the
+# difference between having those tests and having a file that contains them.
+#
+# The cost is real and was accepted deliberately: a push to `main` now spends ~30 minutes in
+# `generated-project` and up to ~45 in `docker` rather than ~10. A gate that runs only on
+# the path somebody can choose not to take is not a gate.
 #   - lockfile-refresh:   scheduled only (weekly), never on push/PR. See its own comment below.
 #
 # Forge ships zero runtime and zero test dependencies (ADR-0002), so there is no lockfile and
@@ -65,7 +81,11 @@ jobs:
   generated-project:
     name: generated-project gate (lint/typecheck/test/build/purity/layers)
     needs: unit
-    if: github.event_name == 'pull_request'
+    # Push AND PR — see "Why the slow tiers run on push" at the top of this file. The
+    # `schedule` trigger drives `lockfile-refresh` alone, which runs this same command
+    # against a regenerated lockfile, so this job excludes itself from it rather than
+    # running the identical gate twice on an unchanged commit.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -93,8 +113,29 @@ jobs:
   # Leave this non-blocking until it is actually root-caused — do not flip
   # `continue-on-error` off just because a lockfile now exists, and do not re-attribute the
   # failure to "no lockfile" again without re-testing. See the README's "Known limitations".
+  #
+  # ## Why this one job stayed PR-only when `generated-project` and `docker` moved to push
+  #
+  # Deliberate, and the reverse of the reasoning that moved the other two. They moved
+  # because a gate that does not run on `main` protects nothing. This job does not protect
+  # anything *either way*: it is `continue-on-error: true` and it fails every single time,
+  # for a reason nobody has root-caused. Running it on push would not make `main` any safer
+  # by one assertion; it would spend ~20 minutes of every push producing a yellow annotation
+  # that is already known, already documented here and already expected.
+  #
+  # And it would cost something. A permanently-failing job on every push is how a team
+  # learns to read a non-green CI page as normal — at which point the next failure, in a job
+  # that *does* block, is one more yellow mark among the yellow marks. A broken gate that
+  # everybody has learned to ignore is worse than an absent one, because it looks like
+  # coverage.
+  #
+  # So it stays where it can be seen by whoever is looking at a change to the webapp, and no
+  # further. **When the `moduleType` failure is root-caused, this job flips twice in one
+  # commit: `continue-on-error` comes off and `if:` becomes `github.event_name != 'schedule'`
+  # like the two tiers above.** Not before — a green-but-PR-only Storybook job would be the
+  # same gap this task just closed, re-opened in the one tier nobody is watching.
   storybook:
-    name: template Storybook build (PR-tier; slow, not part of the fast unit push job)
+    name: template Storybook build (PR-tier; known-red, non-blocking — see comment)
     needs: unit
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -117,7 +158,10 @@ jobs:
   docker:
     name: docker e2e (boots the generated stack, asserts /health)
     needs: unit
-    if: github.event_name == 'pull_request'
+    # Push AND PR, for the same reason `generated-project` is — and with more force, not
+    # less: every defect this tier has ever caught was one that only appears once the
+    # images actually run, which is to say one that no faster tier can see.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

@@ -4,6 +4,7 @@ import { PlatformAdminGuard } from '../auth/guards';
 import { AuthorizationModule } from '../authorization';
 import { AuditPrivilegeCheck } from '../db/audit-privilege-check';
 import { MembershipRecord } from '../organizations/membership-record.entity';
+import { OrganizationRecord } from '../organizations/organization-record.entity';
 import { UserRecord } from '../users/user-record.entity';
 import { AuditEntryRecord } from './audit-entry-record.entity';
 import { AuditController } from './audit.controller';
@@ -41,10 +42,30 @@ import { OrganizationAuditController } from './organization-audit.controller';
  * for the same reason — `AuditService.queryForOrganization` reads it to
  * establish the actor's real membership of the organization the route names,
  * independently of what `PermissionsGuard` already decided.
+ *
+ * ## `OrganizationRecord` is registered here, and importing the guard is not enough
+ *
+ * **The application did not boot without this line**, and the reason is worth
+ * stating because it is not what importing `AuthorizationModule` suggests. A
+ * guard named in `@UseGuards` is instantiated in the module context of the
+ * controller that names it, so `PermissionsGuard`'s own constructor
+ * dependencies have to be resolvable *here* — and it injects
+ * `Repository<OrganizationRecord>`, which `AuthorizationModule` registers for
+ * itself and does not export. Importing the module that exports the guard gets
+ * the guard; it does not get what the guard needs.
+ *
+ * Nest said so plainly, and only at boot:
+ * `Nest can't resolve dependencies of the PermissionsGuard (Reflector,
+ * PrincipalService, ?) … "OrganizationRecordRepository" at index [2] is
+ * available in the AuditModule module`. Nothing in the fast tiers could see it,
+ * because every spec here builds its own testing module with an explicit
+ * provider list. `__tests__/guard-wiring.spec.ts` is what turns red now.
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([AuditEntryRecord, UserRecord, MembershipRecord]),
+    TypeOrmModule.forFeature([
+      AuditEntryRecord, UserRecord, MembershipRecord, OrganizationRecord,
+    ]),
     AuthorizationModule,
   ],
   controllers: [AuditController, OrganizationAuditController],

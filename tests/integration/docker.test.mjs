@@ -688,7 +688,23 @@ async function proveWhatTheFakeCannotExpress(compose, base, target) {
   );
   const report = JSON.parse(drift.trim().split('\n').pop());
   assert.deepEqual(report.problems, [], `entity/migration drift:\n${JSON.stringify(report, null, 2)}`);
-  assert.equal(report.tables.length, 7, `expected seven mapped tables, got ${report.tables}`);
+  // Named, not counted. This began as `report.tables.length === 7` and went stale the moment
+  // Phase 3 added four tables — and stayed stale, because the only tier that runs this file
+  // was PR-only until Task 20 moved it onto push. A count also fails uselessly: it says a
+  // number changed, not which table appeared or, far worse, which one stopped being mapped.
+  // The list is what makes both directions legible, and the assertion's real job is
+  // anti-vacuity — a probe that mapped nothing must not pass by having nothing to report.
+  assert.deepEqual(
+    [...report.tables].sort(),
+    [
+      'audit_entries', 'auth_identities', 'email_verification_tokens', 'memberships',
+      'organization_invitations', 'organizations', 'password_reset_tokens', 'refresh_tokens',
+      'resource_grants', 'sessions', 'users',
+    ],
+    `the set of tables TypeORM maps has changed. Got: ${[...report.tables].sort().join(', ')}. `
+    + 'A new domain means adding its tables here; a table DISAPPEARING from this list means an '
+    + 'entity stopped being registered, which no unit suite can see.',
+  );
 
   // ---- Foreign keys, cascades, and the one table that deliberately has none. ----
   //

@@ -11,6 +11,7 @@
     "lint": { "cache": true },
     "typecheck": { "cache": true, "dependsOn": ["^build"] },
     "purity": { "cache": true },
-    "layers": { "cache": true }
+    "layers": { "cache": true },
+    "coverage": { "cache": true, "inputs": ["default", "^production"] }
   }
 }

@@ -358,6 +358,45 @@ test('a generated project contains the whole process layer', async () => {
     + 'runs uncached and configured differently from every gate beside it',
   );
 
+  // THE GATE LIST EXISTS TWICE, and nothing but this pins the two together.
+  //
+  // `package.json`'s `affected` script is what a developer runs locally. `.github/
+  // workflows/ci.yml`'s `verify` job is what actually decides whether a change lands. They
+  // are two hand-written copies of the same list of gates, in two files, in two languages,
+  // and nothing made them agree — so a gate added to one and forgotten in the other splits
+  // silently, in whichever of the two directions is worse:
+  //
+  //   - in CI but not in `affected`: a gate nobody can run before pushing, which is how a
+  //     check gets a reputation for "failing in CI for no reason";
+  //   - in `affected` but not in CI: a gate that green-lights locally and guards nothing.
+  //
+  // They had in fact already split by the time this assertion was written: `coverage` was
+  // in `ci.yml` and in neither `affected` nor `targetDefaults`, and had been for a phase.
+  // That is the observed failure this test was added for, and it is recorded in
+  // task-20-report.md rather than being an injection somebody had to invent.
+  //
+  // Both lists are PARSED, neither is restated here. A test carrying its own copy of the
+  // list would be a third place to forget.
+  const workflow = await fs.readFile(
+    path.join(project, '.github/workflows/ci.yml'), 'utf8',
+  );
+  const ciFlag = /nx affected -t ((?:[a-z][a-z-]*(?: |$))+)/m.exec(workflow);
+  assert.ok(
+    ciFlag,
+    'ci.yml no longer has a parseable `nx affected -t` list, so this assertion would pass '
+    + 'by not looking. Either the verify job stopped running the gates, or it spells them a '
+    + 'way this parse does not know about — both are worth failing on.',
+  );
+  const ciTargets = ciFlag[1].trim().split(/ +/);
+
+  assert.deepEqual(
+    [...ciTargets].sort(), [...affectedTargets].sort(),
+    'the gate list in ci.yml and the one in the root `affected` script have drifted apart. '
+    + `ci.yml runs [${ciTargets.join(', ')}]; \`npm run affected\` runs `
+    + `[${affectedTargets.join(', ')}]. Whichever is missing a target either cannot be run `
+    + 'before pushing or is not enforced when landing — add it to both.',
+  );
+
   // `nx run-many` is checked elsewhere only by exit code, which stays 0 even if a
   // future template edit silently breaks project discovery for one package (a
   // shrinking gate that still reports green). Assert all three are actually found.
