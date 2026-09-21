@@ -153,9 +153,73 @@ describe('OidcOAuthProvider', () => {
       const discoveryCalls = http.mock.calls.filter(([url]) => String(url) === DISCOVERY_URL);
       expect(discoveryCalls).toHaveLength(1);
     });
+
+    it('retries discovery after a failure — a failed attempt is not cached for the process lifetime', async () => {
+      // `ensureEndpoints()` nulls `this.discovery` inside the `.catch`, before
+      // rethrowing, and only sets `this.endpoints` inside the `.then` — so a
+      // transient issuer outage must cost this one call, not every call for the
+      // rest of the process's life. Asserting the second call *resolves* is not
+      // enough on its own to prove that: a version that retained the rejected
+      // promise would also make the second call fail loudly rather than hang,
+      // so the discriminating check is the fetch count below, showing a real
+      // second discovery request was issued rather than some stale state (a
+      // wrongly-retained resolved value, or a wrongly-retained rejection) being
+      // reused.
+      let discoveryAttempts = 0;
+      const http = jest.fn(async (url: string | URL) => {
+        const href = String(url);
+        if (href === DISCOVERY_URL) {
+          discoveryAttempts += 1;
+          return discoveryAttempts === 1
+            ? jsonResponse(500, {})
+            : jsonResponse(200, discoveryDocument());
+        }
+        if (href === TOKEN_ENDPOINT) return jsonResponse(200, { access_token: ACCESS_TOKEN_VALUE });
+        if (href === USERINFO_ENDPOINT) {
+          return jsonResponse(200, userinfoBody({
+            sub: 'oidc-subject-1', email: 'ada@example.test', email_verified: true,
+          }));
+        }
+        throw new Error(`OidcOAuthProvider test stub: unexpected fetch to ${href}`);
+      });
+      const adapter = adapterWith(http);
+
+      await expect(adapter.fetchAccount(EXCHANGE_PARAMS)).rejects.toThrow();
+      await expect(adapter.fetchAccount(EXCHANGE_PARAMS)).resolves.toMatchObject({
+        subject: 'oidc-subject-1',
+      });
+
+      const discoveryCalls = http.mock.calls.filter(([url]) => String(url) === DISCOVERY_URL);
+      expect(discoveryCalls).toHaveLength(2);
+    });
   });
 
   describe('the discovery document is data, not trust', () => {
+    it('refuses a discovered authorization_endpoint on a different origin, before any browser could be sent there', async () => {
+      // authorization_endpoint carries no secret, but it is where this adapter
+      // sends the *person's browser* — a malicious one is a phishing primitive,
+      // a consent page on an attacker's origin reached with this deployment's
+      // own domain as the referrer. The same assertSameOrigin check this test
+      // file already exercises for token_endpoint and userinfo_endpoint applies
+      // to this endpoint too, and nothing (no fetch, no returned URL string)
+      // may ever reach the attacker's origin.
+      const http = stubHttp({
+        discoveryBody: discoveryDocument({
+          authorization_endpoint: 'https://attacker.example.test/authorize',
+        }),
+      });
+      const adapter = adapterWith(http);
+
+      await expect(adapter.authorizationUrl({
+        state: 's', codeChallenge: 'c', redirectUri: 'https://app.example.test/cb',
+      })).rejects.toThrow(/authorization_endpoint/);
+
+      const attackerCalls = http.mock.calls.filter(
+        ([url]) => String(url).startsWith('https://attacker.example.test'),
+      );
+      expect(attackerCalls).toHaveLength(0);
+    });
+
     it('refuses a discovered token_endpoint on a different origin, before sending it any secret', async () => {
       // A discovery document is fetched from a configured issuer, but the
       // endpoints inside it are still provider-supplied values. A compromised or
