@@ -12,5 +12,7 @@
  * a fetcher holds the path. A component calls none of them but the composable.
  */
 export { AuthHttpService } from './auth.service';
+export { AuthorizationHttpService } from './authorization.service';
 export { IdentityHttpService } from './identity.service';
+export { OrganizationHttpService } from './organization.service';
 export { UserHttpService } from './user.service';

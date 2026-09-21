@@ -11,5 +11,7 @@
 export { ApiError, createApiClient } from './client';
 export type { ApiClientOptions } from './client';
 export * from './auth.fetchers';
+export * from './authorization.fetchers';
 export * from './identity.fetchers';
+export * from './organization.fetchers';
 export * from './user.fetchers';

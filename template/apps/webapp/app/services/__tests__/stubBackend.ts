@@ -1,5 +1,9 @@
 import { Session } from '__FORGE_SCOPE__/core/auth/entities';
 import type { ClientContext, SessionId, SessionJSON } from '__FORGE_SCOPE__/core/auth/types';
+import type {
+  GrantId,
+  ResourceGrantJSON,
+} from '__FORGE_SCOPE__/core/authorization/types';
 import { AuthIdentity } from '__FORGE_SCOPE__/core/identities/entities';
 import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
 import {
@@ -12,6 +16,20 @@ import {
   LastIdentityRemovalError,
 } from '__FORGE_SCOPE__/core/identities/errors';
 import type { AuthIdentityId, AuthIdentityJSON } from '__FORGE_SCOPE__/core/identities/types';
+import { Invitation, Membership, Organization } from '__FORGE_SCOPE__/core/organizations/entities';
+import { InvitationStatus, OrgRole } from '__FORGE_SCOPE__/core/organizations/enums';
+import {
+  InvalidOrganizationSlugError,
+  OrganizationNameRequiredError,
+} from '__FORGE_SCOPE__/core/organizations/errors';
+import type {
+  InvitationId,
+  InvitationJSON,
+  MembershipId,
+  MembershipJSON,
+  OrganizationId,
+  OrganizationJSON,
+} from '__FORGE_SCOPE__/core/organizations/types';
 import { normalizeEmail } from '__FORGE_SCOPE__/core/shared/policies';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
@@ -130,6 +148,33 @@ export interface StubBackend {
   /** Issues a verification credential, valid until `expiresAt`. */
   putVerification: (userId: UserId, credential: string, expiresAt: Date) => void;
   /**
+   * Puts an organization in the world, exactly as the backend would hold and
+   * emit one.
+   *
+   * The organizations conformance driver's own comment explains why this
+   * exists at all: `organization`, `owner`, `admin` and `member` are the
+   * right-hand side of every comparison the shared suite makes, so a driver
+   * that built them by calling `OrganizationHttpService.createOrganization`
+   * would be comparing the service's answer with itself.
+   */
+  putOrganization: (seed: OrganizationJSON) => void;
+  /** Puts a membership in the world. See `putOrganization` for why. */
+  putMembership: (seed: MembershipJSON) => void;
+  /**
+   * The token this world minted when it issued one invitation.
+   *
+   * This is `tokenFor` from `IOrganizationServiceContractDeps`, made
+   * concrete: the host knows how its own invitations are redeemed and the
+   * suite must not, so a driver satisfies that dependency by asking the
+   * stub for the value it already generated at `inviteMember` time rather
+   * than inventing one of its own.
+   *
+   * @param invitationId - an invitation this world issued
+   * @throws Error when no token was ever minted for it — a driver bug, since
+   * every invitation `inviteMember` returns has one
+   */
+  tokenForInvitation: (invitationId: InvitationId) => string;
+  /**
    * Every access credential this world has issued, oldest first.
    *
    * It exists for one test and could not be written without it: the DEC-3 seam
@@ -238,6 +283,13 @@ export function stubBackend(): StubBackend {
   const identities = new Map<AuthIdentityId, AuthIdentityJSON>();
   const verifications = new Map<string, StoredCredential>();
   const resets = new Map<string, StoredCredential>();
+  const organizations = new Map<OrganizationId, OrganizationJSON>();
+  const memberships = new Map<MembershipId, MembershipJSON>();
+  const invitations = new Map<InvitationId, InvitationJSON>();
+  /** The token minted for each invitation, and the reverse lookup a redemption needs. */
+  const invitationTokens = new Map<InvitationId, string>();
+  const tokenToInvitation = new Map<string, InvitationId>();
+  const grants = new Map<GrantId, ResourceGrantJSON>();
   /** Which session an access credential stands for. */
   const credentials = new Map<string, SessionId>();
   /**
@@ -292,6 +344,412 @@ export function stubBackend(): StubBackend {
   const userByEmail = (email: string): StoredUser | undefined => {
     const normalized = normalizeEmail(email);
     return [...users.values()].find((one) => one.json.email === normalized);
+  };
+
+  /** Every membership of one organization, in no particular order. */
+  const membershipsOf = (organizationId: OrganizationId): MembershipJSON[] =>
+    [...memberships.values()].filter((one) => one.organizationId === organizationId);
+
+  /**
+   * The organization an actor may see, or the shared `404` that stands for
+   * "does not exist" and "not yours" alike.
+   *
+   * This is the effect of `OrganizationsService.requireMember` and
+   * `PermissionsGuard` together, collapsed into the one check every
+   * organization-scoped route in this stub needs: a soft-deleted
+   * organization and one the actor does not belong to are both refused with
+   * `ORGANIZATION_NOT_FOUND`, indistinguishably, exactly as the shared
+   * conformance suite's own "refuses an organization the actor does not
+   * belong to, indistinguishably" assertion requires.
+   *
+   * @param userId - whoever is asking
+   * @param organizationId - the organization named
+   * @returns the organization, once it is established the caller may see it
+   */
+  const requireOrganizationMembership = (
+    userId: UserId,
+    organizationId: OrganizationId,
+  ): OrganizationJSON => {
+    const organization = organizations.get(organizationId);
+    if (organization === undefined || organization.deletedAt !== null) {
+      refuse(404, 'errors.http.not_found', 'ORGANIZATION_NOT_FOUND');
+    }
+    const belongs = membershipsOf(organizationId).some((one) => one.userId === userId);
+    if (!belongs) refuse(404, 'errors.http.not_found', 'ORGANIZATION_NOT_FOUND');
+    return organization;
+  };
+
+  /** One page of `all`, from the request's own `page`/`limit` query. */
+  const paginate = <T>(all: readonly T[], request: ApiRequest): {
+    data: T[];
+    meta: { total: number; page: number; limit: number; totalPages: number };
+  } => {
+    const page = Number(request.query?.page ?? 1);
+    const limit = Number(request.query?.limit ?? 20);
+    return {
+      data: all.slice((page - 1) * limit, page * limit),
+      meta: { total: all.length, page, limit, totalPages: Math.ceil(all.length / limit) },
+    };
+  };
+
+  /**
+   * Turns one of `Organization`'s own invariant errors into the `ApiError`
+   * the real backend would answer with, and rethrows anything else
+   * unchanged — a programming mistake in this file must not be reported as
+   * a domain refusal.
+   */
+  const asOrganizationDomainRefusal = (error: unknown): never => {
+    if (error instanceof OrganizationNameRequiredError) {
+      refuse(422, 'errors.http.unprocessable', 'ORGANIZATION_NAME_REQUIRED');
+    }
+    if (error instanceof InvalidOrganizationSlugError) {
+      refuse(422, 'errors.http.unprocessable', 'INVALID_ORGANIZATION_SLUG');
+    }
+    throw error;
+  };
+
+  /**
+   * Refuses a change that would leave `organizationId` with no OWNER.
+   *
+   * A no-op on a membership that does not hold OWNER: only a change AWAY
+   * from the role can possibly leave the organization ownerless.
+   */
+  const assertNotLastOwner = (organizationId: OrganizationId, current: MembershipJSON): void => {
+    if (current.role !== OrgRole.OWNER) return;
+    const owners = membershipsOf(organizationId).filter((one) => one.role === OrgRole.OWNER);
+    if (owners.length <= 1) refuse(409, 'errors.http.conflict', 'LAST_OWNER');
+  };
+
+  /** How long a stub-issued invitation lasts before it lapses on its own. A week. */
+  const INVITATION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+
+  /** One `/organizations/:id/members` request. */
+  const memberRoutes = (
+    request: ApiRequest,
+    organizationId: OrganizationId,
+    targetUserIdRaw: string | undefined,
+  ): unknown => {
+    const actor = actorOf(request);
+    requireOrganizationMembership(actor.userId, organizationId);
+
+    if (targetUserIdRaw === undefined) {
+      if (request.method === 'GET') {
+        const role = request.query?.role as OrgRole | undefined;
+        const all = membershipsOf(organizationId)
+          .filter((one) => role === undefined || one.role === role);
+        return paginate(all, request);
+      }
+      refuse(405, 'errors.http.bad_request');
+    }
+
+    const targetUserId = targetUserIdRaw as UserId;
+    const target = membershipsOf(organizationId).find((one) => one.userId === targetUserId);
+    if (target === undefined) refuse(404, 'errors.http.not_found', 'MEMBERSHIP_NOT_FOUND');
+
+    if (request.method === 'PATCH') {
+      const role = body<{ role: OrgRole }>(request).role;
+      // Only a change AWAY from OWNER can possibly leave the organization
+      // ownerless — re-affirming the sole owner as OWNER is not a demotion,
+      // and asking the invariant about the wrong direction would refuse a
+      // no-op change that never threatened it.
+      if (role !== OrgRole.OWNER) assertNotLastOwner(organizationId, target);
+      const updated = Membership.fromJSON({ ...target, role, updatedAt: new Date().toISOString() });
+      memberships.set(updated.id, updated.toJSON());
+      return updated.toJSON();
+    }
+
+    if (request.method === 'DELETE') {
+      assertNotLastOwner(organizationId, target);
+      memberships.delete(target.id);
+      return undefined;
+    }
+
+    refuse(405, 'errors.http.bad_request');
+  };
+
+  /** One `/organizations/:id/invitations` request. */
+  const organizationInvitationRoutes = (
+    request: ApiRequest,
+    organizationId: OrganizationId,
+    invitationIdRaw: string | undefined,
+  ): unknown => {
+    const actor = actorOf(request);
+    requireOrganizationMembership(actor.userId, organizationId);
+
+    if (invitationIdRaw === undefined) {
+      if (request.method === 'POST') {
+        const input = body<{ email: string; role: OrgRole }>(request);
+        const existing = userByEmail(input.email);
+        if (
+          existing !== undefined
+          && membershipsOf(organizationId).some((one) => one.userId === existing.json.id)
+        ) {
+          refuse(409, 'errors.http.conflict', 'ALREADY_A_MEMBER');
+        }
+        const now = new Date();
+        const invitation = new Invitation({
+          id: mint('Invitation', (id) => invitations.has(id as InvitationId)) as InvitationId,
+          organizationId,
+          email: input.email,
+          role: input.role,
+          status: InvitationStatus.PENDING,
+          invitedByUserId: actor.userId,
+          expiresAt: new Date(now.getTime() + INVITATION_LIFETIME_MS),
+          createdAt: now,
+          acceptedAt: null,
+          acceptedByUserId: null,
+        });
+        invitations.set(invitation.id, invitation.toJSON());
+        const token = nextId('invitation-token');
+        invitationTokens.set(invitation.id, token);
+        tokenToInvitation.set(token, invitation.id);
+        return invitation.toJSON();
+      }
+      if (request.method === 'GET') {
+        const status = request.query?.status as InvitationStatus | undefined;
+        const all = [...invitations.values()].filter(
+          (one) => one.organizationId === organizationId
+            && (status === undefined || one.status === status),
+        );
+        return paginate(all, request);
+      }
+      refuse(405, 'errors.http.bad_request');
+    }
+
+    const invitationId = invitationIdRaw as InvitationId;
+    const stored = invitations.get(invitationId);
+    if (stored === undefined || stored.organizationId !== organizationId) {
+      refuse(404, 'errors.http.not_found', 'INVITATION_NOT_FOUND');
+    }
+
+    if (request.method === 'DELETE') {
+      const current = Invitation.fromJSON(stored);
+      if (!current.isOpenAt(new Date())) {
+        refuse(410, 'errors.http.gone', 'INVITATION_NO_LONGER_OPEN');
+      }
+      const revoked = new Invitation({ ...current, status: InvitationStatus.REVOKED });
+      invitations.set(revoked.id, revoked.toJSON());
+      return revoked.toJSON();
+    }
+
+    refuse(405, 'errors.http.bad_request');
+  };
+
+  /**
+   * `POST /invitations/:token/accept`.
+   *
+   * Not organization-scoped, and not behind `requireOrganizationMembership`:
+   * the caller is by definition not yet a member of the organization the
+   * invitation names, and the token — not the credential's own standing — is
+   * what authorizes this one request. Openness is judged before the address
+   * match, exactly as `IOrganizationService.acceptInvitation`'s own TSDoc
+   * requires, so a second presentation of a spent token is answered the same
+   * way whoever presents it.
+   */
+  const acceptInvitationRoute = (request: ApiRequest, token: string): unknown => {
+    const actor = actorOf(request);
+    const invitationId = tokenToInvitation.get(token);
+    const stored = invitationId === undefined ? undefined : invitations.get(invitationId);
+    if (stored === undefined) refuse(404, 'errors.http.not_found', 'INVITATION_NOT_FOUND');
+
+    const invitation = Invitation.fromJSON(stored);
+    const now = new Date();
+    if (!invitation.isOpenAt(now)) refuse(410, 'errors.http.gone', 'INVITATION_NO_LONGER_OPEN');
+
+    const actorStored = users.get(actor.userId);
+    if (actorStored === undefined || actorStored.json.email !== invitation.email) {
+      refuse(403, 'errors.http.forbidden', 'INVITATION_ADDRESS_MISMATCH');
+    }
+
+    const membership = new Membership({
+      id: mint('Membership', (id) => memberships.has(id as MembershipId)) as MembershipId,
+      organizationId: invitation.organizationId,
+      userId: actor.userId,
+      role: invitation.role,
+      createdAt: now,
+      updatedAt: now,
+    });
+    memberships.set(membership.id, membership.toJSON());
+
+    const accepted = new Invitation({
+      ...invitation,
+      status: InvitationStatus.ACCEPTED,
+      acceptedAt: now,
+      acceptedByUserId: actor.userId,
+    });
+    invitations.set(accepted.id, accepted.toJSON());
+
+    return membership.toJSON();
+  };
+
+  /**
+   * One `/organizations/:id/grants` request.
+   *
+   * No membership check on `actor`, and that is not an oversight: the real
+   * `AuthorizationService.listGrants`'s own TSDoc says who may administer
+   * grants is `PermissionsGuard`'s question, decided before that service is
+   * ever called, and this store draws no finer line than that. The shared
+   * `IAuthorizationService` suite never exercises an actor without standing
+   * in the organization either — see its own contract deps — so modelling
+   * that guard here would assert nothing this suite can fail.
+   */
+  const grantRoutes = (
+    request: ApiRequest,
+    organizationId: OrganizationId,
+    grantIdRaw: string | undefined,
+  ): unknown => {
+    const actor = actorOf(request);
+
+    if (grantIdRaw === undefined) {
+      if (request.method === 'GET') {
+        const all = [...grants.values()].filter((one) => one.organizationId === organizationId);
+        return paginate(all, request);
+      }
+      if (request.method === 'POST') {
+        const input = body<{
+          subjectUserId: UserId;
+          resourceType: ResourceGrantJSON['resourceType'];
+          resourceId: string;
+          permission: ResourceGrantJSON['permission'];
+          expiresAt?: string | null;
+        }>(request);
+        const subjectIsMember = membershipsOf(organizationId).some(
+          (one) => one.userId === input.subjectUserId,
+        );
+        if (!subjectIsMember) refuse(409, 'errors.http.conflict', 'CROSS_TENANT_GRANT');
+        const now = new Date();
+        const grant: ResourceGrantJSON = {
+          id: mint('Grant', (id) => grants.has(id as GrantId)) as GrantId,
+          subjectUserId: input.subjectUserId,
+          organizationId,
+          resourceType: input.resourceType,
+          resourceId: input.resourceId,
+          permission: input.permission,
+          grantedBy: actor.userId,
+          createdAt: now.toISOString(),
+          expiresAt: input.expiresAt ?? null,
+        };
+        grants.set(grant.id, grant);
+        return grant;
+      }
+      refuse(405, 'errors.http.bad_request');
+    }
+
+    const grantId = grantIdRaw as GrantId;
+    if (request.method === 'DELETE') {
+      const stored = grants.get(grantId);
+      if (stored === undefined || stored.organizationId !== organizationId) {
+        refuse(404, 'errors.http.not_found', 'GRANT_NOT_FOUND');
+      }
+      grants.delete(grantId);
+      return undefined;
+    }
+
+    refuse(405, 'errors.http.bad_request');
+  };
+
+  /** One `/organizations` request. */
+  const organizationRoutes = (request: ApiRequest, tail: string): unknown => {
+    const { method } = request;
+
+    if (tail === '') {
+      if (method === 'POST') {
+        const actor = actorOf(request);
+        const input = body<{ name: string; slug: string }>(request);
+        const now = new Date();
+        let organization: Organization;
+        try {
+          organization = new Organization({
+            id: mint('Organization', (id) => organizations.has(id as OrganizationId)) as OrganizationId,
+            name: input.name,
+            slug: input.slug,
+            createdAt: now,
+            updatedAt: now,
+            deletedAt: null,
+          });
+        } catch (error) {
+          throw asOrganizationDomainRefusal(error);
+        }
+        organizations.set(organization.id, organization.toJSON());
+        const membership = new Membership({
+          id: mint('Membership', (id) => memberships.has(id as MembershipId)) as MembershipId,
+          organizationId: organization.id,
+          userId: actor.userId,
+          role: OrgRole.OWNER,
+          createdAt: now,
+          updatedAt: now,
+        });
+        memberships.set(membership.id, membership.toJSON());
+        return organization.toJSON();
+      }
+      if (method === 'GET') {
+        const actor = actorOf(request);
+        const mine = [...organizations.values()].filter(
+          (one) => one.deletedAt === null
+            && membershipsOf(one.id).some((membership) => membership.userId === actor.userId),
+        );
+        return paginate(mine, request);
+      }
+      refuse(405, 'errors.http.bad_request');
+    }
+
+    const membersMatch = /^\/([^/]+)\/members(?:\/([^/]+))?$/.exec(tail);
+    if (membersMatch !== null) {
+      return memberRoutes(request, membersMatch[1] as OrganizationId, membersMatch[2]);
+    }
+
+    const invitationsMatch = /^\/([^/]+)\/invitations(?:\/([^/]+))?$/.exec(tail);
+    if (invitationsMatch !== null) {
+      return organizationInvitationRoutes(
+        request,
+        invitationsMatch[1] as OrganizationId,
+        invitationsMatch[2],
+      );
+    }
+
+    const grantsMatch = /^\/([^/]+)\/grants(?:\/([^/]+))?$/.exec(tail);
+    if (grantsMatch !== null) {
+      return grantRoutes(request, grantsMatch[1] as OrganizationId, grantsMatch[2]);
+    }
+
+    const idMatch = /^\/([^/]+)$/.exec(tail);
+    if (idMatch !== null) {
+      const organizationId = idMatch[1] as OrganizationId;
+      const actor = actorOf(request);
+
+      if (method === 'GET') return requireOrganizationMembership(actor.userId, organizationId);
+
+      if (method === 'PATCH') {
+        const organization = requireOrganizationMembership(actor.userId, organizationId);
+        const changes = body<{ name?: string; slug?: string }>(request);
+        const current = Organization.fromJSON(organization);
+        try {
+          const updated = new Organization({
+            ...current,
+            ...(changes.name === undefined ? {} : { name: changes.name }),
+            ...(changes.slug === undefined ? {} : { slug: changes.slug }),
+            updatedAt: new Date(),
+          });
+          organizations.set(updated.id, updated.toJSON());
+          return updated.toJSON();
+        } catch (error) {
+          throw asOrganizationDomainRefusal(error);
+        }
+      }
+
+      if (method === 'DELETE') {
+        const organization = requireOrganizationMembership(actor.userId, organizationId);
+        const now = new Date();
+        const current = Organization.fromJSON(organization);
+        organizations.set(
+          current.id,
+          new Organization({ ...current, deletedAt: now, updatedAt: now }).toJSON(),
+        );
+        return undefined;
+      }
+    }
+
+    refuse(405, 'errors.http.bad_request');
   };
 
   /** Whether the account may be used at all, decided by core and not restated. */
@@ -809,6 +1267,13 @@ export function stubBackend(): StubBackend {
     if (request.path.startsWith('/users')) {
       return userRoutes(request, request.path.slice('/users'.length)) as T;
     }
+    if (request.path.startsWith('/organizations')) {
+      return organizationRoutes(request, request.path.slice('/organizations'.length)) as T;
+    }
+    const acceptMatch = /^\/invitations\/([^/]+)\/accept$/.exec(request.path);
+    if (acceptMatch !== null) {
+      return acceptInvitationRoute(request, acceptMatch[1] as string) as T;
+    }
     refuse(404, 'errors.http.not_found');
   };
 
@@ -829,6 +1294,22 @@ export function stubBackend(): StubBackend {
 
     putIdentity(seed: AuthIdentityJSON): void {
       identities.set(seed.id, AuthIdentity.fromJSON(seed).toJSON());
+    },
+
+    putOrganization(seed: OrganizationJSON): void {
+      organizations.set(seed.id, Organization.fromJSON(seed).toJSON());
+    },
+
+    putMembership(seed: MembershipJSON): void {
+      memberships.set(seed.id, Membership.fromJSON(seed).toJSON());
+    },
+
+    tokenForInvitation(invitationId: InvitationId): string {
+      const token = invitationTokens.get(invitationId);
+      if (token === undefined) {
+        throw new Error(`stubBackend: no token was minted for invitation "${String(invitationId)}"`);
+      }
+      return token;
     },
 
     putVerification(userId: UserId, credential: string, expiresAt: Date): void {

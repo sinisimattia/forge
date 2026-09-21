@@ -27,34 +27,77 @@ export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
  * would break in the second locale; a webapp that could not switch at all cannot
  * satisfy `IAuthService.verifyEmail`, which names both errors.
  *
- * The same reasoning covers `404`, which three different core errors reach, and
- * `401`, which means "your credential is not accepted" for the guard and "the
- * secret you offered is not yours" for a password change.
+ * The same reasoning covers `404`, which several different core errors reach,
+ * and `401`, which means "your credential is not accepted" for the guard and
+ * "the secret you offered is not yours" for a password change.
  *
- * **This list is a second copy of the backend's table** (`DOMAIN_ERROR_CODES` in
- * `apps/backend/src/common/filters/http-exception.filter.ts`), and there is
- * nowhere shared to put it: it is transport vocabulary, so it may not live in
- * core, and the two apps share nothing else. A code the backend emits and this
+ * **This list is a hand-maintained snapshot of the backend's table**
+ * (`DOMAIN_ERROR_CODES` in `apps/backend/src/common/filters/http-exception.filter.ts`),
+ * plus `SERIALIZATION_CONFLICT` (below). There is nowhere shared to put the
+ * real thing: it is transport vocabulary, so it may not live in core (ADR-0008),
+ * and the two apps share no other package. A code the backend emits and this
  * list does not name arrives here as `undefined` and falls through to the
  * envelope's status, which is the safe direction to be wrong in.
  *
- * **Nothing else can catch the two copies drifting apart**, which is why it is a
- * value rather than a bare union and why a test pins it to a literal list. The
- * stub the conformance suites run against emits the very strings these services
- * switch on, so the webapp stays internally consistent while becoming externally
- * wrong: renaming `TOKEN_CONSUMED` here and in both files that use it left the
- * whole webapp suite green while the backend went on emitting the old name. The
- * literal list in `types/__tests__/api-error-code.spec.ts` — and its twin on the
- * backend — is what turns that red, in one place or the other, so that whoever
- * renames one is sent to the other.
+ * **What this list is, precisely, and what it does not claim:**
+ *
+ * - It is a *snapshot*, kept honest against *renaming* and nothing more. A
+ *   literal-list test in `types/__tests__/api-error-code.spec.ts` — and its
+ *   twin on the backend — pins both copies against the same literal, so that
+ *   renaming a code in only one of the two files that share no package turns
+ *   one or the other red. Neither test can catch the backend *adding* a code
+ *   and this file staying silent: `DOMAIN_ERROR_CODES` is derived from the
+ *   backend's own table and grows the moment a row is added there, while this
+ *   array is typed out by hand and does not. That gap is exactly how this list
+ *   fell eleven codes behind — the organization, membership, invitation and
+ *   grant codes of Tasks 10–14 — with the literal-list test staying green on
+ *   both sides throughout, because neither side's eleven-item literal ever
+ *   had to change to stay equal to the other's eleven-item literal.
+ * - It is **not** a completeness check against the backend, and it cannot be
+ *   made into one without either importing backend code into this bundle
+ *   (which would pull `@nestjs/common`, `express` and `nestjs-i18n` into a
+ *   Nuxt app to read one array off a file that imports them at its top) or
+ *   inventing a third package for eleven strings — the trade ADR-0008 already
+ *   declined once for this exact vocabulary. So completeness stays a thing a
+ *   person checks by reading both files side by side, same as it always has.
+ * - What genuinely **is** checked, by the compiler rather than by a test: every
+ *   code a service in this app *acts on* is a member of this list. Each
+ *   service's own `domainErrorFor` switches on `error.body.code`, typed as
+ *   `ApiErrorCode` — a union of the literals below — and a `case` naming a
+ *   string outside that union fails to typecheck (`error TS2678`). A code can
+ *   therefore be missing from this list and silently ignored (the safe
+ *   direction), but never invented: nothing here can be switched on that this
+ *   file does not already name. That is a real, narrower claim than
+ *   completeness, and it is the one this file can actually stand behind.
+ *
+ * `SERIALIZATION_CONFLICT` is carried on this list for exactly this reason.
+ * It is not one of `DOMAIN_ERROR_CODES` — the backend's filter emits it for a
+ * retried `SERIALIZABLE` transaction conflict, which is not a `DomainError` at
+ * all (see that filter's own comment) — but it is still a `code` the wire can
+ * answer with, and a caller that ever needs to recognise "resend the same
+ * request" has to be able to name it. No service in this webapp switches on
+ * it yet; it is here so that the day one does, the compiler is already
+ * holding the other end of that check.
  */
 export const API_ERROR_CODES = [
+  'ALREADY_A_MEMBER',
+  'CROSS_TENANT_GRANT',
   'DISPLAY_NAME_REQUIRED',
   'EMAIL_ALREADY_REGISTERED',
+  'GRANT_NOT_FOUND',
   'IDENTITY_ALREADY_LINKED',
   'IDENTITY_NOT_FOUND',
   'INVALID_CREDENTIALS',
+  'INVALID_ORGANIZATION_SLUG',
+  'INVITATION_ADDRESS_MISMATCH',
+  'INVITATION_NOT_FOUND',
+  'INVITATION_NO_LONGER_OPEN',
   'LAST_IDENTITY_REMOVAL',
+  'LAST_OWNER',
+  'MEMBERSHIP_NOT_FOUND',
+  'ORGANIZATION_NAME_REQUIRED',
+  'ORGANIZATION_NOT_FOUND',
+  'SERIALIZATION_CONFLICT',
   'SESSION_NOT_FOUND',
   'TOKEN_CONSUMED',
   'TOKEN_EXPIRED',
