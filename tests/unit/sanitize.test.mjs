@@ -568,3 +568,87 @@ test('a word that merely contains the term as a substring is not a violation', (
   // "less" after it are both plain lowercase continuations.
   assert.equal(flagged('const reorganizerless = 1;', TS), false);
 });
+
+// Forge's own process vocabulary. This leaked into template/ three times in one phase
+// despite an explicit instruction not to (task-18's own report) — the briefs handed to
+// implementers are extracted verbatim from a planning document that legitimately contains
+// dozens of the same references, so the instruction and the contamination arrive together.
+test('a Forge task or phase coordinate is flagged, capitalized and spaced', () => {
+  assert.equal(
+    labels('// Task 12 registered OAuthService here.', TS),
+    'forge-process coordinate',
+  );
+  assert.equal(
+    labels('// Phase 3 added organizations to core.', TS),
+    'forge-process coordinate',
+  );
+  assert.equal(labels('See Task 6 for the carried finding.', 'a.md'), 'forge-process coordinate');
+});
+
+// NOT the bare, lowercase word — ordinary English this template's own comments are full of,
+// and a coincidental digit nearby must not turn it into a false positive either.
+test('the ordinary English word "task"/"phase" is not flagged', () => {
+  assert.equal(flagged('This suite exercises none of the invitation mail.', TS), false);
+  assert.equal(flagged('The next phase of rollout adds SSO.', TS), false);
+  assert.equal(flagged('Complete the task 12 hours from now.', TS), false);
+  assert.equal(flagged('There are 12 open tasks on the board.', TS), false);
+});
+
+test('"coordinator" used in the process sense is flagged, including mid-compound', () => {
+  assert.equal(labels('// The coordinator dispatched this task.', TS), 'forge-process role');
+  // The same camelCase/PascalCase boundary fix `source-domain term` needed: no separator
+  // marks the word off from its neighbour, only a case change.
+  assert.equal(labels('class TaskCoordinator {}', TS), 'forge-process role');
+  assert.equal(labels('const coordinatorService = 1;', TS), 'forge-process role');
+});
+
+test('"coordinate"/"coordinated"/"coordinates" are not flagged — a different word', () => {
+  assert.equal(flagged('The x coordinate is out of range.', TS), false);
+  assert.equal(flagged('The two services coordinate through an event bus.', TS), false);
+  assert.equal(flagged('Retries are coordinated by the caller.', TS), false);
+});
+
+// "brief" alone is ordinary English and must not be flagged — only its process-sense
+// co-occurrence with "task"/"phase"/"coordinator" is unambiguous enough to catch reliably.
+test('"brief" is flagged only beside "task"/"phase"/"coordinator"', () => {
+  assert.equal(labels("// Asserted per this task's brief —", TS), 'forge-process brief');
+  assert.equal(labels('// which the task brief names as the other half', TS), 'forge-process brief');
+  assert.equal(labels("// the one the phase's brief names", TS), 'forge-process brief');
+  // Both rules are true statements about this line — "coordinator" alone is also flagged by
+  // `forge-process role` — so both labels fire, the same way a stripe key inside a populated
+  // secret trips two rules elsewhere in this file.
+  assert.equal(
+    labels("// the coordinator's brief said so", TS),
+    'forge-process role,forge-process brief',
+  );
+});
+
+test('the ordinary English uses of "brief" are not flagged', () => {
+  assert.equal(flagged('Kept the summary brief on purpose.', TS), false);
+  assert.equal(flagged('A brief pause before the retry.', TS), false);
+  assert.equal(flagged('This is explained briefly above.', TS), false);
+  // A bare noun-sense "the brief", with no task/phase/coordinator nearby, is the documented
+  // miss this narrowing accepts — see the rule's own comment for why.
+  assert.equal(flagged('The brief this suite implements asked for a test reading:', TS), false);
+});
+
+test('a Forge task/phase coordinate in prose content is flagged as a path too', () => {
+  assert.deepEqual(pathFindings('template/docs/Task 20/notes.md'), ['forge-process coordinate']);
+});
+
+// A realistic leaked FILE takes Forge's own report-naming convention: lowercase, hyphenated,
+// not the capitalized prose shape above. Path-only, the same way `source-domain path term`
+// covers the kebab-case shape a leaked domain-named file would realistically take.
+test('a kebab-case Forge task/phase report filename is flagged, path-only', () => {
+  assert.deepEqual(pathFindings('template/docs/task-20-report.md'), [
+    'forge-process path coordinate',
+  ]);
+  assert.deepEqual(pathFindings('template/docs/phase-3-plan.md'), [
+    'forge-process path coordinate',
+  ]);
+  // Content rules still apply to a path too — deliberately not exempted, the same guarantee
+  // `pathFindings` already gives every RULES entry.
+  assert.deepEqual(pathFindings('template/docs/Task 20 report.md'), [
+    'forge-process coordinate',
+  ]);
+});

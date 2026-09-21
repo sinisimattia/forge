@@ -211,8 +211,13 @@ const isLetter = (ch) => ch !== undefined && /[A-Za-z]/.test(ch);
  * `source-domain path term` (PATH_ONLY_RULES) is deliberately NOT in this set — see the
  * comment on that rule for why widening it the same way is a false-positive risk this task
  * must not introduce, rather than an oversight.
+ *
+ * `forge-process role` joins it for the same reason `organizer`/`rsvp` needed it: a generated
+ * project could plausibly get a class or variable named after the role this template's own
+ * comments call "the coordinator" (`TaskCoordinator`, `coordinatorService`), and a plain `\b`
+ * would miss it exactly the way it missed `OrganizerInvitation`.
  */
-const BOUNDED_TERM_LABELS = new Set(['source-domain term']);
+const BOUNDED_TERM_LABELS = new Set(['source-domain term', 'forge-process role']);
 
 /**
  * Whether the match of `pattern` starting at `index` in `text` sits on a real word boundary on
@@ -329,6 +334,51 @@ export const RULES = [
   // PascalCase stems above do.
   ['source-domain constant', /\b(EVENT|PAYMENT|TICKET|REFUND)_/],
   ['source-domain module', /\b(event|payment|ticket)s?\.(module|service|controller|entity|repository|guard|dto|resolver|interceptor|pipe|strategy|gateway)\b/i],
+  // Forge's own process vocabulary — added after it leaked into `template/` three times in
+  // one phase despite an explicit instruction not to, because the instruction and a
+  // legitimate, 56-reference copy of the same vocabulary arrive in an implementer's hands in
+  // the same document (the phase plan). An instruction cannot outrun a copy-paste source; a
+  // gate can. A generated project has no "Task 12", no "Phase 3", no briefs and no
+  // coordinator — those describe how THIS repository built the template, not anything true
+  // of the code a generated project ships.
+  //
+  // Case-sensitive and requires a space before the digit, deliberately narrow: every leak
+  // measured was capitalized and spelled with a space ("Task 12", "Phase 3"). The bare,
+  // lowercase words "task"/"phase" are ordinary English this template's own comments already
+  // use constantly ("this task", "the next phase of rollout") and must not be flagged, and
+  // neither should a coincidental digit near the lowercase word ("the task 12 hours from
+  // now", "12 open tasks"). Catching the capitalized, spaced shape and nothing else is the
+  // considered trade — see `forge-process brief` below for the same trade made explicitly
+  // about "brief".
+  ['forge-process coordinate', /\b(?:Task|Phase)\s+\d+\b/],
+  // "coordinator" has no ordinary use in this template's own domain vocabulary — a bare,
+  // case-insensitive word is safe here in a way it is not for "brief" below, because there is
+  // no common English sentence that needs the word "coordinator" for a reason unrelated to
+  // Forge's own dispatching role. Routed through `matchesBoundedTerm` (BOUNDED_TERM_LABELS)
+  // for the same reason `organizer`/`rsvp` are: a generated project could plausibly name a
+  // class or variable after the role this template's own process calls "the coordinator"
+  // (`TaskCoordinator`, `coordinatorService`), and a plain `\b` would miss that compound the
+  // same way it missed `OrganizerInvitation` before the boundary fix.
+  //
+  // No plural `s?`, unlike `source-domain term`'s `organizers?`. The observed vocabulary is
+  // never "coordinators" plural, and adding it would reproduce a real, pre-existing edge case
+  // that rule already carries: `organizers?` case-insensitively lets its own `s?` consume the
+  // capital letter starting the next word in a compound (`organizerService` slips entirely,
+  // measured), because "S" satisfies `s?` before the trailing-boundary check ever runs. Left
+  // unfixed there as out of this task's scope; not reproduced here by simply not matching a
+  // plural this rule has no real occurrence of.
+  ['forge-process role', /coordinator/i],
+  // "brief" alone is ordinary English ("kept it brief", "a brief pause") and this template's
+  // own comments are exactly the kind of prose that uses it that way — a bare-word rule here
+  // would be the gate that cries wolf until somebody turns it off. What is unambiguous is
+  // "brief" as the NOUN naming a Forge task/phase dispatch document, and every occurrence
+  // measured in this sweep had "task", "phase" or "coordinator" immediately before it ("this
+  // task's brief", "the task brief", "a phase's brief"). Narrowed to that co-occurrence on
+  // purpose: it will miss a bare "the brief" with none of those words nearby ("the brief this
+  // suite implements", "the one the brief names") — a real gap, chosen deliberately, per
+  // task-18's own report, because a rule that cannot tell the process sense from the ordinary
+  // one reliably should catch less rather than cry wolf on "kept it brief."
+  ['forge-process brief', /\b(?:task|phase|coordinator)'?s?\s+briefs?\b/i],
   ['stripe-style key', /\b(sk_|pk_live)/],
   // The non-TypeScript form of the populated-secret rule; `lineFindings` substitutes
   // POPULATED_SECRET_TS for this one wherever `isTypeScriptFile` says the file's own
@@ -358,6 +408,15 @@ export const RULES = [
 // so the rule is left exactly as it was.
 export const PATH_ONLY_RULES = [
   ['source-domain path term', /\b(events?|payments?|tickets?)\b/i],
+  // The kebab-case shape `forge-process coordinate` (RULES, content-only by design) cannot
+  // catch: a realistic leaked FILE is Forge's own report-naming convention
+  // (`task-18-report.md`, copied into `template/` by accident the way `events-overview.md`
+  // stands in for a leaked domain name above), lowercase and hyphenated, not the capitalized,
+  // spaced prose shape ("Task 12") the content rule is deliberately narrowed to. A path is
+  // never prose, so the collision risk that keeps the content rule narrow does not apply here
+  // — case-insensitive and hyphen-separated is the realistic leak shape for a path, the same
+  // reasoning `source-domain path term` gives just above.
+  ['forge-process path coordinate', /\b(?:task|phase)-\d+\b/i],
 ];
 
 // The populated-secret rule is tested against this stripped view of the line, not the
