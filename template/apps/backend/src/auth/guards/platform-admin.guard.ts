@@ -93,7 +93,7 @@ export class PlatformAdminGuard implements CanActivate {
         // reads neither. Hydrating them here would be a database read for an
         // answer that cannot depend on it, and the call below passes no
         // `resource`, so layers two and three are not merely unused — there is
-        // no path to them. `PermissionsGuard` (Task 13) is what hydrates a full
+        // no path to them. `PermissionsGuard` is what hydrates a full
         // principal, and it is the only thing that needs one.
         memberships: [],
         // An empty list, never an omitted one. The field is required precisely so

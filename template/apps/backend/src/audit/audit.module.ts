@@ -34,7 +34,7 @@ import { OrganizationAuditController } from './organization-audit.controller';
  * this module cannot import that one. See `UsersModule` for the same note.
  *
  * **`AuthorizationModule` is imported for `PermissionsGuard`**, which
- * `OrganizationAuditController` names — Task 14. This is the direction that
+ * `OrganizationAuditController` names. This is the direction that
  * does NOT close a cycle: `AuthorizationModule` provides its own `AuditService`
  * instance rather than importing this module back (see that module's own
  * TSDoc), exactly the arrangement `UsersModule` already uses for

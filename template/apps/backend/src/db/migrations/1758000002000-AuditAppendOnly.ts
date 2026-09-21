@@ -60,9 +60,9 @@ import { requireAppRoleName } from '../app-role';
  *   arbitrary request-shaped code, and is the only one of the three that an
  *   attacker reaches through the product.
  *
- * This file is discriminating test D13's mechanism. The test itself is in Task
- * 19, against the running stack: nothing short of a real database can prove
- * that a real statement is refused.
+ * This file is discriminating test D13's mechanism. The test itself is in the
+ * docker end-to-end suite, against the running stack: nothing short of a real
+ * database can prove that a real statement is refused.
  */
 export class AuditAppendOnly1758000002000 implements MigrationInterface {
   name = 'AuditAppendOnly1758000002000';

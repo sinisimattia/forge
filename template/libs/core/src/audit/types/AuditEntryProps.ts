@@ -19,7 +19,7 @@ export interface AuditEntryProps {
    * The tenant the recorded action happened in, or `null` when it belonged to
    * no tenant.
    *
-   * A branded `OrganizationId` now that Phase 3 has organizations to brand it
+   * A branded `OrganizationId` now that organizations exist to brand it
    * against. The field was here before there was anything to put in it because
    * this table is append-only: adding a column later means backfilling rows the
    * application is not permitted to update. `null` is a fact — "this belonged to

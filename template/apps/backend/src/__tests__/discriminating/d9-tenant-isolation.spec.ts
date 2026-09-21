@@ -31,9 +31,9 @@ import {
  *    service that reached into B and then happened to answer 404 satisfies every
  *    status and body comparison in the suite next door.
  *
- * ## The fault this was watched going red under — and the one the brief names
+ * ## The fault this was watched going red under — and the one design ruling R3 names
  *
- * The phase's brief names design ruling R3's fault: hydrating the principal from
+ * Design ruling R3 names one candidate fault: hydrating the principal from
  * the route parameter rather than the credential's subject. **That fault is
  * fail-closed, and this file says so rather than pretending otherwise.**
  * `PrincipalService.hydrate` looks a *user* up by id; handed an *organization*
@@ -53,7 +53,8 @@ import {
  * B-did-not-move assertion, which is the one that distinguishes a leak from a
  * mere wrong status.
  *
- * Both are recorded in `task-20-report.md` with their output.
+ * Both were watched going red under fault injection before this file's
+ * assertions were written.
  *
  * ## What this file cannot see
  *

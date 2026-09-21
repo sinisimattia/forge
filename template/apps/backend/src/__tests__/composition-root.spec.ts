@@ -81,11 +81,11 @@ import { UsersModule } from '../users/users.module';
  * | `app.module.ts`: `AuditModule` from `imports` | `AppModule › imports AuditModule` |
  * | `app.module.ts`: `I18nModule` from `imports` | `AppModule › registers I18nModule` |
  * | `app.module.ts`: an entity from the list | `the database connection › lists every entity` |
- * | `app.module.ts`: `OrganizationRecord` from the entity list | `the database connection › lists every entity` — a repository for it resolves nothing, and every `organizations` read or write in Task 10 fails at start-up |
- * | `app.module.ts`: `MembershipRecord` from the entity list | `the database connection › lists every entity` — same fault, for every membership Task 11 reads or writes |
- * | `app.module.ts`: `InvitationRecord` from the entity list | `the database connection › lists every entity` — same fault, for every invitation Task 12 reads or writes |
- * | `app.module.ts`: `ResourceGrantRecord` from the entity list | `the database connection › lists every entity` — same fault, for every grant Task 13 reads or writes |
- * | `app.module.ts`: `OAuthAuthorizationRequestRecord` from the entity list | `the database connection › lists every entity` — same fault, for every pending authorization Tasks 10 and 11 read or write |
+ * | `app.module.ts`: `OrganizationRecord` from the entity list | `the database connection › lists every entity` — a repository for it resolves nothing, and every `organizations` read or write fails at start-up |
+ * | `app.module.ts`: `MembershipRecord` from the entity list | `the database connection › lists every entity` — same fault, for every membership read or write |
+ * | `app.module.ts`: `InvitationRecord` from the entity list | `the database connection › lists every entity` — same fault, for every invitation read or write |
+ * | `app.module.ts`: `ResourceGrantRecord` from the entity list | `the database connection › lists every entity` — same fault, for every grant read or write |
+ * | `app.module.ts`: `OAuthAuthorizationRequestRecord` from the entity list | `the database connection › lists every entity` — same fault, for every pending authorization read or write |
  * | `app.module.ts`: `providers: GLOBAL_PROVIDERS` replaced by a copy | `AppModule › uses the exported provider array itself` |
  * | `app.setup.ts`: `credentials: true` on CORS | `configureApp › lets a cross-origin caller send the renewal cookie` |
  * | `health.controller.ts`: `@Public()` | `health › is reachable with no credential` |
@@ -108,7 +108,7 @@ import { UsersModule } from '../users/users.module';
  * | `authorization.module.ts`: `PermissionsGuard` or `PrincipalService` from `providers`/`exports` | `AuthorizationModule › provides and exports what the guarded controllers resolve` |
  * | `invitations.controller.ts`: `@UseGuards(PermissionsGuard)` on any of the three organization-scoped routes | `organizations/__tests__/invitations.controller.spec.ts › authorization: what a role does and does not carry` — one case per route, each measured red on its own deletion. Without them a MEMBER or a VIEWER could invite, list and revoke, because the service checks membership and never the role |
  * | `authorization.module.ts`: an entity from `forFeature` | `AuthorizationModule › registers every table the hydrator reads` — `PrincipalService` reads three and the guard reads the fourth; a missing one is a repository Nest cannot resolve |
- * | `auth.module.ts`: `OAuthController`/`IdentitiesController` from `controllers` | `AuthModule › registers OAuthController and IdentitiesController` — without either, its routes exist nowhere; this is the fault Task 11's own `⚠️` flagged: `OAuthService` was registered in no module at all |
+ * | `auth.module.ts`: `OAuthController`/`IdentitiesController` from `controllers` | `AuthModule › registers OAuthController and IdentitiesController` — without either, its routes exist nowhere; this is the fault an earlier revision shipped: `OAuthService` was registered in no module at all |
  * | `auth.module.ts`: `OAuthService` from `providers` | `AuthModule › provides OAuthService, which OAuthController and IdentitiesController resolve` |
  * | `auth.module.ts`: `OAuthAuthorizationRequestRecord` from its own `TypeOrmModule.forFeature` | `AuthModule › registers the table OAuthService reads and writes` — a `Repository<OAuthAuthorizationRequestRecord>` Nest cannot resolve, on top of the one already caught in the app-wide entity list above (that one is for the database *connection*; this one is for *this module's own* repository provider, which `OAuthService`'s `@InjectRepository` actually resolves from) |
  * | `identities.module.ts`: `IdentitiesController` left in `controllers` (i.e. not moved to `AuthModule`) | `identities/__tests__/identities.controller.spec.ts › who wires it › AuthModule registers the controller` — `beginLink` needs `OAuthService`, which only `AuthModule` can resolve without a module cycle |
@@ -362,17 +362,17 @@ describe('the composition root', () => {
     });
 
     /**
-     * Task 12's own ⚠️, closed: `OAuthService` was registered in no module at
-     * all, and every existing test built it with `new` — nothing proved any
-     * module could actually provide its five dependencies. These four
-     * assertions are what would have caught it, watched failing (see the
-     * task's own report): deleting `OAuthController` from `controllers`
-     * turns the two route-registration assertions red and nothing else in
-     * this file, and deleting `OAuthAuthorizationRequestRecord` from this
-     * module's own `TypeOrmModule.forFeature` turns only the table
-     * assertion red — `OAuthService`'s `@InjectRepository` for that entity
-     * would otherwise resolve nothing, an `UnknownDependenciesException` at
-     * start-up that no fast tier before this file could see.
+     * `OAuthService` was once registered in no module at all, and every
+     * existing test built it with `new` — nothing proved any module could
+     * actually provide its five dependencies. These four assertions are
+     * what would have caught it, watched failing: deleting
+     * `OAuthController` from `controllers` turns the two
+     * route-registration assertions red and nothing else in this file, and
+     * deleting `OAuthAuthorizationRequestRecord` from this module's own
+     * `TypeOrmModule.forFeature` turns only the table assertion red —
+     * `OAuthService`'s `@InjectRepository` for that entity would otherwise
+     * resolve nothing, an `UnknownDependenciesException` at start-up that
+     * no fast tier before this file could see.
      */
     it('registers OAuthController and IdentitiesController, without which their routes exist nowhere', () => {
       // `IdentitiesController` here, not in `IdentitiesModule` — see that

@@ -248,7 +248,7 @@ describe('createAuthFetch', () => {
    * The first half must renew, or a signed-in visitor's first data request fails
    * and the page renders empty for somebody who is signed in.
    *
-   * The second half must not, and it is Task 16's regression: a version without
+   * The second half must not, and it is a prior regression: a version without
    * the discriminator renewed on every mistyped password, the renewal failed too
    * because there was nothing to renew, the store answered `anonymous`, and the
    * sign-in page reported a refusal **and** signed the visitor out. That the

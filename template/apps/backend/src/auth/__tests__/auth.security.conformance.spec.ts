@@ -7,7 +7,7 @@ import { adaptJestToConformanceExpect, makeIdentityWorld } from '../../common/te
  *
  * ## DEC-1: the webapp does not drive this suite, and must not be made to
  *
- * Phase 2's DEC-1 splits conformance in two. The *shared* suite
+ * DEC-1 splits conformance in two. The *shared* suite
  * (`auth.conformance.spec.ts`) is driven by this backend under jest **and** by
  * the webapp under vitest, because behaviour both implementations genuinely
  * share — outcome discrimination, error mapping, wire shape — is worth checking

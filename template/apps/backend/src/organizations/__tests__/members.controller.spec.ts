@@ -28,7 +28,7 @@ import { OrganizationRecord } from '../organization-record.entity';
 import { OrganizationsModule } from '../organizations.module';
 import { OrganizationsService } from '../organizations.service';
 
-/** This suite exercises none of Task 12's mail; a stub that records nothing suffices. */
+/** This suite exercises none of the invitation mail; a stub that records nothing suffices. */
 const NOOP_MAILER: IMailer = { send: async () => undefined };
 
 const WEBAPP_URL = 'https://app.example.test';
@@ -45,7 +45,7 @@ const WEBAPP_URL = 'https://app.example.test';
  * backend chose for it (409), and that the non-member/never-issued collapse
  * `OrganizationsController` observes holds on this controller too.
  *
- * Task 13 added `@UseGuards(PermissionsGuard)` to all three routes. The last
+ * `@UseGuards(PermissionsGuard)` sits on all three routes. The last
  * describe block is what can tell a guarded route from an unguarded one here:
  * a MEMBER may see who else belongs and may change nobody's role, and the
  * service — which asks only whether the actor holds a membership — cannot tell

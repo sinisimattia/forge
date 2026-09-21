@@ -25,7 +25,7 @@ export async function getMe(client: ApiClient, actor: UserId): Promise<UserJSON>
  * The actor's own principal: what `can` is evaluated against on their behalf.
  *
  * It exists so the webapp can evaluate the same rule the server does and hide
- * an action rather than offer one that will be refused (ADR-0006). Task 13's
+ * an action rather than offer one that will be refused (ADR-0006).
  * `GET /users/me/principal` is the only route that answers it — the access
  * credential deliberately carries no membership or grant of its own, so there
  * is nowhere else on the wire to read either from.

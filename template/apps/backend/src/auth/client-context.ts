@@ -13,7 +13,7 @@ import type { ClientContext } from '__FORGE_SCOPE__/core/auth/types';
  * value the client itself chose.
  *
  * Extracted from `AuthController`'s own private `clientOf` when `OAuthController`
- * became the second caller (Task 12): a second hand-written copy is a second
+ * became the second caller: a second hand-written copy is a second
  * place for the two to disagree about what counts as "where this came from,"
  * and the label's 200-character bound in particular is a decision worth making
  * once.

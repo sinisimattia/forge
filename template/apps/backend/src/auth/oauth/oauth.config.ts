@@ -53,7 +53,7 @@ function hasCredentialPair(config: ConfigService, idKey: string, secretKey: stri
  * authorization URL, so a missing value is a boot failure and not a broken
  * sign-in link discovered by whoever clicks it first.
  *
- * (Since Task 12, `OAuthService` — the one consumer of whatever this function
+ * (`OAuthService` — the one consumer of whatever this function
  * returns — reads this same variable unconditionally, in its own constructor,
  * whether or not any provider is configured. The check here is not made
  * redundant by that: `OAuthProviderRegistry`, which is built from this
@@ -142,8 +142,8 @@ export function buildOAuthProviders(config: ConfigService): IOAuthProvider[] {
   // Required the moment any provider is about to be built, including the
   // development one — see this function's own `## PUBLIC_API_URL` doc above.
   // The value itself is not needed below: every real adapter's redirect URI
-  // is built by `OAuthService`, not here, and Task 12 stopped
-  // `DevOAuthProvider` needing it too (its `authorizationUrl` now echoes back
+  // is built by `OAuthService`, not here — `DevOAuthProvider` does not need it
+  // either (its `authorizationUrl` now echoes back
   // `params.redirectUri`, which is already that same value). Called for the
   // throw alone, so a deployment missing it still fails here rather than on
   // whichever adapter happens to be built first.

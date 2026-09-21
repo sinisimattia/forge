@@ -15,7 +15,7 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  * still be pointed at a role nobody connects as, or be undone by a fourth
  * migration nobody added yet. The proof that a real `UPDATE` on `audit_entries`
  * is rejected by a real Postgres is discriminating test D13, which runs against
- * the booted stack in Task 19's docker end-to-end, and nowhere else.
+ * the booted stack in the docker end-to-end suite, and nowhere else.
  *
  * What text is good for is the reverse direction: catching the deletion. Every
  * assertion here exists because removing one line from a migration would make
@@ -155,8 +155,9 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  *   alternative is an extractor that skips regions, which is a place to hide
  *   one.
  *
- * What stands behind all of it is D13: Task 19 runs the real statement against
- * the real Postgres, and its fault injections include the foreign-key bypass.
+ * What stands behind all of it is D13: the docker end-to-end suite runs the
+ * real statement against the real Postgres, and its fault injections include
+ * the foreign-key bypass.
  * If a change to the audit table cannot be made obvious in the text, that is a
  * reason to be suspicious of the change, not of the test.
  */
@@ -1399,7 +1400,8 @@ describe('the extractor undoes TypeScript escaping, and refuses what it does not
 });
 
 describe('migration SQL is pinned to string literals at the call site', () => {
-  // The other half of Task 22a, and the half the canonical form cannot do.
+  // The other half of pinning migration SQL to string literals, and the half
+  // the canonical form cannot do.
   //
   // Every guard in this file reads the string written at
   // `queryRunner.query(…)` / `exec(queryRunner, …)`. Two shapes give it
@@ -2163,7 +2165,7 @@ describe('audit_entries is never given a foreign key', () => {
 });
 
 describe('audit_entries permits exactly two ALTER TABLE statements, and nothing else structural', () => {
-  // This guard was narrowed once, to "adds a constraint", to let Task 9's own
+  // This guard was narrowed once, to "adds a constraint", to let the legitimate
   // `ALTER TABLE audit_entries ALTER COLUMN organization_id TYPE uuid` through.
   // That narrowing was a defect, caught on review: it preserved every
   // foreign-key check intact and quietly let through the one statement that
@@ -2239,7 +2241,7 @@ describe('audit_entries never has its privileges handed back', () => {
 });
 
 describe('the organizations-and-authorization migration', () => {
-  const phase3 = migrationSource('OrganizationsAndAuthorization');
+  const orgsAndAuthMigration = migrationSource('OrganizationsAndAuthorization');
 
   /**
    * The column list of one `CREATE TABLE` in THIS migration, and nothing after
@@ -2255,7 +2257,7 @@ describe('the organizations-and-authorization migration', () => {
    * prevent.
    */
   function createTableBody(table: string): string {
-    const match = new RegExp(`CREATE TABLE ${table} \\(([\\s\\S]*?)\\n\\s*\\)`).exec(phase3);
+    const match = new RegExp(`CREATE TABLE ${table} \\(([\\s\\S]*?)\\n\\s*\\)`).exec(orgsAndAuthMigration);
     expect(match).not.toBeNull();
     return match?.[1] ?? '';
   }
@@ -2355,7 +2357,7 @@ describe('the organizations-and-authorization migration', () => {
     'uq_organizations_slug',
     'uq_memberships_org_user',
     'uq_organization_invitations_token_hash',
-  ])('creates the four Phase 3 tables with the uniqueness constraint %s', (constraint) => {
+  ])('creates the four organizations-and-authorization tables with the uniqueness constraint %s', (constraint) => {
     // `expect(actual, message)` is not a Jest signature — Jest's `expect` takes
     // one argument, unlike Jasmine/Chai's. `it.each` is what gets the failing
     // constraint's name into the test's own title instead.
@@ -2466,16 +2468,15 @@ describe('the oauth authorization requests migration', () => {
   // two is a red test rather than a silent divergence. This migration writes
   // no such literal — `purpose` is a plain `text NOT NULL` column, and
   // neither this file nor a `CHECK` constraint names `'SIGN_IN'`, `'LINK'`,
-  // or any other value the service layer will write. There is therefore
+  // or any other value the service layer writes. There is therefore
   // nothing in this migration for a drift check to compare against.
   //
-  // `oauth.service.ts`, which the task brief names as the other half of that
-  // comparison, does not exist yet at this point in the phase — it is Task
-  // 10's deliverable, sequenced after this one (see the SDD ledger's
-  // dependency table: "10 → 11 | oauth.service.ts created then extended").
-  // Once it exists and writes concrete purpose literals, a test here (or
-  // there) can compare them against whatever this table's read/write sites
-  // agree the values are; there is nothing to pin down before that.
+  // `oauth.service.ts`'s own `OAuthAuthorizationPurpose` is the one place
+  // either literal (`'SIGN_IN'`, `'LINK'`) is spelled, and
+  // `oauth.service.begin.spec.ts` pins both values independently of it — see
+  // that object's own TSDoc for why a drift there would fail a test rather
+  // than pass silently. There is nothing for this migration itself to pin,
+  // because it never names either value.
 
   /**
    * One column's definition line, bounded to the line rather than to the

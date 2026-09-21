@@ -50,7 +50,7 @@ function fakeProvider(provider: AuthProvider): IOAuthProvider {
 }
 
 /**
- * # Task 10 — beginning an authorization
+ * # Beginning an authorization
  *
  * This deployment, in this suite, registered Google alone. GitHub is a real
  * `AuthProvider` member with no adapter behind it — exactly the shape
@@ -80,7 +80,7 @@ describe('OAuthService.begin / beginLink', () => {
     requests = repo<OAuthAuthorizationRequestRecord>(OAuthAuthorizationRequestRecord);
     const users = repo<UserRecord>(UserRecord);
 
-    // `begin`/`beginLink` touch none of these — Task 11's `complete` is what
+    // `begin`/`beginLink` touch none of these — `OAuthService.complete` is what
     // uses them — but the constructor takes them all, so this suite wires the
     // same real services the completion suite does rather than typing a
     // second, narrower fake of `OAuthService`'s dependencies.
@@ -205,7 +205,7 @@ describe('OAuthService.begin / beginLink', () => {
     // Both sides written out as literals: the point is not that
     // `OAuthAuthorizationPurpose.SIGN_IN` equals itself (true no matter what
     // it holds) but that it holds exactly the string the `purpose` column
-    // — plain `text`, no SQL literal — is written and, from Task 11, read
+    // — plain `text`, no SQL literal — is written and read
     // against. A change to either value here is a change to what ships.
     expect(OAuthAuthorizationPurpose.SIGN_IN).toBe('SIGN_IN');
     expect(OAuthAuthorizationPurpose.LINK).toBe('LINK');

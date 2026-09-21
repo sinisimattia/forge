@@ -258,7 +258,7 @@ export class UsersService implements IUserService {
    * organization — and every one of them is asked without a `resource`, so
    * layers two and three are unreachable rather than merely unused. Hydrating
    * either would be a second query for an answer that cannot depend on it.
-   * `PermissionsGuard` (Task 13) is what builds a full principal for the callers
+   * `PermissionsGuard` is what builds a full principal for the callers
    * that do ask organization-scoped questions, and it is the one place the
    * expiry rule that `Principal.grants` promises is applied.
    */

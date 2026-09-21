@@ -25,7 +25,7 @@ const CLIENT: ClientContext = { address: '203.0.113.9', label: 'test-client' };
 const SIGNING_KEY = 'dev-round-trip-spec-signing-key';
 
 /**
- * The development provider's own end-to-end proof — Task 12's revision.
+ * The development provider's own end-to-end proof.
  *
  * Every other suite in this folder tests `OAuthService` against fake
  * providers, or tests `DevOAuthProvider` in isolation. Neither, on its own,
@@ -39,7 +39,7 @@ const SIGNING_KEY = 'dev-round-trip-spec-signing-key';
  * note) — and drives the whole round trip: `begin` → parse the URL exactly
  * as a provider's own redirect would be parsed → `complete`.
  */
-describe('the development provider — the full round trip (Task 12 revision)', () => {
+describe('the development provider — the full round trip', () => {
   let source: FakeDataSource;
   let service: OAuthService;
 

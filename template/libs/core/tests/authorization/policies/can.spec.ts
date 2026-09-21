@@ -252,7 +252,7 @@ describe('can', () => {
       })).toBe(false);
     });
 
-    // The carried finding from Task 6, and the reason it stopped being
+    // A carried finding, and the reason it stopped being
     // cosmetic. Layer two's `return false` for "no membership here" was pinned
     // by nothing while every organization permission was refused by the switch
     // anyway. Layer three is a route to `true` that runs after it, so folding
@@ -308,7 +308,7 @@ describe('can', () => {
     // layer two never short-circuits, and the ownership rule in the switch is
     // what permits a person to read their own profile. A resource that names
     // BOTH an owner and a record walks the whole way past layer three to reach
-    // it, and that call shape becomes ordinary from Task 17 on, when a client
+    // it, and that call shape becomes ordinary once a client
     // starts asking about concrete records.
     //
     // Turning layer three's `if (granted) return true;` into `return granted;`

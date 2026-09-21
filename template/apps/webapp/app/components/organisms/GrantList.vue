@@ -10,7 +10,7 @@ import { formatInstant } from '~/utils/formatInstant';
  * are `useGrants`'. There is no way to issue one from here, and
  * `useGrants`'s own TSDoc explains why: doing so needs a `Permission`
  * picked from a list, and nothing in this application enumerates one
- * (ADR-0006, Task 17's `useCan` exhaustiveness proof). This component only
+ * (ADR-0006, `useCan`'s own exhaustiveness proof). This component only
  * ever renders a grant's own `permission` field back out as a value, which
  * needs no such list.
  */

@@ -216,7 +216,7 @@ describe('HttpExceptionFilter', () => {
       expect(consumed.code).not.toBe(expired.code);
     });
 
-    // Task 12's own three: an invitation never issued, one that has closed
+    // Three cases: an invitation never issued, one that has closed
     // (whichever of revoked/accepted/expired that means), and one presented by
     // an account that does not hold its address.
     it('maps a token that redeems nothing to 404, the shared not-found key', () => {

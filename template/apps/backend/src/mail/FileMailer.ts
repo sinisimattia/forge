@@ -20,7 +20,7 @@ import type { IMailer, OutboundMessage } from './IMailer';
  * concurrent `send()` calls each own their own file and never contend.
  *
  * JSON rather than `.eml` or another mail-shaped format: the only reader that
- * matters today is a test (this suite, and Task 19's e2e), and a JSON file is
+ * matters today is a test (this suite, and the docker end-to-end suite), and a JSON file is
  * one `JSON.parse` away from an object a test can assert on. A format closer to
  * a real mail message would need a parser this project does not otherwise need.
  */

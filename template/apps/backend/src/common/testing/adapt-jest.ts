@@ -11,7 +11,7 @@ import { explain } from '__FORGE_SCOPE__/core/shared/testing';
  * matcher chain — so jest's `expect` cannot be passed through with a cast. That
  * shape is deliberate: it is the smallest surface every runner can satisfy, and
  * it is what lets one suite in `libs/core` be run by jest here and by vitest in
- * the webapp (Task 16) without either runner leaking into core.
+ * the webapp without either runner leaking into core.
  *
  * ## The third argument, which is the whole reason this is written carefully
  *

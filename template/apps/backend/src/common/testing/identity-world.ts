@@ -50,7 +50,7 @@ import { FakeDataSource } from './fake-data-source';
  * moment it was written, in a paragraph whose whole job is to be exhaustive.
  * There is no count here now, deliberately.
  *
- * That is the point of Task 13. Until it, core's suites had only ever been
+ * That is the point of this harness. Until it existed, core's suites had only ever been
  * satisfied by reference implementations written in the same file that asserts
  * them, which proves that the assertions are self-consistent and nothing about
  * whether they describe anything.
@@ -75,8 +75,8 @@ import { FakeDataSource } from './fake-data-source';
  * - **Audit immutability (item 3), the most load-bearing.** This store will
  *   happily `UPDATE` and `DELETE` an `audit_entries` row. The guarantee is a
  *   revoked privilege in `1758000002000-AuditAppendOnly`, and *nothing* driven
- *   from here can fail for want of it. Task 19 proves it against a live
- *   database; see `audit.conformance.spec.ts`.
+ *   from here can fail for want of it. The docker end-to-end suite proves it
+ *   against a live database; see `audit.conformance.spec.ts`.
  * - **Unique constraints (item 4).** There are none, so the losing half of a
  *   registration race — `AuthService.register`'s `23505` branch — is not reached
  *   by any conformance test.

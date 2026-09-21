@@ -35,8 +35,8 @@ import { createPkcePair } from './pkce';
  * in this schema is declared the same way), so nothing in the database stops
  * a writer storing `'SIGN_IN'` and a reader comparing `'SIGNIN'` — a silent
  * mismatch no constraint would catch. `OAuthService.begin` and `beginLink`
- * write through this object below; the callback this phase adds in Task 11
- * reads through it too, rather than either side writing the string again.
+ * write through this object below; the callback reads through it too,
+ * rather than either side writing the string again.
  *
  * `__tests__/oauth.service.begin.spec.ts` pins these two literal values
  * independently of this object, so a change here that drifted from what the
@@ -147,7 +147,7 @@ class AuthorizationRowRefusal extends Error {
  * A purpose carried as a query parameter or a route segment can be edited by
  * whoever holds the browser between the redirect out and the return — turning
  * a link into a sign-in, or the reverse. Fixing it here, at the moment this
- * server itself asked for it, is what Task 11's callback will have to trust
+ * server itself asked for it, is what the callback will have to trust
  * instead.
  */
 @Injectable()
@@ -200,7 +200,7 @@ export class OAuthService {
    * carry.
    *
    * @param actorId - the account making the request, recorded on the row so
-   *   Task 11's callback links against the actor who asked rather than
+   *   the callback links against the actor who asked rather than
    *   whoever the callback happens to arrive as
    * @param providerName - the raw route parameter naming a provider
    * @returns the absolute URL to send the browser to
@@ -575,8 +575,7 @@ export class OAuthService {
         platformRole: PlatformRole.PLATFORM_USER,
         // The provider proved this address. Sending a verification mail to
         // an address a provider just proved would be asking the person to
-        // prove it twice — the same reasoning `AuthController`'s Task 11
-        // brief gives, and the reason this differs from `AuthService.register`,
+        // prove it twice — the reason this differs from `AuthService.register`,
         // which never has a provider's own proof to lean on.
         emailVerifiedAt: now,
         createdAt: now,
@@ -758,8 +757,7 @@ export class OAuthService {
       // set of usable pending authorizations.
       stateHash: state.hash,
       // In the clear, deliberately: this is what this server proves to the
-      // provider at the token exchange, in Task 11, so it has to be
-      // recoverable here.
+      // provider at the token exchange, so it has to be recoverable here.
       codeVerifier: verifier,
       provider: provider.provider,
       purpose,

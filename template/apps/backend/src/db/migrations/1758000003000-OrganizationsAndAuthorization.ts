@@ -1,9 +1,10 @@
 import type { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
- * The four Phase 3 tables — `organizations`, `memberships`,
- * `organization_invitations`, `resource_grants` — and the one column that had
- * to wait for them: `audit_entries.organization_id` becomes a real `uuid`.
+ * The four organizations-and-authorization tables — `organizations`,
+ * `memberships`, `organization_invitations`, `resource_grants` — and the one
+ * column that had to wait for them: `audit_entries.organization_id` becomes a
+ * real `uuid`.
  *
  * Runs as the schema owner, after `AppRoleAndDefaultPrivileges1758000000000`
  * has set the default privileges, so every table below becomes readable and
@@ -16,7 +17,7 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  *
  * `IdentityFoundation1758000001000` shipped this column as `text` because core
  * had no `OrganizationId` to brand it with yet, and said so in its own
- * comment. Phase 3 gives core that type, so the column can finally hold what it
+ * comment. Core has that type now, so the column can finally hold what it
  * always meant to.
  *
  * `USING organization_id::uuid` is safe because nothing has ever written a
@@ -32,8 +33,7 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * WHERE organization_id IS NOT NULL`, and it returned `0`, but the table was
  * empty at the time (`SELECT count(*) FROM audit_entries` also returned `0`),
  * which makes that particular `0` prove nothing: an empty table satisfies any
- * `WHERE` clause. Recorded, with both counts, in Task 9's report alongside the
- * privilege verification below.
+ * `WHERE` clause.
  *
  * **No foreign key to `organizations`, and this is where the temptation
  * arrives** — more than it did for `actor_user_id`, because this column is
@@ -48,7 +48,7 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * ("who did what" survives, "in which tenant" does not), and `NO ACTION` /
  * `RESTRICT` makes an organization impossible to delete for as long as any
  * entry names it. All four were measured against Postgres 16 for
- * `actor_user_id` in Phase 2 (see `IdentityFoundation1758000001000`); the
+ * `actor_user_id` in `IdentityFoundation1758000001000`; the
  * result is identical here because it is a property of referential actions,
  * not of that column. ADR-0009, and discriminating test D13.
  *

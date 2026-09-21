@@ -64,8 +64,8 @@ describe('FakeDataSource rollback', () => {
     expect(source.all(ROWS)).toHaveLength(1);
   });
 
-  // Task 11's `removeMember` needs `manager.delete` inside a transaction — the
-  // one thing this fake compile-errored on before that task, by design (see
+  // `OrganizationsService.removeMember` needs `manager.delete` inside a
+  // transaction — the one thing this fake compile-errored on before, by design (see
   // this class's own "what this double cannot express" list). Adding it
   // without a test of its OWN rollback would repeat exactly the mistake this
   // file's header describes: `update`'s undo was wrong at key granularity for

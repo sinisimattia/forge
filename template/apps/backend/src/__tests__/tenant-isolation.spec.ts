@@ -75,7 +75,7 @@ import { UserRecord } from '../users/user-record.entity';
  * `FakeDataSource` enforces no unique constraints (item 4 on its own inventory)
  * and no foreign keys (item 7). Nothing here is evidence about
  * `uq_memberships_org_user` or about what a real database does on a cascade;
- * Task 20's walk against Postgres is.
+ * the docker end-to-end suite's walk against a real Postgres is.
  */
 
 const OWNER_A = '11111111-1111-4111-8111-111111111111' as UserId;
@@ -659,7 +659,7 @@ describe('tenant isolation (D9)', () => {
    * nulled — asserting on it would be asserting on the fake's behaviour, not on
    * the schema's.
    *
-   * So it is left. Task 20's walk stands up a real Postgres and is where the
+   * So it is left. The docker end-to-end suite stands up a real Postgres and is where the
    * cascade becomes reachable, and the mapper that has to survive it
    * (`to-invitation.ts`) already reads the column as `UserId | null`.
    *

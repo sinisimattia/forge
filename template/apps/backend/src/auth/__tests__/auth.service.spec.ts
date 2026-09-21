@@ -1131,7 +1131,7 @@ describe('AuthService', () => {
       const stored = source.all(AuthIdentityRecord)[0];
       // The STORED VALUE is read back. Asserting that `needsRehash` was consulted
       // would pass against an implementation that consulted it and did nothing,
-      // which is the whole failure mode: the capability exists (Task 9 built it)
+      // which is the whole failure mode: the capability exists
       // and nothing forced anybody to act on it.
       expect(stored.secretParams).toEqual({ ...CURRENT_PARAMS });
       expect(stored.secretHash).not.toBe(before);

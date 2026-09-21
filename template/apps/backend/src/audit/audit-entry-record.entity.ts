@@ -33,13 +33,13 @@ export class AuditEntryRecord {
    * The tenant it happened in, or `null` when it belonged to none.
    *
    * `uuid` since `OrganizationsAndAuthorization1758000003000`. It shipped as
-   * `text` in Phase 2 because no organization table existed yet and core had
+   * `text` originally because no organization table existed yet and core had
    * no `OrganizationId` to brand it with; the column was added that early
    * rather than later precisely because this table is append-only, and adding
    * a column later would mean backfilling rows the application is not
-   * permitted to update (ADR-0007). Phase 3's migration widens the type with
-   * `USING organization_id::uuid`, verified safe because nothing had ever
-   * written a non-null value into it.
+   * permitted to update (ADR-0007). The organizations-and-authorization
+   * migration widens the type with `USING organization_id::uuid`, verified
+   * safe because nothing had ever written a non-null value into it.
    *
    * **Still no foreign key to `organizations`, on purpose — see
    * `OrganizationsAndAuthorization1758000003000`'s own TSDoc and

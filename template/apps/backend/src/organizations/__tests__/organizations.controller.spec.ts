@@ -29,7 +29,7 @@ import { OrganizationsController } from '../organizations.controller';
 import { OrganizationsModule } from '../organizations.module';
 import { OrganizationsService } from '../organizations.service';
 
-/** This suite exercises none of Task 12's mail; a stub that records nothing suffices. */
+/** This suite exercises none of the invitation mail; a stub that records nothing suffices. */
 const NOOP_MAILER: IMailer = { send: async () => undefined };
 
 const WEBAPP_URL = 'https://app.example.test';
@@ -45,8 +45,8 @@ const WEBAPP_URL = 'https://app.example.test';
  * transaction, the audit entries, the tenant-scoped read — is
  * `organizations.service.spec.ts`'s job.
  *
- * Task 13 put `PermissionsGuard` on the three routes that name an
- * organization, so authorization is now asserted here too — and the two are
+ * `PermissionsGuard` sits on the three routes that name an
+ * organization, so authorization is asserted here too — and the two are
  * worth keeping apart while reading. Authentication is the 401 block;
  * authorization is `a role that does not carry the permission`, which is the
  * only thing in this file that can tell a guarded route from an unguarded one.
@@ -312,7 +312,7 @@ describe('OrganizationsController', () => {
     // leaks exactly what the shared status was chosen to hide, through the one
     // channel a status code cannot close.
     //
-    // **Since Task 13 this no longer reaches `OrganizationNotFoundError`.**
+    // **This no longer reaches `OrganizationNotFoundError`.**
     // `PermissionsGuard` runs first and refuses both cases itself, so what this
     // now guards is the GUARD's collapse — both of its refusal paths, the one
     // where no row answers the id and the one where `can()` says no, leaving by

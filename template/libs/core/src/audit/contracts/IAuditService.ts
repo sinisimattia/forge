@@ -25,10 +25,10 @@ export interface IAuditService {
   record(input: RecordAuditEntryInput): Promise<void>;
 
   /**
-   * Reads entries the actor is entitled to see. In this phase that means a
-   * platform administrator reading across the deployment; Phase 3 adds
-   * organization administrators reading their own organization's entries, which
-   * is why {@link AuditQuery} already carries an `organizationId` filter.
+   * Reads entries the actor is entitled to see: a platform administrator
+   * reads across the deployment, and an organization administrator reads
+   * their own organization's entries, which is why {@link AuditQuery} already
+   * carries an `organizationId` filter.
    *
    * @param actorId - the user on whose behalf the call is made
    * @param query - which page is wanted, and how to narrow it

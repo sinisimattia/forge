@@ -2,7 +2,7 @@ import { buildResetPasswordMessage } from '../reset-password';
 import { buildVerifyEmailMessage } from '../verify-email';
 
 /**
- * The brief this suite implements asked for a test reading:
+ * This suite exists to answer a test reading:
  *
  *   "the verification template's link is built from PUBLIC_WEBAPP_URL, not
  *   from any request value"

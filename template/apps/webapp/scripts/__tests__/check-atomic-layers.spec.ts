@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
  *
  * The guard fires when either axis of the scan — components, or pages/layouts — comes back
  * empty, so that a renamed directory or a bad cwd cannot report "clean" for having found
- * nothing. Task 2 of Phase 3 found the `pages`/`layouts` half unreachable in ordinary CI: the
+ * nothing. Code review found the `pages`/`layouts` half unreachable in ordinary CI: the
  * real tree always has pages and layouts, so the clause a future edit might delete would never
  * turn CI red. This drives the script itself — not an extracted predicate — against a disposable
  * fixture tree, so the assertion covers both halves the review asked for: that the guard's
@@ -73,7 +73,7 @@ describe('check-atomic-layers.mjs — the vacuous-pass guard', () => {
     expect(stdout).toContain('Atomic layering: clean (1 component(s) and 1 page(s)/layout(s) checked)');
   });
 
-  it('FAILS with the vacuous-pass message when pages/layouts is empty — the axis Task 2 found unreachable', async () => {
+  it('FAILS with the vacuous-pass message when pages/layouts is empty — the axis review found unreachable', async () => {
     const root = await makeFixture();
     fixtures.push(root);
     await writeFile(root, 'components/atoms/AppButton.vue', ATOM);

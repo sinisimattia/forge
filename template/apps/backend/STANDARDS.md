@@ -84,9 +84,6 @@ src/<module>/
   registration, email verification, password recovery, and `health`. Registering the guard
   is half the rule: a missing global registration leaves zero `@Public()` decorators and an
   entirely unauthenticated API, which looks identical to a clean one.
-- Auth decorators (`@Public()`, guards, etc.) are Phase 2 territory; this skeleton has
-  none and no guard is registered, and `health` is intentionally unauthenticated — the
-  bullet above is the standing rule for when Phase 2 adds them.
 
 ## DTO validation
 

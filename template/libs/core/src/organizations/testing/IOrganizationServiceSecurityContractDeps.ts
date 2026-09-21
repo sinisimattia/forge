@@ -27,7 +27,7 @@ import type { OrganizationId } from '../types/OrganizationId';
  *
  * ## Why only a server can build it
  *
- * Phase 2's DEC-1 splits conformance by who can honestly satisfy an assertion.
+ * DEC-1 splits conformance by who can honestly satisfy an assertion.
  * Tenant isolation is a property of a *server*: an implementation that reaches
  * its data over the wire could satisfy the assertions below only by refusing on
  * its own account, and a client refusing proves the client refuses. So this

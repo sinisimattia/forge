@@ -41,7 +41,7 @@ import { UserRecord } from '../../users/user-record.entity';
  *
  * Spec §11's table names fifteen *discriminating* tests: assertions that fail
  * for a specific wrong implementation, and whose failure has been watched. D9,
- * D12 and D15 are Phase 3's three, and the ordinary suites already assert most
+ * D12 and D15 are the tenancy-and-authorization work's three, and the ordinary suites already assert most
  * of what they are about — `tenant-isolation.spec.ts` for D9,
  * `members.controller.spec.ts` and core's own `IOrganizationService` contract
  * for D15. **These files deliberately do not restate any of that.** Each one

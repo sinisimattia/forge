@@ -224,8 +224,8 @@ describe('OrganizationAuditController', () => {
   });
 
   describe('GET /audit did not widen', () => {
-    // The cross-tenant, platform-admin surface stays exactly as narrow as
-    // Task 12 left it. An organization administrator — real ADMIN role, real
+    // The cross-tenant, platform-admin surface stays exactly as narrow as it
+    // always was. An organization administrator — real ADMIN role, real
     // membership, real `audit:read` on their own organization — still meets
     // `PlatformAdminGuard`'s 404 on the deployment-wide route.
     it('still refuses an organization administrator with 404', async () => {

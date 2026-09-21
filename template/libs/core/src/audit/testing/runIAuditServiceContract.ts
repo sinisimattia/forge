@@ -315,9 +315,9 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
       });
 
       // Three different questions, only askable now that an organization
-      // exists to make them failable. Phase 2 could build no world holding two
-      // tenants to tell apart, so `AuditQuery.organizationId`'s semantics were
-      // deliberately left unpinned; this suite is that world.
+      // exists to make them failable. Before organizations existed, no world
+      // could hold two tenants to tell apart, so `AuditQuery.organizationId`'s
+      // semantics were deliberately left unpinned; this suite is that world.
       describe('organizationId, the tenant filter', () => {
         it('does not narrow when omitted', async () => {
           const { service, readerId, seeded } = await makeContext();
@@ -502,10 +502,10 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
         // actually catches an id the implementation lost is the `ok(fetched)`
         // above, where the entry simply never comes back.
         expect.equal(actual.id, expected.id, field('id'));
-        // Three of the ten comparisons below were `null === null` until this
-        // task, which is an assertion about nothing — measured in Phase 2:
-        // dropping `organizationId` from the backend's mapper left the entire
-        // suite green. Each of the three is now guarded by an `ok` that the
+        // Three of the ten comparisons below were `null === null` until
+        // organizations existed, which is an assertion about nothing —
+        // measured by dropping `organizationId` from the backend's mapper,
+        // which left the entire suite green. Each of the three is now guarded by an `ok` that the
         // promised entry actually carries a value, before the `equal` that
         // would otherwise pass vacuously if it did not.
         expect.ok(expected.organizationId !== null, 'the promised entry must carry a tenant');

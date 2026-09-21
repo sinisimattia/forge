@@ -30,7 +30,8 @@ declare module 'vue-router' {
  * the browser's network tools. The one place a refusal is real is the server,
  * behind `PermissionsGuard`, which re-derives the same answer from its own
  * principal on every request regardless of what this function decides. That
- * server-side refusal is what is actually asserted end to end (Task 20); this
+ * server-side refusal is what is actually asserted end to end by the
+ * docker end-to-end suite; this
  * file only keeps somebody from *looking* at a page whose every action would
  * be refused.
  *

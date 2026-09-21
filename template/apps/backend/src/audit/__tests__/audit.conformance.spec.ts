@@ -30,7 +30,7 @@ import { AuditEntryRecord } from '../audit-entry-record.entity';
  * does fail if somebody adds `purgeOlderThan` to `AuditService` one afternoon.
  * What is *not* failable here, by this suite or by any other test in this
  * backend, is that a `DELETE FROM audit_entries` issued by the application is
- * refused. Task 19 stands up a real Postgres and proves it; D13 is that
+ * refused. The docker end-to-end suite stands up a real Postgres and proves it; D13 is that
  * property's home. Do not read a green run of this file as evidence for it.
  *
  * ## The world, and why it is written rather than driven

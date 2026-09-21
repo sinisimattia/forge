@@ -29,7 +29,7 @@ import { JwtStrategy } from './strategies';
 
 /**
  * Which providers this deployment has, decided once and provided under
- * {@link OAUTH_PROVIDERS} — the multi-provider token every adapter Task 12's
+ * {@link OAUTH_PROVIDERS} — the multi-provider token every adapter
  * `OAuthService` resolves through `OAuthProviderRegistry` is injected as.
  *
  * A named export for the reason {@link accessTokenSigningOptions} is one: a
@@ -102,7 +102,7 @@ export function accessTokenSigningOptions(config: ConfigService): JwtModuleOptio
  * file whose name suggests it only concerns `/auth`.
  *
  * **`OAuthService`, `OAuthController` and the `OAUTH_PROVIDERS` factory live
- * here too (Task 12).** This module already owns `SessionService` and the
+ * here too.** This module already owns `SessionService` and the
  * refresh cookie both `OAuthService.complete` and `AuthController.login` share,
  * and `OAuthService`'s own eight-dependency constructor
  * (`Repository<OAuthAuthorizationRequestRecord>`, `Repository<UserRecord>`,

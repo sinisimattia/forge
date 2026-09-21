@@ -65,7 +65,8 @@ type EntityClass = { name: string };
  * Written out rather than left to be discovered, because the failure mode of an
  * undocumented limit is a test that passes for a reason its author never
  * intended — and a property asserted only here is a property nothing checks.
- * Anything in this list needs a real database (Task 19 stands one up); do not
+ * Anything in this list needs a real database (the docker end-to-end suite
+ * stands one up); do not
  * reach for this fake to prove it.
  *
  * 1. **Isolation.** A concurrent reader sees this transaction's uncommitted
@@ -96,7 +97,7 @@ type EntityClass = { name: string };
  *    (`id DESC`); a future query that forgets to would look correct here.
  * 9. **An isolation level.** `transaction()` accepts one as an optional first
  *    argument — real `DataSource.transaction` does, and `OrganizationsService`
- *    passes `'SERIALIZABLE'` for the last-owner check (Task 11) — and this fake
+ *    passes `'SERIALIZABLE'` for the last-owner check — and this fake
  *    reads it only to discard it. Nothing here can make two concurrent
  *    transactions conflict the way Postgres does under `SERIALIZABLE`; a test
  *    that seeds two owners and demotes both concurrently would find both
@@ -343,7 +344,7 @@ export class FakeDataSource {
   /**
    * Removes every row matching `criteria`; answers how many it removed.
    *
-   * Added for Task 11's `removeMember`, whose write has to be the check-then-delete
+   * Added for `OrganizationsService.removeMember`, whose write has to be the check-then-delete
    * half of the last-owner invariant, inside the same transaction as the owner
    * count — which is why this needed a journal at all: `getRepository().delete`
    * predates it and never ran inside a transaction.

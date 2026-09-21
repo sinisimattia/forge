@@ -106,7 +106,7 @@ describe('middleware/guest', () => {
   /**
    * Every form of "somewhere that is not this site", refused.
    *
-   * The second row is the one the brief names and the one people forget.
+   * The second row is the one that is easy to miss and the one people forget.
    * `//elsewhere.example/x` starts with a slash, so it passes any check written
    * as "must be a path", and a browser reads it as `https://elsewhere.example/x`
    * — a working open redirect on a sign-in page, which is the highest-value

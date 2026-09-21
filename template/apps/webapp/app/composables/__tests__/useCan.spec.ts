@@ -32,7 +32,7 @@ import { useCan } from '~/composables/useCan';
  *    showing a request `useCan` says no to still reaches this stub's model
  *    of the backend, because nothing on this side of the wire stops it. The
  *    real refusal is the server's, behind `PermissionsGuard`, and is proven
- *    end to end elsewhere (Task 20).
+ *    end to end elsewhere, by the docker end-to-end suite.
  *
  * `can` is mocked module-wide, defaulting to the real implementation, so
  * every test not about the mock itself still exercises the genuine rule.
@@ -140,7 +140,7 @@ describe('useCan', () => {
     expect(can).toHaveBeenLastCalledWith(MEMBER_OF_ORG, 'member:invite', resource);
   });
 
-  // Step 4 of the brief, "watch the delegation fail": replacing `useCan`'s
+  // The delegation-fails check: replacing `useCan`'s
   // body with a hard-coded `true` was tried against this file by hand. The
   // test above went red on its first assertion (mocked `false`, hard-coded
   // answer `true`) and on both `toHaveBeenLastCalledWith` checks, since `can`

@@ -261,7 +261,7 @@ describe('useAuthStore', () => {
   });
 
   /**
-   * **Task 16's regression, re-run against the discriminator that replaced it.**
+   * **A prior regression, re-run against the discriminator that replaced it.**
    *
    * `createAuthFetch` used to rethrow every `401` on a request that presented
    * nothing, which is what stopped a mistyped password renewing, failing, and

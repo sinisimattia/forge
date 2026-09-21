@@ -17,15 +17,15 @@ import { OrganizationsService } from './organizations.service';
  * Organizations, their members, and the invitations that create them.
  *
  * `MembershipRecord` and `InvitationRecord` are registered here rather than
- * in a module of their own: Tasks 11 and 12 add members and invitations to
+ * in a module of their own: members and invitations were added to
  * this same `OrganizationsService`, not to a new service, and
  * `TypeOrmModule.forFeature` has to name every entity a module's repositories
  * inject regardless of which method reaches for it first. `UserRecord` joins
  * the list because `inviteMember` and `acceptInvitation` both have to read a
  * user by id or by address — the same reason `AuditModule` and `UsersModule`
  * each register `UserRecord` themselves rather than importing one another's
- * module, which would be a cycle. `ResourceGrantRecord` joins this list in
- * Task 13 for the same reason.
+ * module, which would be a cycle. `ResourceGrantRecord` joins this list for
+ * the same reason.
  *
  * `MailModule` and `ConfigModule` are imported for the same reason
  * `AuthModule` imports them: `inviteMember` sends a message built from

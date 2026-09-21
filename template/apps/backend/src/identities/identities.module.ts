@@ -20,7 +20,7 @@ import { IdentitiesService } from './identities.service';
  * cache.
  *
  * **`IdentitiesController` is not registered here.** It still lives in this
- * package (`identities.controller.ts`), but Task 12 gave it a route —
+ * package (`identities.controller.ts`), but it carries a route —
  * `beginLink` — that needs `OAuthService`, which lives in `AuthModule`.
  * `AuthModule` already imports this module for `AuthService`'s own need of
  * `IdentitiesService`; importing `AuthModule` back from here to reach

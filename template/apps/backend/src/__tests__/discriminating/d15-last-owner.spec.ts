@@ -30,8 +30,8 @@ import {
  *
  * So this file's table is deliberately two-dimensional — {self, another
  * administrator} × {demote, remove} × {sole owner, two owners} — and the
- * equality form reds exactly four of its rows, recorded with their output in
- * `task-20-report.md`.
+ * equality form reds exactly four of its rows, watched going red before this
+ * file's assertions were written.
  *
  * ## What this adds over the suites next door
  *

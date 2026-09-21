@@ -74,7 +74,7 @@ export class OrganizationAuditQueryDto {
  * administrators, not for the deployment's.
  *
  * **This is a separate surface from `AuditController`, not a widened one.**
- * `GET /audit` stays exactly as narrow as Task 12 left it — closed to
+ * `GET /audit` stays exactly as narrow as it always was — closed to
  * everybody but a platform administrator, by `PlatformAdminGuard`, which
  * answers a non-administrator 404 whatever role they hold in whatever
  * organization. `organization-audit.controller.spec.ts` asserts that

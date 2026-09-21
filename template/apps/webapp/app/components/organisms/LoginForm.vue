@@ -70,9 +70,9 @@ async function submit(): Promise<void> {
         break;
       default:
         // Reachable only from outside the type system. A status member added
-        // without a branch here is a compile error, which is the whole point:
-        // Phase 5 adds MFA_REQUIRED, and rendering it as a sign-in refusal would
-        // be silent and wrong.
+        // without a branch here is a compile error, which is the whole point: a
+        // future member such as MFA_REQUIRED, rendered as a plain sign-in
+        // refusal, would be silent and wrong.
         return assertNever(outcome);
     }
   } catch {

@@ -9,9 +9,10 @@ const CODE_DELIMITER = '.';
 /**
  * How long a minted code stays redeemable, in milliseconds.
  *
- * Task 12 closed the seam Task 6 left open: `mintAuthorizationCode` was public,
- * unguarded, and had no expiry or single-use enforcement — safe only because
- * nothing called it yet. The same ten minutes {@link OAUTH_AUTHORIZATION_TTL_MS}
+ * `mintAuthorizationCode` was once public, unguarded, and had no expiry or
+ * single-use enforcement — safe only because nothing called it yet, before
+ * this adapter was wired into a real sign-in flow. The same ten minutes
+ * {@link OAUTH_AUTHORIZATION_TTL_MS}
  * gives the authorization row this code is presented against: a code that
  * outlived the row it is redeemed through would never matter, since
  * `OAuthService.complete` refuses an expired or already-consumed row first —
@@ -60,8 +61,8 @@ export const DEV_OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
  * no credential presented and no party other than this process ever asked to
  * confirm anything. That is a total authentication bypass, on purpose, so a
  * freshly generated project can exercise the whole sign-in flow — and,
- * config permitting, the link-conflict flow Task 19's own walk needs — before
- * anyone has registered a real provider anywhere.
+ * config permitting, the link-conflict flow the docker end-to-end suite's
+ * own walk needs — before anyone has registered a real provider anywhere.
  *
  * **This class does not itself refuse to run in production — that refusal is
  * not its job.** `buildOAuthProviders` in `../oauth.config.ts` owns both
@@ -103,7 +104,7 @@ export const DEV_OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
  * below) — is refused, with the same shape of error for every case (see that
  * method's own doc for why the refusals are deliberately indistinguishable).
  * A minted code replaying indefinitely was a real weakness even while nothing
- * called `mintAuthorizationCode` (Task 6's own carried note); now something
+ * called `mintAuthorizationCode`; now something
  * does, on every single sign-in through this adapter, so `exp` and `consumed`
  * are load-bearing rather than merely prudent.
  *
@@ -284,8 +285,8 @@ export class DevOAuthProvider implements IOAuthProvider {
    * The inverse of {@link DevOAuthProvider.encode}, answering `null` for
    * anything that does not decode to exactly the shape this class ever
    * wrote — including every earlier shape this file has had (a bare address
-   * with no `exp` at all before Task 12; `{ address, exp }` with no `nonce`
-   * in Task 12's first pass): this process never persists a code past its
+   * with no `exp` at all; `{ address, exp }` with no `nonce` in an earlier
+   * revision): this process never persists a code past its
    * own lifetime, so there is no old shape in the wild to stay compatible
    * with, and the safe default for anything unrecognised is to refuse it
    * rather than guess.

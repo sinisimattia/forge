@@ -64,7 +64,7 @@ const ACCESS_TOKEN = 'ACCESS_TOKEN';
 const REFRESH_TOKEN = 'REFRESH_TOKEN';
 
 /**
- * The routes, the wiring, and the error surface — Task 12.
+ * The routes, the wiring, and the error surface.
  *
  * `OAuthService` and `OAuthProviderRegistry` are stand-ins here, not the real
  * classes: this file is about what `OAuthController` does with what they hand

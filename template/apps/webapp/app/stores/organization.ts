@@ -36,7 +36,7 @@ function toPrincipal(wire: PrincipalResponseBody): Principal {
  *
  * ## Why the principal is hydrated, not assembled
  *
- * `GET /users/me/principal` (Task 13) is the **only** source: it exists
+ * `GET /users/me/principal` is the **only** source: it exists
  * specifically so a client can evaluate the same rule the server does, and the
  * access credential deliberately carries no membership or grant of its own
  * (design ruling R4 on the backend). Assembling one from separate list calls —

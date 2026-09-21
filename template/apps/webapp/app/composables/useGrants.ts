@@ -26,7 +26,7 @@ export interface UseGrants {
  * subject to hold, and every `Permission` this application has is spelled
  * once, in core's own union — a webapp-local dropdown enumerating it would be
  * the first webapp-side list of permissions, and ADR-0006's whole argument
- * (Task 17's report on `useCan`'s exhaustiveness proof) is that nothing here
+ * (see `useCan`'s own exhaustiveness proof) is that nothing here
  * enumerates one today, so a member added to core needs no matching edit in
  * this package. `GrantList` only ever shows and revokes grants that already
  * exist, which reads a grant's own `permission` field as a value rather than

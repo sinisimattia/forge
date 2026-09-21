@@ -75,7 +75,7 @@ export interface AuthFetchOptions {
    * credential" is reachable before the first client renewal and by nothing else.
    * A mistyped password is judged on a store that is `unknown` (nobody has asked)
    * or `anonymous` (asked, told no); in both this answers `false` and the refusal
-   * takes the rethrow branch it has taken since Task 16.
+   * takes the rethrow branch.
    *
    * ## The case this deliberately does not narrow
    *

@@ -21,8 +21,8 @@ export interface AuditQuery {
    * An omitted filter does not narrow. An explicit `null` narrows to the entries
    * that belong to no tenant — platform-level events like a sign-in, which
    * happens before any organization is in play. Those are different questions and
-   * the suite now asserts both, which it could not do in Phase 2 because no world
-   * it could build held a tenant to tell apart.
+   * the suite now asserts both, which it could not do before organizations
+   * existed, because no world it could build held a tenant to tell apart.
    */
   organizationId?: OrganizationId | null;
   /** Only entries this person is recorded as the actor of. */

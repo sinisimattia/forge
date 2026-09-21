@@ -58,11 +58,11 @@ const NO_INVITATION = '(none)';
  * The organization half of {@link IOrganizationService}, over the
  * `organizations`, `memberships` and `organization_invitations` tables.
  *
- * Every entitlement question this phase can ask so far is "is the actor a
+ * Every entitlement question this service can ask so far is "is the actor a
  * member of this organization at all", answered by a row in `memberships` —
  * layer two of `can()` (role-scoped actions inside an organization the actor
- * already belongs to) is not reached by any method here yet, and lands with
- * `PermissionsGuard` in Task 13.
+ * already belongs to) is not reached by any method here; it is answered
+ * outside this service, by `PermissionsGuard`.
  */
 @Injectable()
 export class OrganizationsService implements IOrganizationService {
@@ -183,13 +183,13 @@ export class OrganizationsService implements IOrganizationService {
    * membership lookup and read `organizations` on its own — even with the
    * same paging and the same `ORDER BY` — would hand every caller every
    * tenant's organizations, and every test that only checks a member seeing
-   * their own would still pass. Task 20's D9 injection targets exactly this
+   * their own would still pass. D9's fault injection targets exactly this
    * shape of fault.
    *
    * This is two queries rather than one SQL `JOIN`, because the fake store
    * this backend's unit tests run against (`common/testing/fake-data-source.ts`,
    * a hand-rolled double with no query builder — see ADR-0002 on zero
-   * dependencies) cannot execute one. The property the brief cares about does
+   * dependencies) cannot execute one. The property that matters does
    * not depend on which shape the read takes: `organizations` is still gated
    * on a query that names the actor and nothing else, on every path through
    * this method.

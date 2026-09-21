@@ -46,9 +46,9 @@ import { adaptJestToConformanceExpect, makeTenancyWorld } from '../../common/tes
  * `uq_memberships_org_user`, `uq_organizations_slug` and
  * `uq_organization_invitations_token_hash` do not exist for this run, so no
  * assertion below covers one. What is asserted here is the predicate the
- * implementation *asks for* — which is the half a unit test can own — and Task
- * 20's walk against a real database is where the constraints themselves are
- * exercised.
+ * implementation *asks for* — which is the half a unit test can own — and the
+ * docker end-to-end suite's walk against a real database is where the
+ * constraints themselves are exercised.
  */
 
 runIOrganizationServiceSecurityContract({

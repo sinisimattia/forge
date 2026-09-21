@@ -60,7 +60,7 @@ function account(overrides: Partial<FederatedAccount> = {}): FederatedAccount {
 }
 
 /**
- * # Task 11 — completing an authorization
+ * # Completing an authorization
  *
  * ## What `FakeDataSource` cannot see
  *

@@ -22,7 +22,7 @@ import { MembershipRecord } from '../membership-record.entity';
 import { OrganizationRecord } from '../organization-record.entity';
 import { OrganizationsService } from '../organizations.service';
 
-/** This suite exercises none of Task 12's mail; a stub that records nothing suffices. */
+/** This suite exercises none of the invitation mail; a stub that records nothing suffices. */
 const NOOP_MAILER: IMailer = { send: async () => undefined };
 
 const WEBAPP_URL = 'https://app.example.test';
@@ -31,15 +31,14 @@ const WEBAPP_URL = 'https://app.example.test';
  * The two things this class exists to get right and nothing outside it can
  * see: the owner membership is created in the SAME transaction as the
  * organization, and every mutation's audit entry carries the organization it
- * happened in — never `null`, which was Phase 2's own shipped defect until
- * Task 8 made the field assertable.
+ * happened in — never `null`, which was an unenforced default until the field
+ * was made assertable.
  *
  * The rest — refusing a non-member, the not-found/not-mine collapse, an
  * omitted field being left alone — pins the same behaviour
- * `runIOrganizationServiceContract` pins for the in-memory reference, because
- * this implementation is not run against that suite yet: Task 15 wires the
- * conformance driver once members and invitations exist. Until then, this
- * file is the only thing holding this class to that contract.
+ * `runIOrganizationServiceContract` pins for the in-memory reference;
+ * `organizations.conformance.spec.ts` drives that same suite against this
+ * implementation too.
  */
 
 const OWNER = 'user-owner' as UserId;
@@ -184,10 +183,10 @@ describe('OrganizationsService', () => {
     });
 
     // Every one of these is audit-logged (spec §9.6), and the entry carries
-    // the organization — the field Phase 2 shipped nullable and Task 8 made
+    // the organization — the field shipped nullable and was later made
     // assertable. An entry recorded with a null organization here is the
-    // exact defect Task 8's measurement was about, so this asserts the field
-    // rather than assuming it is populated.
+    // exact defect that earlier measurement was about, so this asserts the
+    // field rather than assuming it is populated.
     it('records ORGANIZATION_CREATED against the organization it created', async () => {
       const created = await organizations.createOrganization(OWNER, {
         name: 'Acme Works',
@@ -531,7 +530,7 @@ describe('OrganizationsService', () => {
         .all(AuditEntryRecord)
         .find((row) => row.action === AuditAction.MEMBER_ROLE_CHANGED);
       expect(entry).toBeDefined();
-      // Asserted against the world's own seeded id, per this task's brief —
+      // Asserted against the world's own seeded id —
       // never against whatever the service just returned, which would let a
       // service that recorded `null` and a test that read it back off the
       // same variable pass together.

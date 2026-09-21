@@ -36,9 +36,8 @@ import { ResourceGrantRecord } from '../resource-grant-record.entity';
  * domain behavior (a grant never crosses a tenant, issuing/listing/revoking
  * scope correctly). What belongs here is that a route delegates to it rather
  * than reimplementing it, that each of the four routes' own permission
- * actually gates the route (Task 14's own R1 — see the ruling this suite is
- * built to satisfy), and the one refusal that is this task's own addition
- * rather than core's: `platform:administer` can never be handed to
+ * actually gates the route, and the one refusal that is this controller's own
+ * addition rather than core's: `platform:administer` can never be handed to
  * `POST /organizations/:id/grants`, whoever is asking.
  */
 
