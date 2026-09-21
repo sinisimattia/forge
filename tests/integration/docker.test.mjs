@@ -225,7 +225,7 @@ async function connectionUrlsFrom(target) {
 }
 
 test(
-  'the generated stack walks the whole identity flow, and the audit log is append-only',
+  'the generated stack walks the whole identity and tenancy flow, and the audit log is append-only',
   { skip: !enabled && 'set FORGE_E2E=1' },
   async () => {
     const { target, projectName } = await generateProject('dockerapp');
@@ -288,6 +288,7 @@ test(
       assert.deepEqual(health.json, { status: 'ok' });
 
       await walkTheIdentityFlow(base, target);
+      await walkTheTenancyFlow(base, target);
       await proveTheAuditLogIsAppendOnly(compose, projectName, target);
       await proveWhatTheFakeCannotExpress(compose, base, target);
     } catch (error) {
@@ -471,6 +472,170 @@ async function walkTheIdentityFlow(base, target) {
     body: { email, secret: 'a-different-correct-horse-77' },
   });
   assert.equal(withNew.status, 200, withNew.text);
+}
+
+/**
+ * Registers, verifies and signs one fresh account in, against the real stack.
+ * The building block {@link walkTheTenancyFlow} composes three of.
+ *
+ * @param base - the stack's base URL
+ * @param target - the generated project directory, for the outbox
+ * @param email - the address to register
+ * @param displayName - the name to register it under
+ * @returns the account's email, its access token, and its user id
+ */
+async function registerVerifyLogin(base, target, email, displayName) {
+  const secret = 'correct-horse-battery-staple-42';
+
+  const registered = await call(base, 'POST', '/auth/register', {
+    body: { email, displayName, secret },
+  });
+  assert.equal(registered.status, 202, registered.text);
+
+  const verification = await waitForMessage(
+    target,
+    (message) => message.to === email && /verify/i.test(message.subject),
+  );
+  const verified = await call(base, 'POST', '/auth/verify-email', {
+    body: { credential: tokenFrom(verification) },
+  });
+  assert.equal(verified.status, 200, verified.text);
+
+  const signedIn = await call(base, 'POST', '/auth/login', { body: { email, secret } });
+  assert.equal(signedIn.status, 200, signedIn.text);
+  assert.ok(signedIn.json.accessToken, `no access credential for ${email}: ${signedIn.text}`);
+
+  return { email, token: signedIn.json.accessToken, userId: signedIn.json.user.id };
+}
+
+/**
+ * Organization creation through to a resource grant and the audit trail that
+ * results — the tenancy analogue of {@link walkTheIdentityFlow}, against the
+ * real stack: guard, hydrator, service and database all in one process, which
+ * no unit tier can assemble.
+ *
+ * Register → verify → login (three accounts: two organization owners and one
+ * invitee) → create an organization → invite the third account → accept →
+ * grant it a permission → read `GET /organizations/:id/audit`.
+ *
+ * **Every entry the walk produces is asserted to carry the ORGANIZATION on
+ * it.** That is the end-to-end form of a fault the unit tier already caught
+ * once: `AuditEntry.organizationId` shipped nullable and unasserted in the
+ * previous phase, and dropping it from the backend's mapper left the whole
+ * suite green — three of ten compared fields were `null === null`. Here it is
+ * checked against a real column in a real database.
+ *
+ * **D9 — a second organization, with disjoint members, one request across.**
+ * `PermissionsGuard` collapses "no such organization" and "you may not touch
+ * this one" into the exact same bare `NotFoundException` (see that guard's
+ * own TSDoc for why a `403` would be an enumeration oracle), so what
+ * distinguishes a real fix from an implementation that leaks the reason in
+ * its body is compared here: not just the status, but the body, byte for
+ * byte, between the foreign organization and one that was never issued.
+ *
+ * @param base - the stack's base URL
+ * @param target - the generated project directory, for the outbox
+ */
+async function walkTheTenancyFlow(base, target) {
+  const ownerA = await registerVerifyLogin(base, target, 'tenant-owner-a@example.com', 'Owner A');
+  const ownerB = await registerVerifyLogin(base, target, 'tenant-owner-b@example.com', 'Owner B');
+  const invitee = await registerVerifyLogin(base, target, 'tenant-member@example.com', 'Invited Member');
+
+  // ---- two organizations, with disjoint membership: A's owner and invitee
+  // never belong to B, and B's owner never belongs to A ----
+  const createdA = await call(base, 'POST', '/organizations', {
+    token: ownerA.token,
+    body: { name: 'Tenant Walk Org A', slug: 'tenant-walk-org-a' },
+  });
+  assert.equal(createdA.status, 201, createdA.text);
+  const orgA = createdA.json;
+
+  const createdB = await call(base, 'POST', '/organizations', {
+    token: ownerB.token,
+    body: { name: 'Tenant Walk Org B', slug: 'tenant-walk-org-b' },
+  });
+  assert.equal(createdB.status, 201, createdB.text);
+  const orgB = createdB.json;
+
+  // ---- invite the third account into A, and accept ----
+  const invited = await call(base, 'POST', `/organizations/${orgA.id}/invitations`, {
+    token: ownerA.token,
+    body: { email: invitee.email, role: 'MEMBER' },
+  });
+  assert.equal(invited.status, 201, invited.text);
+
+  const invitation = await waitForMessage(
+    target,
+    (message) => message.to === invitee.email && /invited to join/i.test(message.subject),
+  );
+  const accepted = await call(base, 'POST', `/invitations/${tokenFrom(invitation)}/accept`, {
+    token: invitee.token,
+  });
+  assert.equal(accepted.status, 201, accepted.text);
+  assert.equal(accepted.json.organizationId, orgA.id, `accepted into the wrong organization: ${accepted.text}`);
+  assert.equal(accepted.json.userId, invitee.userId);
+
+  // ---- grant the invited member a permission on a resource ----
+  const granted = await call(base, 'POST', `/organizations/${orgA.id}/grants`, {
+    token: ownerA.token,
+    body: {
+      subjectUserId: invitee.userId,
+      resourceType: 'document',
+      resourceId: 'tenant-walk-doc-1',
+      permission: 'organization:update',
+    },
+  });
+  assert.equal(granted.status, 201, granted.text);
+  assert.equal(granted.json.organizationId, orgA.id, `grant issued against the wrong organization: ${granted.text}`);
+
+  // ---- the audit trail: every step above, WITH the organization on it ----
+  const audit = await call(base, 'GET', `/organizations/${orgA.id}/audit?limit=50`, {
+    token: ownerA.token,
+  });
+  assert.equal(audit.status, 200, audit.text);
+
+  const entryFor = (action) => audit.json.data.find((entry) => entry.action === action);
+  for (const action of ['ORGANIZATION_CREATED', 'MEMBER_INVITED', 'INVITATION_ACCEPTED', 'GRANT_CREATED']) {
+    const entry = entryFor(action);
+    assert.ok(entry, `no ${action} entry in the organization's own audit trail: ${audit.text}`);
+    assert.equal(
+      entry.organizationId,
+      orgA.id,
+      `${action}'s audit entry carries no organization — a null organizationId here is exactly `
+      + `the fault this walk exists to catch, unmasked end to end. Got: ${JSON.stringify(entry)}`,
+    );
+  }
+
+  // ---- D9: one request across, from a member of A's own accounts, at B ----
+  //
+  // Compared to a genuinely nonexistent organization, not merely asserted to
+  // be a 404: a status match alone would pass for an implementation that
+  // answers 404 with a body naming the real reason.
+  const absentOrgId = 'e0e0e0e0-e0e0-4e0e-8e0e-e0e0e0e0e0e0';
+
+  for (const actor of [invitee, ownerA]) {
+    const crossTenant = await call(base, 'GET', `/organizations/${orgB.id}/audit`, { token: actor.token });
+    const noSuchOrg = await call(base, 'GET', `/organizations/${absentOrgId}/audit`, { token: actor.token });
+
+    assert.equal(
+      crossTenant.status,
+      404,
+      `D9: ${actor.email}'s cross-tenant audit read answered ${crossTenant.status}: ${crossTenant.text}`,
+    );
+    assert.equal(
+      crossTenant.status,
+      noSuchOrg.status,
+      `D9: statuses differ between a foreign organization and one that was never issued for ${actor.email}`,
+    );
+    // Byte for byte, not merely equal statuses: the whole point of the shared
+    // 404 is that "you may not" and "there is no such thing" are the same
+    // sentence, not two sentences that happen to carry the same number.
+    assert.equal(
+      crossTenant.text,
+      noSuchOrg.text,
+      `D9: bodies differ for ${actor.email} —\n  foreign: ${crossTenant.text}\n  absent:  ${noSuchOrg.text}`,
+    );
+  }
 }
 
 /**
