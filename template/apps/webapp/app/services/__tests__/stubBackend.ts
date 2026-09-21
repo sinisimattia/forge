@@ -1,5 +1,6 @@
 import { Session } from '__FORGE_SCOPE__/core/auth/entities';
 import type { ClientContext, SessionId, SessionJSON } from '__FORGE_SCOPE__/core/auth/types';
+import { isGrantLive } from '__FORGE_SCOPE__/core/authorization/policies';
 import type {
   GrantId,
   ResourceGrantJSON,
@@ -36,7 +37,14 @@ import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import { DisplayNameRequiredError } from '__FORGE_SCOPE__/core/users/errors';
 import type { UserId, UserJSON } from '__FORGE_SCOPE__/core/users/types';
 import { ApiError } from '~/fetchers';
-import type { ApiClient, ApiErrorBody, ApiErrorCode, ApiRequest, SessionResponseBody } from '~/types';
+import type {
+  ApiClient,
+  ApiErrorBody,
+  ApiErrorCode,
+  ApiRequest,
+  PrincipalResponseBody,
+  SessionResponseBody,
+} from '~/types';
 
 /**
  * A model of the backend, at the wire.
@@ -1161,6 +1169,32 @@ export function stubBackend(): StubBackend {
       const stored = users.get(actor.userId);
       if (stored === undefined) refuse(404, 'errors.http.not_found', 'USER_NOT_FOUND');
       return stored.json;
+    }
+
+    // Mirrors `PrincipalService.hydrate`: every membership of this actor across
+    // every organization, and every grant of theirs still live as of now — the
+    // same `isGrantLive` rule, not a restatement of it. `useCan`'s own delegation
+    // test needs a principal this route can hand it, and there is nowhere else
+    // in this stub a webapp test could seed one from.
+    if (method === 'GET' && tail === '/me/principal') {
+      const stored = users.get(actor.userId);
+      if (stored === undefined) refuse(404, 'errors.http.not_found', 'USER_NOT_FOUND');
+      const now = new Date();
+      const own = [...memberships.values()].filter((one) => one.userId === actor.userId);
+      const ownGrants = [...grants.values()]
+        .filter((one) => one.subjectUserId === actor.userId)
+        .filter((one) => isGrantLive({
+          ...one,
+          createdAt: new Date(one.createdAt),
+          expiresAt: one.expiresAt === null ? null : new Date(one.expiresAt),
+        }, now));
+      const principal: PrincipalResponseBody = {
+        userId: stored.json.id,
+        platformRole: stored.json.platformRole,
+        memberships: own.map((one) => ({ organizationId: one.organizationId, role: one.role })),
+        grants: ownGrants,
+      };
+      return principal;
     }
 
     if (method === 'PATCH' && tail === '/me') {

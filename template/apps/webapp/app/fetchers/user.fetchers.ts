@@ -1,7 +1,7 @@
 import type { PaginatedResult } from '__FORGE_SCOPE__/core/shared/types';
 import type { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId, UserJSON, UserQuery } from '__FORGE_SCOPE__/core/users/types';
-import type { ApiClient } from '~/types';
+import type { ApiClient, PrincipalResponseBody } from '~/types';
 
 /**
  * The `/users` endpoints, one function apiece.
@@ -19,6 +19,22 @@ import type { ApiClient } from '~/types';
 /** The actor's own profile. */
 export async function getMe(client: ApiClient, actor: UserId): Promise<UserJSON> {
   return client<UserJSON>({ method: 'GET', path: '/users/me', actor });
+}
+
+/**
+ * The actor's own principal: what `can` is evaluated against on their behalf.
+ *
+ * It exists so the webapp can evaluate the same rule the server does and hide
+ * an action rather than offer one that will be refused (ADR-0006). Task 13's
+ * `GET /users/me/principal` is the only route that answers it — the access
+ * credential deliberately carries no membership or grant of its own, so there
+ * is nowhere else on the wire to read either from.
+ */
+export async function getMyPrincipal(
+  client: ApiClient,
+  actor: UserId,
+): Promise<PrincipalResponseBody> {
+  return client<PrincipalResponseBody>({ method: 'GET', path: '/users/me/principal', actor });
 }
 
 /** One account by id. Platform administrators only. */

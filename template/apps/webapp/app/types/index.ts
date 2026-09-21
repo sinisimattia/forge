@@ -13,5 +13,6 @@ export type {
   AuthResponseBody,
   HttpMethod,
   IssuedCredential,
+  PrincipalResponseBody,
   SessionResponseBody,
 } from './api';

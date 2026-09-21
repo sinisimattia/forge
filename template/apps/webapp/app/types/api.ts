@@ -1,5 +1,10 @@
 import type { SessionJSON } from '__FORGE_SCOPE__/core/auth/types';
+import type {
+  PrincipalMembership,
+  ResourceGrantJSON,
+} from '__FORGE_SCOPE__/core/authorization/types';
 import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/types';
+import type { PlatformRole } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId, UserJSON } from '__FORGE_SCOPE__/core/users/types';
 
 /**
@@ -254,4 +259,29 @@ export interface IssuedCredential {
 export interface SessionResponseBody extends SessionJSON {
   /** Whether this is the session the asking request was made through. */
   isCurrent: boolean;
+}
+
+/**
+ * What `GET /users/me/principal` answers: the backend's `PrincipalResponseDto`,
+ * restated here for the reason `AuthResponseBody` gives — the two apps share no
+ * package a wire shape could live in.
+ *
+ * It exists so that `organization.ts`'s store can hydrate the exact `Principal`
+ * `useCan` evaluates through core's `can()` (ADR-0006): a client predicts the
+ * server's answer only if it is asking the same function the server asks, with
+ * the same input, and this is that input's shape on the wire. `memberships`
+ * needs no restating — it is already JSON-safe — but `grants` carries two
+ * instants that arrive as ISO-8601 strings, because a serialized payload has no
+ * `Date`; the store's own `toPrincipal` is where they are revived, mirroring
+ * `AuthorizationHttpService`'s `toResourceGrant`.
+ */
+export interface PrincipalResponseBody {
+  /** Whose principal this is. */
+  userId: UserId;
+  /** Their standing with respect to the deployment. */
+  platformRole: PlatformRole;
+  /** Every organization they belong to, and their role in each. */
+  memberships: readonly PrincipalMembership[];
+  /** The record-level exceptions they hold, live as of the instant this was served. */
+  grants: readonly ResourceGrantJSON[];
 }

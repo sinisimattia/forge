@@ -43,6 +43,10 @@ export const NAVIGATED = Symbol('navigateTo');
 export interface RouteStub {
   fullPath: string;
   query: Record<string, unknown>;
+  /** Route params, as `permission.spec.ts` needs to name an organization. */
+  params: Record<string, unknown>;
+  /** Route meta, as `permission.spec.ts` needs to name a permission. */
+  meta: Record<string, unknown>;
 }
 
 /** A route middleware, as the specs call one. */
@@ -123,6 +127,10 @@ export async function afterAFullPageLoad(
 }
 
 /** A route, as a middleware reads one. */
-export function route(fullPath: string, query: Record<string, unknown> = {}): RouteStub {
-  return { fullPath, query };
+export function route(
+  fullPath: string,
+  query: Record<string, unknown> = {},
+  extra: { params?: Record<string, unknown>; meta?: Record<string, unknown> } = {},
+): RouteStub {
+  return { fullPath, query, params: extra.params ?? {}, meta: extra.meta ?? {} };
 }
