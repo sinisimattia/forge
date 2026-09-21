@@ -305,14 +305,27 @@ export function runIOrganizationServiceContract(deps: IOrganizationServiceContra
       // host that seeded a second owner would otherwise make this pass for the
       // wrong reason, and report a green suite for an implementation with no
       // last-owner rule at all.
-      it('refuses to demote the last owner', async () => {
-        const { service, organization, owner } = await makeContext();
+      //
+      // `admin` is the actor and `owner` is the target — deliberately not
+      // `owner` acting on themselves. The invariant is "an organization always
+      // has at least one OWNER", which is a fact about a COUNT of remaining
+      // owners, not about whether the actor and the target are the same
+      // person. `if (targetUserId === actorId) throw new LastOwnerError()` is
+      // the wrong implementation this distinguishes: it satisfies every
+      // assertion in this suite that has the owner act on their own
+      // membership, and an ADMIN demoting the sole OWNER is not the owner
+      // demoting themselves. A suite that only ever had `owner` act on `owner`
+      // would pass that wrong implementation and every other one, which is
+      // exactly what this task's own injection proved before this assertion
+      // was strengthened.
+      it('refuses to demote the last owner, whoever is asking', async () => {
+        const { service, organization, owner, admin } = await makeContext();
         const members = await service.listMembers(owner.id, organization.id, EVERYTHING);
         const owners = members.data.filter((m) => m.role === OrgRole.OWNER);
         expect.equal(owners.length, 1, 'the world must seed exactly one owner for this assertion to mean anything');
 
         await expect.rejects(
-          () => service.changeMemberRole(owner.id, organization.id, owner.id, OrgRole.ADMIN),
+          () => service.changeMemberRole(admin.id, organization.id, owner.id, OrgRole.ADMIN),
           LastOwnerError,
         );
       });
@@ -322,15 +335,19 @@ export function runIOrganizationServiceContract(deps: IOrganizationServiceContra
       // The same guard, for the same reason, on the other half of the
       // invariant: a rule enforced in `changeMemberRole` and forgotten in
       // `removeMember` leaves the organization exactly as ownerless, by a
-      // different route.
-      it('refuses to remove the last owner', async () => {
-        const { service, organization, owner } = await makeContext();
+      // different route. `admin` acting on `owner`, for the same reason as
+      // `changeMemberRole`'s own comment above: an ADMIN removing the sole
+      // OWNER is not the owner leaving, and a suite that never asked that
+      // question would not catch an implementation that only refuses the
+      // owner's own request.
+      it('refuses to remove the last owner, whoever is asking', async () => {
+        const { service, organization, owner, admin } = await makeContext();
         const members = await service.listMembers(owner.id, organization.id, EVERYTHING);
         const owners = members.data.filter((m) => m.role === OrgRole.OWNER);
         expect.equal(owners.length, 1, 'the world must seed exactly one owner for this assertion to mean anything');
 
         await expect.rejects(
-          () => service.removeMember(owner.id, organization.id, owner.id),
+          () => service.removeMember(admin.id, organization.id, owner.id),
           LastOwnerError,
         );
       });

@@ -127,6 +127,41 @@ describe('HttpExceptionFilter', () => {
     expect(body()).toEqual({ error: 'Internal Server Error', message: 't:errors.common.internal' });
   });
 
+  describe('a retryable transaction conflict', () => {
+    // Neither of these is a `DomainError`, or an `HttpException`, or anything
+    // else this filter already recognizes — a bare object with the one
+    // property TypeORM's `QueryFailedError` actually carries through from the
+    // driver, which is what `OrganizationsService.changeMemberRole` and
+    // `removeMember`'s callers see when `SERIALIZABLE` does its job. Without
+    // the branch under test, both of these fall through to the generic `else`
+    // above and answer 500 — indistinguishable from `boom`, and telling the
+    // caller nothing about the one thing they need to know.
+    it('maps a SERIALIZABLE serialization failure (40001) to 409, retryably', () => {
+      filter.catch({ code: '40001' }, host);
+
+      expect(statusMock).toHaveBeenCalledWith(HttpStatus.CONFLICT);
+      expect(body()).toEqual({
+        error: 'Conflict',
+        message: 't:errors.http.conflict_retryable',
+        code: 'SERIALIZATION_CONFLICT',
+      });
+    });
+
+    it('maps a plain deadlock (40P01) the same way', () => {
+      filter.catch({ code: '40P01' }, host);
+
+      expect(statusMock).toHaveBeenCalledWith(HttpStatus.CONFLICT);
+      expect(body().code).toBe('SERIALIZATION_CONFLICT');
+    });
+
+    it('does not mistake an unrelated SQLSTATE for one of these two', () => {
+      filter.catch({ code: '23505' }, host);
+
+      expect(statusMock).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
+      expect(body().code).toBeUndefined();
+    });
+  });
+
   describe('a refusal the domain expressed', () => {
     // Without the DOMAIN_ERRORS table in the filter, every one of these is a 500
     // and reads to whoever is watching as the server being broken. Each is an

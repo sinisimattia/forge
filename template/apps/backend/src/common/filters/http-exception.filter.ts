@@ -255,6 +255,39 @@ const HTTP_STATUS_FALLBACK_KEY: Record<number, I18nKey> = {
 };
 
 /**
+ * Postgres SQLSTATEs a `SERIALIZABLE` transaction is documented to fail with
+ * for a reason that has nothing to do with the request itself: `40001`
+ * (`serialization_failure`) is what `OrganizationsService.changeMemberRole`
+ * and `removeMember`'s own TSDoc names as the cost of that isolation level,
+ * and `40P01` (`deadlock_detected`) is the other outcome Postgres defines for
+ * two transactions that cannot both proceed. Both are resolved the same way —
+ * the whole transaction re-run, unmodified — which is why they share one
+ * branch here rather than two.
+ */
+const RETRYABLE_TRANSACTION_CODES = new Set(['40001', '40P01']);
+
+/**
+ * Whether a caught error is one of {@link RETRYABLE_TRANSACTION_CODES}.
+ *
+ * Matched on SQLSTATE rather than on the driver's message text, for the same
+ * reason `AuthService.isUniqueViolation` matches `23505` that way: the
+ * message is localized by the server's own settings and a match on it stops
+ * matching after a Postgres upgrade. TypeORM wraps the underlying `pg` error
+ * in a `QueryFailedError` and copies every one of the driver error's own
+ * properties onto it (see typeorm's `QueryFailedError` constructor), so
+ * `.code` reads straight off the caught exception without this filter
+ * importing `QueryFailedError` itself — the same duck-typed check
+ * `isUniqueViolation` already uses, kept duck-typed here for the same reason.
+ */
+function isRetryableTransactionConflict(error: unknown): boolean {
+  return (
+    typeof error === 'object'
+    && error !== null
+    && RETRYABLE_TRANSACTION_CODES.has(String((error as { code?: unknown }).code))
+  );
+}
+
+/**
  * Global exception filter that produces the standard
  * `{ error, message, code?, details? }` response. All user-facing text is resolved through `nestjs-i18n` using the
  * request-scoped `I18nContext`:
@@ -266,6 +299,11 @@ const HTTP_STATUS_FALLBACK_KEY: Record<number, I18nKey> = {
  *   statement about the request, not a fault, and must never answer `500`.
  *   `WeakPasswordError` additionally carries a `violations` array — see
  *   {@link ResponseViolation}.
+ * - A `SERIALIZABLE` transaction's own documented failure (`40001`) or a plain
+ *   deadlock (`40P01`) → `409` with `code: 'SERIALIZATION_CONFLICT'`, telling
+ *   the caller the one thing a `500` cannot: that resending the SAME request
+ *   is the expected remedy, not a bug to report. See
+ *   {@link isRetryableTransactionConflict}.
  * - Anything else → translated internal-error message.
  *
  * The `error` field stays the canonical HTTP reason phrase (a protocol-level
@@ -343,6 +381,25 @@ export class HttpExceptionFilter implements ExceptionFilter {
         }));
         if (violations.length === 1) message = violations[0].message;
       }
+    } else if (isRetryableTransactionConflict(exception)) {
+      // 409, not 500 and not 503. Not 500: this is one of the two outcomes
+      // `SERIALIZABLE` (or a plain deadlock) is documented to produce, not the
+      // server being broken, and answering it the same way as `boom` tells
+      // whoever is watching the error rate — and the caller — nothing. Not
+      // 503: this transaction specifically lost a race with another one that
+      // ran concurrently with it; no other request is unavailable, and a
+      // caller that backs off every endpoint on a `503` would be reacting to
+      // the wrong scope. 409 puts this beside this table's other conflicts —
+      // but unlike `LAST_OWNER` or `LAST_IDENTITY_REMOVAL`, which fail again
+      // on an unmodified resend until something else about the world changes,
+      // resending THIS exact request is the correct and expected remedy. That
+      // is the whole reason it gets its own message
+      // (`errors.http.conflict_retryable`, not the shared `errors.http.conflict`)
+      // and its own `code` — a caller has to be able to tell "retry this" from
+      // "do not retry this" without parsing translated prose.
+      status = HttpStatus.CONFLICT;
+      code = 'SERIALIZATION_CONFLICT';
+      message = translate('errors.http.conflict_retryable');
     } else {
       message = translate('errors.common.internal');
     }

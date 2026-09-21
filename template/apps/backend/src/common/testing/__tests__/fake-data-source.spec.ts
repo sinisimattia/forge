@@ -64,6 +64,40 @@ describe('FakeDataSource rollback', () => {
     expect(source.all(ROWS)).toHaveLength(1);
   });
 
+  // Task 11's `removeMember` needs `manager.delete` inside a transaction — the
+  // one thing this fake compile-errored on before that task, by design (see
+  // this class's own "what this double cannot express" list). Adding it
+  // without a test of its OWN rollback would repeat exactly the mistake this
+  // file's header describes: `update`'s undo was wrong at key granularity for
+  // a long time because nothing threw AFTER a write inside a transaction that
+  // also had another transaction committing around it, and in `removeMember`
+  // itself the only throw point (`LastOwnerError`) always precedes the delete
+  // — so no test anywhere else in this backend ever throws after a delete
+  // inside a transaction. This is the one that does.
+  it('restores a row a failed transaction deleted', async () => {
+    await expect(
+      source.transaction(async (manager) => {
+        await manager.delete(ROWS, { id: 'r1' });
+        throw new Error('this transaction fails after deleting');
+      }),
+    ).rejects.toThrow();
+
+    // Not just present — restored WHOLE. An undo that re-inserted a row with
+    // only its id, or with a stale copy from before some other change, would
+    // satisfy a weaker assertion than this one while still being wrong.
+    expect(row()).toEqual({ id: 'r1', a: 'A0', b: 'B0' });
+  });
+
+  it('keeps a row a successful transaction deleted', async () => {
+    // The other direction, so "undo every delete always" cannot satisfy the
+    // test above.
+    await source.transaction(async (manager) => {
+      await manager.delete(ROWS, { id: 'r1' });
+    });
+
+    expect(source.byId(ROWS, 'r1')).toBeUndefined();
+  });
+
   it('leaves a key another transaction changed alone', async () => {
     // A DIFFERENT key. This was always correct and is kept so the same-key case
     // below is visibly the interesting one rather than the only one.
