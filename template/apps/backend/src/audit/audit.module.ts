@@ -1,11 +1,14 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PlatformAdminGuard } from '../auth/guards';
+import { AuthorizationModule } from '../authorization';
 import { AuditPrivilegeCheck } from '../db/audit-privilege-check';
+import { MembershipRecord } from '../organizations/membership-record.entity';
 import { UserRecord } from '../users/user-record.entity';
 import { AuditEntryRecord } from './audit-entry-record.entity';
 import { AuditController } from './audit.controller';
 import { AuditService } from './audit.service';
+import { OrganizationAuditController } from './organization-audit.controller';
 
 /**
  * Provides {@link AuditService}.
@@ -28,10 +31,23 @@ import { AuditService } from './audit.service';
  * It provides `PlatformAdminGuard` itself rather than importing it from
  * `AuthModule`, which would be a cycle: `AuthModule` imports this module, so
  * this module cannot import that one. See `UsersModule` for the same note.
+ *
+ * **`AuthorizationModule` is imported for `PermissionsGuard`**, which
+ * `OrganizationAuditController` names — Task 14. This is the direction that
+ * does NOT close a cycle: `AuthorizationModule` provides its own `AuditService`
+ * instance rather than importing this module back (see that module's own
+ * TSDoc), exactly the arrangement `UsersModule` already uses for
+ * `PlatformAdminGuard` one level up. `MembershipRecord` joins the entity list
+ * for the same reason — `AuditService.queryForOrganization` reads it to
+ * establish the actor's real membership of the organization the route names,
+ * independently of what `PermissionsGuard` already decided.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([AuditEntryRecord, UserRecord])],
-  controllers: [AuditController],
+  imports: [
+    TypeOrmModule.forFeature([AuditEntryRecord, UserRecord, MembershipRecord]),
+    AuthorizationModule,
+  ],
+  controllers: [AuditController, OrganizationAuditController],
   providers: [AuditService, PlatformAdminGuard, AuditPrivilegeCheck],
   exports: [AuditService],
 })

@@ -7,9 +7,11 @@ import { AuditEntry } from '__FORGE_SCOPE__/core/audit/entities';
 import type { AuditQuery, RecordAuditEntryInput } from '__FORGE_SCOPE__/core/audit/types';
 import type { AuditEntryId } from '__FORGE_SCOPE__/core/audit/types';
 import { can } from '__FORGE_SCOPE__/core/authorization/policies';
+import type { Principal } from '__FORGE_SCOPE__/core/authorization/types';
 import type { OrganizationId } from '__FORGE_SCOPE__/core/organizations/types';
 import type { PaginatedResult } from '__FORGE_SCOPE__/core/shared/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
+import { MembershipRecord } from '../organizations/membership-record.entity';
 import { UserRecord } from '../users/user-record.entity';
 import { AuditEntryRecord } from './audit-entry-record.entity';
 
@@ -29,6 +31,8 @@ export class AuditService implements IAuditService {
     private readonly entries: Repository<AuditEntryRecord>,
     @InjectRepository(UserRecord)
     private readonly users: Repository<UserRecord>,
+    @InjectRepository(MembershipRecord)
+    private readonly memberships: Repository<MembershipRecord>,
   ) {}
 
   /**
@@ -153,6 +157,95 @@ export class AuditService implements IAuditService {
       // caller (see `RecordAuditEntryInput`), so two entries can and do share an
       // instant, and an order that is not total returns a different page 2 every
       // time it is asked for.
+      order: { occurredAt: 'DESC', id: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      data: rows.map((row) => AuditService.toEntity(row)),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  /**
+   * Reads one page of ONE organization's history on an actor's behalf, newest
+   * first — `GET /organizations/:id/audit`'s own read, and the reason it is a
+   * method of its own rather than a branch of {@link AuditService.query}.
+   *
+   * ## `query.organizationId` is trusted completely, and read from nowhere else
+   *
+   * There is no second, separately-passed `organizationId` parameter on this
+   * method. **This is deliberate, and it is the whole of what makes this
+   * route's tenant scoping a real, failable property rather than a hopeful
+   * one.** `OrganizationAuditController.list` builds `query` by spreading
+   * whatever the caller's own query string carried and then overwriting
+   * `organizationId` with the route's — *after* the spread, which is the part
+   * that is load-bearing; see that method's own comment. By the time `query`
+   * reaches here, `query.organizationId` is that controller's one promise, and
+   * this method leans on it entirely: for the permission check below AND for
+   * the store's own `WHERE`. A second, independently-trusted parameter here
+   * would look safer and would not be: it would make this method correct
+   * regardless of what the controller actually built, which would make the
+   * controller's own ordering untestable — inverting it would change nothing
+   * this method could be asked to prove wrong. Precisely because there is no
+   * such parameter, `organization-audit.controller.spec.ts`'s conflicting-filter
+   * test is a real assertion about the controller, and inverting that
+   * controller's spread order is provably what turns it red.
+   *
+   * @param actorId - the user on whose behalf the call is made
+   * @param query - the caller's page and filters, with `organizationId` already
+   * pinned to the route's organization by the controller
+   * @returns one page of the organization's entries, with the totals a caller needs
+   * @throws ForbiddenException when `query.organizationId` is absent — this
+   * method is reached from nowhere but that one route, so a caller that omitted
+   * it is a caller reaching this method some way its contract does not cover —
+   * and when the actor is not a member of that organization, or is a member
+   * whose role carries no `audit:read` (layer two, exactly as `can` states it).
+   */
+  public async queryForOrganization(
+    actorId: UserId,
+    query: AuditQuery,
+  ): Promise<PaginatedResult<AuditEntry>> {
+    const organizationId = query.organizationId;
+    if (organizationId === undefined || organizationId === null) {
+      throw new ForbiddenException();
+    }
+
+    const actor = await this.users.findOne({ where: { id: actorId } });
+    if (actor === null) throw new ForbiddenException();
+
+    // The actor's REAL membership of THIS organization, read independently of
+    // whatever `PermissionsGuard` already decided — the same discipline
+    // `query`'s own TSDoc states: this is the only way in for a caller that
+    // reaches the service directly, so it is checked here as well as at the
+    // transport boundary.
+    const membership = await this.memberships.findOne({
+      where: { organizationId, userId: actorId },
+    });
+    const principal: Principal = {
+      userId: actor.id as UserId,
+      platformRole: actor.platformRole,
+      memberships: membership === null ? [] : [{ organizationId, role: membership.role }],
+      // No grants: `audit:read` is answered by layer one or layer two alone —
+      // `can`'s own switch refuses it outright rather than falling through to
+      // a grant, so hydrating any would be work this decision never reads.
+      grants: [],
+    };
+    if (!can(principal, 'audit:read', { organizationId })) {
+      throw new ForbiddenException();
+    }
+
+    const page = Math.max(1, Math.trunc(query.page));
+    const limit = Math.max(1, Math.trunc(query.limit));
+
+    const where: FindOptionsWhere<AuditEntryRecord> = { organizationId };
+    if (query.actorId !== undefined) where.actorUserId = query.actorId;
+    if (query.action !== undefined) where.action = query.action;
+    if (query.asOf !== undefined) where.occurredAt = LessThanOrEqual(query.asOf);
+
+    const [rows, total] = await this.entries.findAndCount({
+      where,
       order: { occurredAt: 'DESC', id: 'DESC' },
       skip: (page - 1) * limit,
       take: limit,

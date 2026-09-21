@@ -16,6 +16,10 @@ import {
 import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policies';
 import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/types';
 import {
+  CrossTenantGrantError,
+  GrantNotFoundError,
+} from '__FORGE_SCOPE__/core/authorization/errors';
+import {
   AlreadyAMemberError,
   InvalidOrganizationSlugError,
   InvitationAddressMismatchError,
@@ -245,6 +249,29 @@ const DOMAIN_ERRORS: {
   { type: EmailAlreadyRegisteredError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict', code: 'EMAIL_ALREADY_REGISTERED' },
   { type: IdentityAlreadyLinkedError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict', code: 'IDENTITY_ALREADY_LINKED' },
   { type: LastIdentityRemovalError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict', code: 'LAST_IDENTITY_REMOVAL' },
+  // The shared 404 key `UserNotFoundError` and `OrganizationNotFoundError`
+  // both use, one level down again: a grant belonging to another
+  // organization answers exactly as an id nobody ever issued — core's own
+  // TSDoc on `GrantNotFoundError` states the collapse, so that trying grant
+  // ids in turn reveals nothing about another tenant's exceptions.
+  { type: GrantNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.http.not_found', code: 'GRANT_NOT_FOUND' },
+  // 409, not 404 and not 422. Grouped with `LastOwnerError` and
+  // `AlreadyAMemberError` on purpose: this is not a hidden thing (the
+  // organization and the subject are both real, and both visible to the
+  // actor issuing the grant, which is precisely what `grant:create` already
+  // established) and it is not the request being malformed (`subjectUserId`
+  // is a well-formed id for a real account) — it is refused because of the
+  // CURRENT state of the organization's membership set, and the identical
+  // request would succeed the moment that same person becomes a member. That
+  // is 409's meaning exactly, and it is the same shape of reason
+  // `AlreadyAMemberError` is grouped under one row above — the mirror image
+  // of it, in fact: that one refuses because somebody already IS a member,
+  // this one refuses because somebody is NOT one (yet). 404 was rejected
+  // because nothing here is hidden — the actor already has `grant:create` in
+  // this very organization, which is not true of anything else this table
+  // collapses into 404 — and 422 was rejected because the request is not
+  // malformed, it is a legal ask about a set that has to change first.
+  { type: CrossTenantGrantError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict', code: 'CROSS_TENANT_GRANT' },
 ];
 
 /**

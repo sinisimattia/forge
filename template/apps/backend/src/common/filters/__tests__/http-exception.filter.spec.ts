@@ -398,8 +398,10 @@ describe('HttpExceptionFilter', () => {
     it('is exactly the list the webapp expects', () => {
       expect(DOMAIN_ERROR_CODES).toEqual([
         'ALREADY_A_MEMBER',
+        'CROSS_TENANT_GRANT',
         'DISPLAY_NAME_REQUIRED',
         'EMAIL_ALREADY_REGISTERED',
+        'GRANT_NOT_FOUND',
         'IDENTITY_ALREADY_LINKED',
         'IDENTITY_NOT_FOUND',
         'INVALID_CREDENTIALS',

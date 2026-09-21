@@ -23,6 +23,7 @@ import { NoOpBreachedPasswordRegistry } from '../../identities/breached-password
 import { Argon2PasswordHasher } from '../../identities/hashing';
 import { IdentitiesService } from '../../identities/identities.service';
 import type { IMailer, OutboundMessage } from '../../mail';
+import { MembershipRecord } from '../../organizations/membership-record.entity';
 import { UsersService } from '../../users/users.service';
 import { UserRecord } from '../../users/user-record.entity';
 import { FakeDataSource } from './fake-data-source';
@@ -203,6 +204,7 @@ export function makeIdentityWorld(): IdentityWorld {
   const audit = new AuditService(
     repo<AuditEntryRecord>(AuditEntryRecord),
     repo<UserRecord>(UserRecord),
+    repo<MembershipRecord>(MembershipRecord),
   );
 
   const identities = new IdentitiesService(

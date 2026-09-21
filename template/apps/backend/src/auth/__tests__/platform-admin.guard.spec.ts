@@ -13,6 +13,7 @@ import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
 import { AuditEntryRecord } from '../../audit/audit-entry-record.entity';
 import { AuditService } from '../../audit/audit.service';
+import { MembershipRecord } from '../../organizations/membership-record.entity';
 import { UserRecord } from '../../users/user-record.entity';
 import { Public } from '../decorators';
 import { PlatformAdminGuard } from '../guards';
@@ -126,6 +127,10 @@ describe('PlatformAdminGuard', () => {
         {
           provide: getRepositoryToken(AuditEntryRecord),
           useValue: repo<AuditEntryRecord>(AuditEntryRecord),
+        },
+        {
+          provide: getRepositoryToken(MembershipRecord),
+          useValue: repo<MembershipRecord>(MembershipRecord),
         },
       ],
     }).compile();

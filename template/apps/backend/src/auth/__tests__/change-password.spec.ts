@@ -16,6 +16,7 @@ import { NoOpBreachedPasswordRegistry } from '../../identities/breached-password
 import { Argon2PasswordHasher } from '../../identities/hashing';
 import { IdentitiesService } from '../../identities/identities.service';
 import type { IMailer, OutboundMessage } from '../../mail';
+import { MembershipRecord } from '../../organizations/membership-record.entity';
 import { UserRecord } from '../../users/user-record.entity';
 import { AuthController } from '../auth.controller';
 import { AuthService } from '../auth.service';
@@ -112,6 +113,7 @@ describe('POST /auth/change-password', () => {
     const audit = new AuditService(
       repo<AuditEntryRecord>(AuditEntryRecord),
       repo<UserRecord>(UserRecord),
+      repo<MembershipRecord>(MembershipRecord),
     );
 
     const identities = new IdentitiesService(

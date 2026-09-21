@@ -80,6 +80,7 @@ describe('MembersController', () => {
     const audit = new AuditService(
       repo<AuditEntryRecord>(AuditEntryRecord),
       repo<UserRecord>(UserRecord),
+      repo<MembershipRecord>(MembershipRecord),
     );
     const organizations = new OrganizationsService(
       repo<OrganizationRecord>(OrganizationRecord),

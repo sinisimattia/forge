@@ -97,6 +97,7 @@ describe('InvitationsController', () => {
     const audit = new AuditService(
       repo<AuditEntryRecord>(AuditEntryRecord),
       repo<UserRecord>(UserRecord),
+      repo<MembershipRecord>(MembershipRecord),
     );
     const mailer: IMailer = {
       send: async (message) => {

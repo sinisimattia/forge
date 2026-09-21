@@ -15,6 +15,7 @@ import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
 import { FakeDataSource } from '../../common/testing';
 import { PlatformAdminGuard } from '../../auth/guards';
 import { JwtStrategy } from '../../auth/strategies';
+import { MembershipRecord } from '../../organizations/membership-record.entity';
 import { UserRecord } from '../../users/user-record.entity';
 import { AuditEntryRecord } from '../audit-entry-record.entity';
 import { AuditController } from '../audit.controller';
@@ -102,6 +103,7 @@ describe('AuditController', () => {
     audit = new AuditService(
       repo<AuditEntryRecord>(AuditEntryRecord),
       repo<UserRecord>(UserRecord),
+      repo<MembershipRecord>(MembershipRecord),
     );
 
     const moduleRef = await Test.createTestingModule({
