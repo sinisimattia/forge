@@ -219,14 +219,92 @@ const allMigrations: readonly (readonly [string, string])[] = readdirSync(MIGRAT
  * `const` produces — and is exactly what the lint rule now refuses.
  */
 function sqlStatements(source: string): string[] {
-  const call = /(?:queryRunner\.query|exec)\(\s*(?:queryRunner\s*,\s*)?(?:`([^`]*)`|'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")/g;
+  // `\\[\s\S]` rather than `\\.` in every delimiter, `.` not matching a newline
+  // being the whole difference: a TypeScript line continuation (a backslash at
+  // end of line) otherwise ends the capture early, and the regex then goes
+  // looking for a closing delimiter somewhere later in the file. The statement
+  // is not refused in that case, it is silently truncated or missed, which is
+  // the failure this file has spent six rounds learning to distrust. The
+  // backtick arm carries it too, so an escaped backtick cannot truncate a
+  // template literal the same way.
+  const call = /(?:queryRunner\.query|exec)\(\s*(?:queryRunner\s*,\s*)?(?:`((?:[^`\\]|\\[\s\S])*)`|'((?:[^'\\]|\\[\s\S])*)'|"((?:[^"\\]|\\[\s\S])*)")/g;
   const statements: string[] = [];
   let match: RegExpExecArray | null = call.exec(source);
   while (match !== null) {
-    statements.push(match[1] ?? match[2] ?? match[3] ?? '');
+    statements.push(decodeTypeScriptEscapes(match[1] ?? match[2] ?? match[3] ?? ''));
     match = call.exec(source);
   }
   return statements;
+}
+
+/**
+ * One `query()` argument's TypeScript escaping undone, so the lexer is handed
+ * the SQL Postgres would receive rather than the source a TypeScript author
+ * typed.
+ *
+ * ## Why this exists, and why it is the smallest thing that could
+ *
+ * `sqlStatements` reads *source text*, not the value of the expression, so a
+ * perfectly ordinary statement written in this codebase's house style —
+ *
+ *   queryRunner.query('COMMENT ON TABLE t IS \'x\'')
+ *
+ * — reached `canonicalize` as `COMMENT ON TABLE t IS \'x\'`, backslashes and
+ * all, and was refused for containing a backslash. That is a false positive on
+ * valid, lint-clean SQL, and it is a dangerous one rather than a merely
+ * annoying one: the author meets a red test blaming a backslash they never
+ * wrote in SQL, goes looking for the smallest fix, and the smallest fix is to
+ * add `\` to `MODELLED_PUNCTUATION` — which is the single line that makes the
+ * `E'\''` bypass unreachable by a second route. A guard whose failure message
+ * points at the change that reopens it is worse than no guard.
+ *
+ * ## What it decodes, and what it deliberately does not
+ *
+ * Decoding is a second place quoting is interpreted, and this file's own
+ * history says every decoder it has grown has had a blind spot. So this one
+ * models a closed list and **leaves everything else exactly as written**, which
+ * means the backslash survives and the lexer refuses the argument. Fail-closed
+ * by omission rather than by an extra branch:
+ *
+ * | Written | Becomes | Why it is safe to decode |
+ * |---|---|---|
+ * | `\'` `\"` `` \` `` | the quote | the delimiter, escaped because it is the delimiter |
+ * | `\\` | one backslash | and a lone backslash outside a SQL literal is then refused by the lexer, which is correct — it is not valid SQL. Inside one it is ordinary text, which is also correct. |
+ * | `\n` `\r` `\t` | the whitespace | whitespace cannot hide a token; the lexer collapses it |
+ *
+ * Everything else is left verbatim and therefore refused: `\x41` and `'`
+ * (which decode to characters — `'` among them — and would let somebody write a
+ * quote without writing one), `\0`, `\b`, `\f`, `\v`, a line continuation, and
+ * `\` before any other character. None is a way to write SQL that a template
+ * literal does not offer, and the refusal message says so.
+ *
+ * @param raw - the source text between a TypeScript literal's delimiters
+ * @returns the SQL it denotes, for the escapes above; unchanged elsewhere
+ */
+function decodeTypeScriptEscapes(raw: string): string {
+  const DECODED: Readonly<Record<string, string>> = {
+    '\'': '\'', '"': '"', '`': '`', '\\': '\\', n: '\n', r: '\r', t: '\t',
+  };
+  let out = '';
+  let index = 0;
+  while (index < raw.length) {
+    if (raw[index] === '\\' && index + 1 < raw.length) {
+      const decoded = DECODED[raw[index + 1]];
+      if (decoded !== undefined) {
+        out += decoded;
+        index += 2;
+        continue;
+      }
+      // Not modelled. Both characters survive, so the lexer meets a backslash
+      // and refuses the argument — see `MODELLED_PUNCTUATION`.
+      out += raw.slice(index, index + 2);
+      index += 2;
+      continue;
+    }
+    out += raw[index];
+    index += 1;
+  }
+  return out;
 }
 
 /**
@@ -362,10 +440,29 @@ const UNMODELLED = 'unmodelled_sql_construct';
  * signs) and its `op_chars` (`~ ! @ # ^ & |`, a backtick and `?`). `$`,
  * `'` and `"` are not here — each has its own branch. **Anything not in this
  * set is a construct the lexer does not model, and is refused.** That is the
- * whole of the whitelist: `\` (which is what makes `E'\''` unreachable by a
- * second route), `{`/`}` (a `${}` interpolation surviving into the extracted
- * text), and every non-ASCII letter Postgres would accept in an identifier
- * all fall outside it.
+ * whole of the whitelist: `\`, `{`/`}` (a `${}` interpolation surviving into
+ * the extracted text), and every non-ASCII letter Postgres would accept in an
+ * identifier all fall outside it.
+ *
+ * ## Do not add `\` to this set
+ *
+ * It is the one character here that somebody will be tempted to add, and
+ * adding it reopens `E'\''` — the escape-string bypass this file's whole
+ * fail-closed design was written for, which was verified executable against
+ * Postgres 17 with ownership actually moving. The backslash rule is what makes
+ * that bypass unreachable by a second route: even if the `E'…'` prefix rule
+ * were ever weakened, `\` outside a SQL literal still refuses the argument.
+ *
+ * The temptation used to be much stronger than it is now, and it is worth
+ * knowing why it has gone. `sqlStatements` reads source text, so an ordinary
+ * `queryRunner.query('… IS \'x\'')` — valid SQL, lint-clean, exactly this
+ * codebase's quoting style — used to arrive here with backslashes in it and be
+ * refused, sending an author looking for the smallest fix straight to this
+ * line. `decodeTypeScriptEscapes` closed that: the quote escapes are undone in
+ * the extractor, so what reaches this set is a backslash the author really did
+ * write in SQL. If you are reading this because a migration is being refused
+ * for a backslash, the fix is in the SQL or in the TypeScript literal — a
+ * template literal needs no escaping at all — never here.
  */
 const MODELLED_PUNCTUATION = new Set([...',()[].;:+-*/%^<>=', ...'~!@#^&|`?']);
 
@@ -586,7 +683,11 @@ function canonicalize(raw: string): string[] {
         // indistinguishable from a rule that has stopped working.
       }
       if (after === '\'' || (after === '&' && raw[end + 1] === '\'')) {
-        return refuse(index, `the string-literal prefix ${word}`);
+        return refuse(
+          index,
+          `the string-literal prefix ${word} — its escape rules are not modelled here; write `
+          + 'the value as a plain literal, doubling any apostrophe, or as a dollar-quoted body',
+        );
       }
       if (after === '$') return refuse(index, 'a $ abutting an identifier');
 
@@ -660,6 +761,17 @@ function canonicalize(raw: string): string[] {
       continue;
     }
 
+    if (here === '\\') {
+      // Singled out from the other unmodelled characters because this is the
+      // one an author can meet while writing ordinary SQL, and the message is
+      // what stops them "fixing" it by widening `MODELLED_PUNCTUATION`. See
+      // that constant's TSDoc for why that fix is the wrong one.
+      return refuse(
+        index,
+        'a backslash — write the SQL in a template literal, where TypeScript needs no '
+        + 'escaping; do NOT add \\ to MODELLED_PUNCTUATION, which reopens the E\'…\' bypass',
+      );
+    }
     return refuse(index, `the character ${JSON.stringify(here)}`);
   }
 
@@ -1162,6 +1274,130 @@ describe('the statement extractor', () => {
   });
 });
 
+describe('the extractor undoes TypeScript escaping, and refuses what it does not', () => {
+  // `sqlStatements` reads SOURCE TEXT, not the value of the expression, and
+  // that gap had a sharp edge. This statement —
+  //
+  //   queryRunner.query('COMMENT ON TABLE t IS \'x\'')
+  //
+  // — is valid SQL, passes both lint rules, and is exactly the quoting style
+  // this codebase uses. It used to reach `canonicalize` with its backslashes
+  // intact and be refused as "the character \\". A false positive on ordinary
+  // SQL is bad; this one was worse than bad, because the smallest fix an author
+  // would reach for is adding `\` to `MODELLED_PUNCTUATION`, and that single
+  // character reopens the `E'\''` bypass the whole fail-closed design exists
+  // for. A guard whose failure message points at the change that reopens it is
+  // not a guard.
+  //
+  // `decodeTypeScriptEscapes` closes it by undoing a CLOSED list of escapes and
+  // leaving every other one verbatim, so the backslash survives and the lexer
+  // refuses. The two halves are tested separately below, because widening the
+  // decoded list is the same mistake wearing different clothes: `\x27` and
+  // `'` both decode to an apostrophe, and an extractor that honoured them
+  // would let somebody open a SQL string literal without writing a quote.
+
+  it('reads the house-style statement that used to be refused', () => {
+    // The finding, end to end: source in, SQL out, and the canonical form is
+    // the statement rather than a refusal.
+    const source = String.raw`await queryRunner.query('COMMENT ON TABLE t IS \'x\'');`;
+    expect(sqlStatements(source)).toEqual(['COMMENT ON TABLE t IS \'x\'']);
+    expect(canonicalStatements(source)).toEqual(['comment on table t is \'x\'']);
+  });
+
+  it('and still sees a statement hidden after one', () => {
+    // Decoding must make the rest VISIBLE, not merely unrefused. Before the
+    // decoder this argument was refused whole; if the decoder were ever wrong
+    // about where the SQL literal ends, the `;` would not split and the
+    // `ALTER TABLE` would vanish instead.
+    const source = String.raw`await queryRunner.query('COMMENT ON TABLE t IS \'x\'; ALTER TABLE audit_entries OWNER TO app');`;
+    expect(canonicalStatements(source)).toEqual([
+      'comment on table t is \'x\'',
+      'alter table audit_entries owner to app',
+    ]);
+  });
+
+  it.each([
+    ['an escaped single quote', String.raw`'SELECT \'a\''`, 'SELECT \'a\''],
+    ['an escaped double quote', String.raw`"SELECT \"a\""`, 'SELECT "a"'],
+    ['an escaped backtick', '`SELECT ' + String.raw`\`` + '`', 'SELECT `'],
+    ['an escaped backslash', String.raw`'SELECT \'a\\b\''`, 'SELECT \'a\\b\''],
+    ['a newline escape', String.raw`'SELECT 1;\nSELECT 2'`, 'SELECT 1;\nSELECT 2'],
+    ['a carriage return escape', String.raw`'SELECT 1;\rSELECT 2'`, 'SELECT 1;\rSELECT 2'],
+    ['a tab escape', String.raw`'SELECT\t1'`, 'SELECT\t1'],
+  ])('decodes %s', (_label, literal, sql) => {
+    expect(sqlStatements(`await queryRunner.query(${literal});`)).toEqual([sql]);
+  });
+
+  it.each([
+    // Everything NOT in the decoded table. Each one reaches the lexer with its
+    // backslash still attached and is refused there, which is the fail-closed
+    // half — and the reason the decoded table is a list rather than a default.
+    ['a hex escape, which would decode to an apostrophe', String.raw`'SELECT \x27'`],
+    // Written with ordinary escaping rather than `String.raw`, deliberately:
+    // this toolchain's emit COOKS a \u escape inside a `String.raw` template and
+    // hands back the character it denotes, so the raw form would silently test
+    // something else. Measured, not assumed.
+    ['a unicode escape, same', '\'SELECT \\u0027\''],
+    ['a braced unicode escape', String.raw`'SELECT \u{27}'`],
+    ['a null escape', String.raw`'SELECT \0'`],
+    ['a backspace escape', String.raw`'SELECT \b'`],
+    ['a form-feed escape', String.raw`'SELECT \f'`],
+    ['a vertical-tab escape', String.raw`'SELECT \v'`],
+    ['a backslash before an ordinary letter', String.raw`'SELECT \d'`],
+    ['a line continuation', '\'SELECT \\\n 1\''],
+  ])('refuses %s rather than guessing at it', (_label, literal) => {
+    const found = canonicalStatements(`await queryRunner.query(${literal});`);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toContain(UNMODELLED);
+    // ...and the message tells the author what to do instead of sending them
+    // to `MODELLED_PUNCTUATION`.
+    expect(found[0]).toContain('template literal');
+  });
+
+  it('a decoded backslash is refused outside a SQL literal and accepted inside one', () => {
+    // The one decoded escape that can still produce a refusal, and it should:
+    // a lone backslash is not valid SQL outside a literal. Inside one it is
+    // ordinary text, and refusing it would be the false positive all over
+    // again — so both directions are asserted.
+    const outside = canonicalStatements(
+      String.raw`await queryRunner.query('ALTER TABLE \\ audit_entries OWNER TO app');`,
+    );
+    expect(outside).toHaveLength(1);
+    expect(outside[0]).toContain(UNMODELLED);
+
+    expect(canonicalStatements(
+      String.raw`await queryRunner.query('COMMENT ON TABLE t IS \'a\\b\'');`,
+    )).toEqual(['comment on table t is \'a\\b\'']);
+  });
+
+  it('captures a literal whole even when an escape sits in it', () => {
+    // The other half of the same finding, in the regex rather than the decoder.
+    // `\\.` does not match a newline, so a TypeScript line continuation used to
+    // end the capture early and send the extractor looking for a closing
+    // delimiter later in the file — truncating the statement or missing it
+    // outright. Truncation is the failure mode this file distrusts most,
+    // because nothing is refused and nothing is reported.
+    const continued = 'await queryRunner.query(\'ALTER TABLE \\\n audit_entries OWNER TO app\');';
+    expect(sqlStatements(continued)).toHaveLength(1);
+    expect(sqlStatements(continued)[0]).toContain('audit_entries');
+
+    // And an escaped delimiter must not truncate a template literal either.
+    const backtick = 'await queryRunner.query(`SELECT \\` ; ALTER TABLE audit_entries OWNER TO app`);';
+    expect(sqlStatements(backtick)).toHaveLength(1);
+    expect(sqlStatements(backtick)[0]).toContain('OWNER TO app');
+  });
+
+  it('leaves the real migrations exactly as they were', () => {
+    // No migration contains a backslash today, so the decoder is a no-op on the
+    // real corpus and this asserts it: a decoder that started rewriting the
+    // statements the guards read would be a change nobody asked for, made in
+    // the one place this file cannot afford one.
+    for (const [, source] of allMigrations) {
+      expect(source).not.toContain('\\');
+    }
+  });
+});
+
 describe('migration SQL is pinned to string literals at the call site', () => {
   // The other half of Task 22a, and the half the canonical form cannot do.
   //
@@ -1216,6 +1452,20 @@ describe('migration SQL is pinned to string literals at the call site', () => {
     // or REVOKE, so the role name has to become part of the statement text and
     // `format('%I')` is the escaping the parser itself agrees with — there is
     // no literal-only way to write it.
+    //
+    // Two of the three live in `AppRoleAndDefaultPrivileges`, and the exempted
+    // surface there is smaller than the count suggests: that helper used to
+    // pass one conditional argument whose first arm was already a literal, and
+    // the exemption covered both arms. It is now two calls, so the
+    // no-placeholder arm — the one every simple `exec` template takes — is
+    // checked like any other statement and only the interpolating arm is
+    // exempt.
+    //
+    // Known limitation, recorded rather than fixed: this keys on file and rule
+    // name, so MOVING an exemption to a different statement within the same
+    // file passes silently. Closing that would mean pinning line numbers,
+    // which turns every unrelated edit above one into a failure. The trade is
+    // deliberate.
     const exemptions = allMigrations.flatMap(([name, source]) =>
       source
         .split('\n')
