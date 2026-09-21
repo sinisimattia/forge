@@ -110,6 +110,18 @@ Phase 3's own discoveries. Each cost at least a fix round; the evidence is in
 `phase-3-decision-log.md`, and **its opening five are the ones to read before touching
 authorization or the migration guards.**
 
+- **Give Storybook a gate before adding another story to it — nothing has ever compiled the
+  ones that exist.** `storybook` in `ci.yml` is PR-only *and* `continue-on-error: true` *and*
+  fails on every single run, before it reaches story content (`✓ 0 modules transformed`, then
+  a `moduleType` error unrelated to what any story says). Those three facts stack: no commit
+  in this phase has had a passing Storybook build, so no commit has had its story files
+  actually transformed by any gate, on a PR or on push. Phase 3 shipped four
+  (`GrantList`, `InvitationList`, `MemberList`, `OrganizationSwitcher.stories.ts`) on that
+  basis — this is not a hypothetical risk, it is the exact position Phase 4's own stories will
+  ship from until the `moduleType` failure is root-caused and `continue-on-error` comes off.
+  Root-cause it, or at minimum add a cheaper gate this phase did not have — a `vue-tsc`/lint
+  pass over `stories/**` that does not depend on the Storybook build succeeding — before
+  trusting a fifth story to have been checked by anything.
 - **A green fast tier says nothing about whether the application boots.** Phase 3's own
   instance: a guard is instantiated in the module context of the controller that names it, so
   a module hosting a guarded controller must register every repository that guard injects.
@@ -165,14 +177,17 @@ authorization or the migration guards.**
 
 ## Two things Phase 3 knowingly did not close
 
-**1. The template is still unverified on the Node it declares.** `template/package.json` says
-`>=22 <23` and both Dockerfiles pin 22. Phase 2 recorded that this machine had only Node 26 and
-no version manager; Phase 3 found the mechanism behind it — **there is no real Node 22 here at
-all: every `node@20`…`node@26` opt-symlink aliases the same Node 26.5.0 keg**, so installing
-Node 22 by the obvious route does not give you Node 22. The Docker walk is therefore the only
-place in this phase where anything ran on the declared Node, and it ran inside the images
-rather than on the host. The gate's mismatch warning fired correctly every time, which is the
-guard working and the coverage still missing.
+**1. This development machine still cannot run the declared Node locally — the template
+itself is not unverified on it.** `template/package.json` says `>=22 <23`, both Dockerfiles
+pin 22, and all four non-schedule CI jobs — including `generated-project` and `docker`, which
+run on every push, not only on a PR — pin `node-version: 22`. **Node 22 is exercised on every
+push to `main`.** What Phase 2 recorded, and what Phase 3 found the mechanism behind, is
+narrower than that: this machine has no real Node 22 at all — **every `node@20`…`node@26`
+opt-symlink aliases the same Node 26.5.0 keg** — so installing it by the obvious route does not
+give you it, and any `nx`/`npm` command run by hand here runs on 26. That is a gap in what
+*this machine's own ad hoc runs* verify, not in what the project's own gates verify; the
+gate's mismatch warning fired correctly every time a by-hand run diverged, which is the guard
+working, on the narrower gap it actually covers.
 
 **2. Storybook's build failure is still un-root-caused, and the job stays PR-only on
 purpose.** `✓ 0 modules transformed`, then `[vite:build-html] Missing field 'moduleType'`,
@@ -181,6 +196,13 @@ against the lockfile that pins the combination once believed to be the fix. It d
 move to push with `generated-project` and `docker`, and the reasoning is the reverse of the one
 that moved them: those moved because a gate that does not run on `main` protects nothing, while
 this one protects nothing either way — it is `continue-on-error: true` and it fails every time.
+**The consequence, stated plainly: nothing compiles the story files.** PR-only decides *when*
+the job runs; `continue-on-error: true` plus a build that fails before it reaches story
+content decides *whether it has ever verified anything*, and the answer is no. Phase 3 shipped
+four story files (`GrantList`, `InvitationList`, `MemberList`,
+`OrganizationSwitcher.stories.ts`) that no gate has ever executed. See "What Phase 4 must not
+get wrong" above — this is that section's first item, not a triage-table line, because the
+next story shipped under the same conditions is unverified the same way.
 Running it on every push would buy zero protection and train people to read a yellow CI page as
 normal, at which point the next failure in a job that *does* block is one more yellow mark among
 the yellow marks. **The exit condition is recorded in `.github/workflows/ci.yml` beside the job,

@@ -27,6 +27,35 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * How long a single request is given to answer before this transport gives up
+ * on it, in milliseconds.
+ *
+ * **Why this exists, and why here rather than at each call site.** A *down*
+ * backend fails a `fetch` immediately — connection refused — and every caller
+ * already handles that, the same way it handles any other rejection. A *hung*
+ * one (accepts the connection, never answers) does not fail at all, and without
+ * a bound `await` never returns. Every caller of {@link createApiClient} shares
+ * that exposure, not only `plugins/auth-init.client.ts`'s `await store.renew()`
+ * that surfaced it: `utils/authFetch.ts`'s retry, the route middleware's
+ * `initialize()`, and every fetcher a component or composable awaits directly
+ * would each hang the same way on the same kind of backend. Bounding it once
+ * here, rather than wrapping each `await` in its own race, is also what keeps a
+ * timed-out request from sitting on one of the browser's small number of
+ * per-origin connections for the rest of the page's life.
+ *
+ * **What happens when it fires.** `AbortSignal.timeout` aborts the `fetch`,
+ * which rejects the same way a network failure already does — this transport
+ * adds no new error type and no new branch. For the renewal specifically, that
+ * rejection reaches `attemptRenewal`'s existing catch-all in `stores/auth.ts`,
+ * whose own comment already treats every renewal failure as "no session":
+ * `forget()` runs and `status` becomes `anonymous`. The already-rendered page
+ * stays up — nothing here blocks hydration past this bound — and a visitor
+ * whose backend was merely slow signs in again, the same outcome a refused
+ * renewal already produces today, just no longer an indefinite one.
+ */
+export const DEFAULT_API_TIMEOUT_MS = 10_000;
+
 /** How a real {@link ApiClient} reaches the backend. */
 export interface ApiClientOptions {
   /** `runtimeConfig.public.apiBase`, or `runtimeConfig.apiBaseServer` under SSR. */
@@ -68,6 +97,14 @@ export interface ApiClientOptions {
    * family (DEC-3). The symptom is a user who is signed out at random.
    */
   readonly onSetCookie?: (values: readonly string[]) => void;
+  /**
+   * Overrides {@link DEFAULT_API_TIMEOUT_MS} for every request this client
+   * issues.
+   *
+   * Exists for tests that need to observe the bound firing without waiting out
+   * the production default; nothing in this application overrides it otherwise.
+   */
+  readonly timeoutMs?: number;
 }
 
 /**
@@ -128,6 +165,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       // first time the access credential lapses — silently, and only in
       // production, where sessions last long enough to lapse.
       credentials: request.withCookie === true ? 'include' : 'same-origin',
+      // Bounds a *hung* backend, not just a down one — see
+      // `DEFAULT_API_TIMEOUT_MS`'s own documentation for why this belongs here
+      // rather than at each caller.
+      signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_API_TIMEOUT_MS),
       ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
     });
 

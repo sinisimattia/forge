@@ -134,6 +134,20 @@ jobs:
   # commit: `continue-on-error` comes off and `if:` becomes `github.event_name != 'schedule'`
   # like the two tiers above.** Not before — a green-but-PR-only Storybook job would be the
   # same gap this task just closed, re-opened in the one tier nobody is watching.
+  #
+  # ## The consequence, stated plainly: nothing compiles the story files
+  #
+  # PR-only is a choice about *when* this job runs; `continue-on-error: true` plus a build
+  # that fails before it reaches story content (`✓ 0 modules transformed`, then the
+  # `moduleType` error) is a separate fact about what it has ever actually verified — which
+  # is nothing. No commit in this phase has had a passing Storybook build, so no commit has
+  # had its story files successfully transformed by this or any other gate. Phase 3 shipped
+  # four (`GrantList.stories.ts`, `InvitationList.stories.ts`, `MemberList.stories.ts`,
+  # `OrganizationSwitcher.stories.ts`) with zero compiled confirmation that any of them is
+  # even syntactically valid Storybook config, and that stays true of every story a later
+  # phase adds until the `moduleType` failure is root-caused. See
+  # `docs/superpowers/phase-roadmap.md`'s "What Phase 4 must not get wrong" for the gate
+  # this is owed.
   storybook:
     name: template Storybook build (PR-tier; known-red, non-blocking — see comment)
     needs: unit

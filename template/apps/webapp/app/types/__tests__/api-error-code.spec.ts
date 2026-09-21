@@ -58,8 +58,8 @@ describe('the wire vocabulary this webapp expects', () => {
       'INVALID_CREDENTIALS',
       'INVALID_ORGANIZATION_SLUG',
       'INVITATION_ADDRESS_MISMATCH',
-      'INVITATION_NOT_FOUND',
       'INVITATION_NO_LONGER_OPEN',
+      'INVITATION_NOT_FOUND',
       'LAST_IDENTITY_REMOVAL',
       'LAST_OWNER',
       'MEMBERSHIP_NOT_FOUND',
@@ -76,7 +76,16 @@ describe('the wire vocabulary this webapp expects', () => {
 
   // Sorted, so that the two lists can be compared by eye across two repositories'
   // worth of file, and so that adding a code has one obvious place to put it.
-  it('is sorted, so the two copies read the same way', () => {
-    expect([...API_ERROR_CODES]).toEqual([...API_ERROR_CODES].sort());
+  // Compared with `localeCompare`, not the default comparator, because that is
+  // what the backend sorts `DOMAIN_ERROR_CODES` with
+  // (`apps/backend/src/common/filters/http-exception.filter.ts`), and the two
+  // lists disagree on at least one pair under the default UTF-16 code-unit
+  // order (`INVITATION_NO_LONGER_OPEN` vs `INVITATION_NOT_FOUND`) — so a plain
+  // `.sort()` here would make this test pass while making the file wrong to
+  // eyeball against the backend's.
+  it('is sorted the same way the backend sorts its copy', () => {
+    expect([...API_ERROR_CODES]).toEqual(
+      [...API_ERROR_CODES].sort((left, right) => left.localeCompare(right)),
+    );
   });
 });

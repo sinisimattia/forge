@@ -57,6 +57,20 @@ import { useAuthStore } from '~/stores/auth';
  * already on screen and already says the visitor is signed in. The credential
  * was never what prevented the flash — the three-state `status` is.
  *
+ * **The `await` is unbounded here on purpose — the bound lives one layer down.**
+ * A *down* backend answers (or refuses to connect) quickly and this settles
+ * either way; a *hung* one would otherwise leave this `await`, and therefore
+ * Nuxt's mount, waiting forever on an already-rendered page. `renew` goes out on
+ * `createApiClient` (`fetchers/client.ts`), which bounds every request it makes
+ * with `DEFAULT_API_TIMEOUT_MS` — read that constant's own documentation for why
+ * the bound belongs to the shared transport and not to a race written out again
+ * at every `await` that could hang the same way. When it fires here, the
+ * rejection reaches `attemptRenewal`'s existing catch-all exactly as a refused
+ * renewal already does: `forget()` runs, `status` becomes `anonymous`, and a
+ * visitor whose backend was merely slow lands where a visitor whose renewal was
+ * refused already does — signed out, on a page still on screen, free to sign in
+ * again.
+ *
  * ## Why it does not ask when the status is `unknown`
  *
  * That is a page nothing server-rendered a session for, so there is no rotation
