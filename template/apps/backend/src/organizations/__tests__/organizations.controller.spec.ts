@@ -304,13 +304,24 @@ describe('OrganizationsController', () => {
       expect(JSON.stringify(response.body)).not.toContain('Acme Works');
     });
 
-    // The property `OrganizationNotFoundError`'s shared refusal exists for:
-    // a non-member and a never-issued id must be ONE answer, not two that
-    // happen to share a status. Comparing statuses alone would pass an
-    // implementation that answered 404 to both but put "you are not a member
-    // of this organization" in one body and "no such organization" in the
-    // other — which leaks exactly what the shared status was chosen to hide,
-    // through the one channel a status code cannot close.
+    // A non-member and a never-issued id must be ONE answer, not two that happen
+    // to share a status. Comparing statuses alone would pass an implementation
+    // that answered 404 to both but put "you are not a member of this
+    // organization" in one body and "no such organization" in the other — which
+    // leaks exactly what the shared status was chosen to hide, through the one
+    // channel a status code cannot close.
+    //
+    // **Since Task 13 this no longer reaches `OrganizationNotFoundError`.**
+    // `PermissionsGuard` runs first and refuses both cases itself, so what this
+    // now guards is the GUARD's collapse — both of its refusal paths, the one
+    // where no row answers the id and the one where `can()` says no, leaving by
+    // the same `throw`. That is worth keeping and it is not what the comment
+    // used to claim. Measured: replacing `requireMember`'s throw with a
+    // distinguishable error turns five tests in `organizations.service.spec.ts`
+    // red and leaves this one green. The domain-level collapse — that
+    // `getOrganization` answers a non-member exactly as it answers an id nobody
+    // issued — is asserted there, and by core's own
+    // `runIOrganizationServiceContract`.
     it('answers a non-member exactly as it answers an id nobody ever issued', async () => {
       seedOrganization(ORG_1, 'Acme Works', 'acme-works', OWNER);
 
@@ -398,7 +409,7 @@ describe('OrganizationsController', () => {
    *
    * | Deleted from shipped code | Caught by |
    * |---|---|
-   * | `organizations.controller.ts`: `@UseGuards(PermissionsGuard)` on `PATCH /organizations/:id` | `refuses a MEMBER who may read the organization but may not rename it` — the service's own check passes a member of any role, so without the guard a MEMBER renames the organization and every other test here stays green |
+   * | `organizations.controller.ts`: `@UseGuards(PermissionsGuard)` on `PATCH /organizations/:id` | `refuses a MEMBER who may read the organization but may not rename it` — the service's own check passes a member of any role, so without the guard a MEMBER renames the organization and every other test here stays green. Measured: 3 of 778 red |
    * | `organizations.controller.ts`: `@RequirePermission('organization:update')` on `PATCH /organizations/:id` | the same test — the guard's "no annotation, nothing to decide" branch allows the route through, which is correct for a route that declares nothing and is exactly why deleting the declaration is silent |
    * | `organizations.controller.ts`: the guard on `DELETE /organizations/:id` | `refuses a MEMBER who may not delete the organization` |
    * | `organizations.controller.ts`: the guard on `GET /organizations/:id` | nothing here, and deliberately: every role carries `organization:read`, so on that route the guard and the service agree for every member. It is annotated for what it declares, not for what it currently refuses |

@@ -58,6 +58,10 @@ const OWNER = '11111111-1111-4111-8111-111111111111' as UserId;
 const INVITEE = '22222222-2222-4222-8222-222222222222' as UserId;
 const WRONG_ACCOUNT = '33333333-3333-4333-8333-333333333333' as UserId;
 const OUTSIDER = '44444444-4444-4444-8444-444444444444' as UserId;
+// A real member of the organization, in the role that carries neither
+// `member:invite`, `invitation:read` nor `invitation:revoke`. The only actor
+// that can tell a guarded route on this controller from an unguarded one.
+const MEMBER = '99999999-9999-4999-8999-999999999999' as UserId;
 const SESSION = '55555555-5555-4555-8555-555555555555' as SessionId;
 
 const ORG_1 = '66666666-6666-4666-8666-666666666666';
@@ -207,6 +211,21 @@ describe('InvitationsController', () => {
         createdAt: EPOCH,
         updatedAt: EPOCH,
         deletedAt: null,
+      },
+    ]);
+  };
+
+  /** Adds one more membership to an already-seeded organization, and its account. */
+  const seedMembership = (organizationId: string, userId: string, role: OrgRole): void => {
+    seedUser(userId, `${userId}@example.test`);
+    source.seed(MembershipRecord, [
+      {
+        id: `membership-${organizationId}-${userId}`,
+        organizationId,
+        userId,
+        role,
+        createdAt: EPOCH,
+        updatedAt: EPOCH,
       },
     ]);
   };
@@ -677,6 +696,102 @@ describe('InvitationsController', () => {
 
       expect(response.status).toBe(409);
       expect(response.body.code).toBe('ALREADY_A_MEMBER');
+    });
+  });
+
+  /**
+   * Authorization, asserted by the one actor whose answer differs.
+   *
+   * This block exists because the three guards on this controller were, for one
+   * commit, wiring nothing asserted: deleting `@UseGuards(PermissionsGuard)`
+   * from any of the three left the whole backend suite green at 774. The gap was
+   * not cosmetic. `ROLE_PERMISSIONS` gives a MEMBER `organization:read` and
+   * `member:read`, and a VIEWER `organization:read` alone, while
+   * `OrganizationsService` checks **membership** and never the role — so with
+   * the guards gone, anybody who belongs to an organization at all can invite
+   * members to it, read every outstanding offer, and withdraw them.
+   *
+   * The OWNER every other test in this file uses cannot show that, because an
+   * OWNER is allowed either way; nor can the OUTSIDER, who is refused either way
+   * by `requireMember`. A MEMBER is the actor the two answers differ for.
+   *
+   * | Deleted from shipped code | Caught by |
+   * |---|---|
+   * | `invitations.controller.ts`: the guard or the permission on `POST /organizations/:id/invitations` | `refuses a MEMBER inviting somebody, and issues nothing` |
+   * | `invitations.controller.ts`: the guard or the permission on `GET /organizations/:id/invitations` | `refuses a MEMBER reading the outstanding invitations` |
+   * | `invitations.controller.ts`: the guard or the permission on `DELETE /organizations/:id/invitations/:invitationId` | `refuses a MEMBER revoking an invitation, which stays open` |
+   */
+  describe('authorization: what a role does and does not carry', () => {
+    const INVITATION_1 = '88888888-8888-4888-8888-888888888888';
+
+    beforeEach(() => {
+      seedOrganization(ORG_1, OWNER);
+      seedMembership(ORG_1, MEMBER, OrgRole.MEMBER);
+    });
+
+    it('refuses a MEMBER inviting somebody, and issues nothing', async () => {
+      const response = await request(app.getHttpServer())
+        .post(`/organizations/${ORG_1}/invitations`)
+        .set('Authorization', bearer(MEMBER))
+        .send({ email: INVITEE_EMAIL, role: 'MEMBER' });
+
+      expect(response.status).toBe(404);
+      // The status alone would be satisfied by a service refusing for some other
+      // reason; these two are what say nothing happened.
+      expect(source.all(InvitationRecord)).toHaveLength(0);
+      expect(sent).toHaveLength(0);
+    });
+
+    it('refuses a MEMBER reading the outstanding invitations', async () => {
+      seedInvitation(INVITATION_1, ORG_1, INVITEE_EMAIL);
+
+      const response = await request(app.getHttpServer())
+        .get(`/organizations/${ORG_1}/invitations`)
+        .set('Authorization', bearer(MEMBER));
+
+      expect(response.status).toBe(404);
+      // Not merely refused — nothing about the invitation crossed the wire.
+      expect(JSON.stringify(response.body)).not.toContain(INVITEE_EMAIL);
+    });
+
+    it('refuses a MEMBER revoking an invitation, which stays open', async () => {
+      const token = seedInvitation(INVITATION_1, ORG_1, INVITEE_EMAIL);
+
+      const response = await request(app.getHttpServer())
+        .delete(`/organizations/${ORG_1}/invitations/${INVITATION_1}`)
+        .set('Authorization', bearer(MEMBER));
+
+      expect(response.status).toBe(404);
+      expect(source.byId(InvitationRecord, INVITATION_1)?.status).toBe(InvitationStatus.PENDING);
+      // And the offer its recipient holds still redeems, which is the part a
+      // status assertion cannot see.
+      seedUser(INVITEE, INVITEE_EMAIL);
+      await request(app.getHttpServer())
+        .post(`/invitations/${token}/accept`)
+        .set('Authorization', bearer(INVITEE))
+        .expect(201);
+    });
+
+    it('lets an ADMIN do all three, so the refusals above are about the role', async () => {
+      // Without this the three cases above are equally satisfied by a guard that
+      // refused everybody — which is a guard nobody notices is broken until an
+      // organization cannot invite anyone.
+      seedMembership(ORG_1, OUTSIDER, OrgRole.ADMIN);
+
+      await request(app.getHttpServer())
+        .post(`/organizations/${ORG_1}/invitations`)
+        .set('Authorization', bearer(OUTSIDER))
+        .send({ email: INVITEE_EMAIL, role: 'MEMBER' })
+        .expect(201);
+      await request(app.getHttpServer())
+        .get(`/organizations/${ORG_1}/invitations`)
+        .set('Authorization', bearer(OUTSIDER))
+        .expect(200);
+      seedInvitation(INVITATION_1, ORG_1, WRONG_ACCOUNT_EMAIL);
+      await request(app.getHttpServer())
+        .delete(`/organizations/${ORG_1}/invitations/${INVITATION_1}`)
+        .set('Authorization', bearer(OUTSIDER))
+        .expect(200);
     });
   });
 

@@ -70,7 +70,24 @@ export class OrganizationsController {
     return { data: page.data.map((organization) => organization.toJSON()), meta: page.meta };
   }
 
-  /** One organization the caller belongs to. */
+  /**
+   * One organization the caller belongs to.
+   *
+   * **This guard is the one on this controller that no test can catch the
+   * deletion of, and that is stated here rather than papered over with an
+   * assertion that cannot fail.** Every `OrgRole` carries `organization:read` —
+   * it is what belonging means — so on this route the guard and
+   * `OrganizationsService.requireMember` agree for every actor there is: a
+   * member is allowed by both, a non-member refused by both, with the same
+   * status and the same body. There is no observable fault to assert, and a test
+   * written to cover this line would pass with the line deleted, which is worse
+   * than the gap because it reports the opposite of the truth.
+   *
+   * The annotation is here for what it declares, not for what it currently
+   * refuses: the day a role is added that does not carry `organization:read`,
+   * this route already says what it requires. Its two siblings are asserted —
+   * see `__tests__/organizations.controller.spec.ts`'s `authorization:` block.
+   */
   @Get(':id')
   @UseGuards(PermissionsGuard)
   @RequirePermission('organization:read')
