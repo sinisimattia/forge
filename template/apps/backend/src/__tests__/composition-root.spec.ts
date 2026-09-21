@@ -23,6 +23,7 @@ import { EmailVerificationTokenRecord } from '../auth/entities/email-verificatio
 import { PasswordResetTokenRecord } from '../auth/entities/password-reset-token-record.entity';
 import { RefreshTokenRecord } from '../auth/entities/refresh-token-record.entity';
 import { SessionRecord } from '../auth/entities/session-record.entity';
+import { OAuthAuthorizationRequestRecord } from '../auth/oauth/oauth-authorization-request.entity';
 import { REFRESH_COOKIE } from '../auth/refresh-cookie';
 import { ACCESS_TOKEN_TTL_SECONDS, SessionService } from '../auth/session/session.service';
 import { JwtStrategy } from '../auth/strategies';
@@ -76,6 +77,7 @@ import { UsersModule } from '../users/users.module';
  * | `app.module.ts`: `MembershipRecord` from the entity list | `the database connection › lists every entity` — same fault, for every membership Task 11 reads or writes |
  * | `app.module.ts`: `InvitationRecord` from the entity list | `the database connection › lists every entity` — same fault, for every invitation Task 12 reads or writes |
  * | `app.module.ts`: `ResourceGrantRecord` from the entity list | `the database connection › lists every entity` — same fault, for every grant Task 13 reads or writes |
+ * | `app.module.ts`: `OAuthAuthorizationRequestRecord` from the entity list | `the database connection › lists every entity` — same fault, for every pending authorization Tasks 10 and 11 read or write |
  * | `app.module.ts`: `providers: GLOBAL_PROVIDERS` replaced by a copy | `AppModule › uses the exported provider array itself` |
  * | `app.setup.ts`: `credentials: true` on CORS | `configureApp › lets a cross-origin caller send the renewal cookie` |
  * | `health.controller.ts`: `@Public()` | `health › is reachable with no credential` |
@@ -291,6 +293,7 @@ describe('the composition root', () => {
         RefreshTokenRecord,
         EmailVerificationTokenRecord,
         PasswordResetTokenRecord,
+        OAuthAuthorizationRequestRecord,
         AuditEntryRecord,
         OrganizationRecord,
         MembershipRecord,

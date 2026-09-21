@@ -14,6 +14,7 @@ import { EmailVerificationTokenRecord } from './auth/entities/email-verification
 import { RefreshTokenRecord } from './auth/entities/refresh-token-record.entity';
 import { SessionRecord } from './auth/entities/session-record.entity';
 import { PasswordResetTokenRecord } from './auth/entities/password-reset-token-record.entity';
+import { OAuthAuthorizationRequestRecord } from './auth/oauth/oauth-authorization-request.entity';
 import { ResourceGrantRecord } from './authorization/resource-grant-record.entity';
 import { HealthModule } from './health/health.module';
 import { AuthIdentityRecord } from './identities/auth-identity-record.entity';
@@ -68,6 +69,7 @@ export function typeOrmOptions(config: ConfigService): TypeOrmModuleOptions {
       RefreshTokenRecord,
       EmailVerificationTokenRecord,
       PasswordResetTokenRecord,
+      OAuthAuthorizationRequestRecord,
       AuditEntryRecord,
       OrganizationRecord,
       MembershipRecord,

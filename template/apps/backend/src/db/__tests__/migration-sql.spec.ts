@@ -2375,6 +2375,125 @@ describe('the organizations-and-authorization migration', () => {
   });
 });
 
+describe('the oauth authorization requests migration', () => {
+  const source = migrationSource('OAuthAuthorizationRequests');
+
+  /**
+   * The column list of `CREATE TABLE oauth_authorization_requests`, and
+   * nothing after it.
+   *
+   * The same bounded helper `the schema migration` and `the
+   * organizations-and-authorization migration` each define for themselves,
+   * for the reason given there: an unbounded `[\s\S]*?` between the table
+   * name and a clause runs on into whatever comes next in the file, so an
+   * assertion built on it can pass with the clause deleted. This migration
+   * creates one table, so the bound matters less than it does for its
+   * neighbours, but a guard that only works by accident of file layout is
+   * not one worth keeping that way.
+   */
+  function createTableBody(): string {
+    const match = /CREATE TABLE oauth_authorization_requests \(([\s\S]*?)\n\s*\)/.exec(source);
+    expect(match).not.toBeNull();
+    return match?.[1] ?? '';
+  }
+
+  it('names the state_hash uniqueness constraint rather than declaring it inline', () => {
+    // PF-4: every other uniqueness rule in this schema is a named
+    // `CONSTRAINT`, not an inline `UNIQUE` on the column — a named constraint
+    // is what an error message quotes when it fires, and it is what a
+    // migration's own `down()` or a later `ALTER TABLE … DROP CONSTRAINT`
+    // would need to name. `uq_auth_identities_provider_account` and
+    // `uq_organizations_slug` are the house style this follows.
+    const body = createTableBody();
+    expect(body).not.toMatch(/state_hash\s+text\s+NOT NULL\s+UNIQUE\b/);
+    expect(source).toContain('CONSTRAINT uq_oauth_authorization_requests_state UNIQUE (state_hash)');
+  });
+
+  it('stores a hash of the state and the verifier in the clear — the one asymmetry in the table', () => {
+    // Both propositions have to hold together, or the asymmetry the class doc
+    // argues for is not actually in the schema: a table that hashed both, or
+    // hashed neither, would satisfy either half alone.
+    const body = createTableBody();
+    expect(columnDefinition(body, 'state_hash')).toMatch(/^\s*state_hash\s+text\s+NOT NULL\s*,?\s*$/);
+    expect(columnDefinition(body, 'code_verifier')).toMatch(/^\s*code_verifier\s+text\s+NOT NULL\s*,?\s*$/);
+    // Neither column is named or typed in a way that would suggest the other
+    // treatment — there is no `code_verifier_hash`, and `code_verifier` does
+    // not itself carry `UNIQUE`, which would be a sign it was being used the
+    // way `state_hash` is.
+    expect(source).not.toContain('code_verifier_hash');
+    expect(body).not.toMatch(/code_verifier\s+text\s+NOT NULL\s+UNIQUE\b/);
+  });
+
+  it('cascades user_id from users, and leaves it nullable for a sign-in', () => {
+    const definition = columnDefinition(createTableBody(), 'user_id');
+    expect(definition).toMatch(/\buuid\s+NULL\b/);
+    expect(definition).toContain('REFERENCES users (id) ON DELETE CASCADE');
+  });
+
+  it('indexes expires_at for the sweep', () => {
+    expect(sqlStatements(source)).toContain(
+      'CREATE INDEX ix_oauth_authorization_requests_expires_at ON oauth_authorization_requests (expires_at)',
+    );
+  });
+
+  it('adds no foreign key to audit_entries, and does not name that table in any statement it runs', () => {
+    // Narrower than "does not contain the text audit_entries" — this
+    // migration's own TSDoc names the table in prose, arguing why no
+    // statement below does, the same way `IdentityFoundation` and
+    // `OrganizationsAndAuthorization` both do. What has to stay true is that
+    // no *statement this migration runs* names it, which is what
+    // `sqlStatements` (comments and TSDoc excluded by construction) reads.
+    // Also stronger than the whole-directory guards this migration is
+    // already covered by (`audit_entries is never given a foreign key`,
+    // `adds no foreign key to audit_entries, in any migration`): those permit
+    // a statement that names `audit_entries` without a `REFERENCES` in the
+    // same statement; this one permits none at all.
+    const statements = sqlStatements(source);
+    expect(statements.length).toBeGreaterThan(0);
+    for (const statement of statements) expect(statement).not.toMatch(/audit_entries/i);
+  });
+
+  it('down() drops the table', () => {
+    const down = source.slice(source.indexOf('public async down('));
+    expect(sqlStatements(down)).toContain('DROP TABLE oauth_authorization_requests');
+  });
+
+  // What this migration cannot honestly assert, and why:
+  //
+  // The `'PASSWORD'` predicate in `the schema migration` above works because
+  // the migration writes a literal that a live enum member
+  // (`AuthProvider.PASSWORD`) can be compared against, so drift between the
+  // two is a red test rather than a silent divergence. This migration writes
+  // no such literal — `purpose` is a plain `text NOT NULL` column, and
+  // neither this file nor a `CHECK` constraint names `'SIGN_IN'`, `'LINK'`,
+  // or any other value the service layer will write. There is therefore
+  // nothing in this migration for a drift check to compare against.
+  //
+  // `oauth.service.ts`, which the task brief names as the other half of that
+  // comparison, does not exist yet at this point in the phase — it is Task
+  // 10's deliverable, sequenced after this one (see the SDD ledger's
+  // dependency table: "10 → 11 | oauth.service.ts created then extended").
+  // Once it exists and writes concrete purpose literals, a test here (or
+  // there) can compare them against whatever this table's read/write sites
+  // agree the values are; there is nothing to pin down before that.
+
+  /**
+   * One column's definition line, bounded to the line rather than to the
+   * table — `columnDefinition` from `the organizations-and-authorization
+   * migration`, duplicated here for the same reason that one gives: each
+   * closes over a different migration's body, and threading the source
+   * through a shared helper is the argument most easily got wrong in exactly
+   * the way this bound exists to prevent.
+   */
+  function columnDefinition(body: string, column: string): string {
+    const line = body
+      .split('\n')
+      .filter((each) => new RegExp(`^\\s*${column}\\s`).test(each))[0];
+    expect(line).toBeDefined();
+    return line ?? '';
+  }
+});
+
 describe('the default privileges grant exactly four privileges', () => {
   const source = migrationSource('AppRoleAndDefaultPrivileges');
 
