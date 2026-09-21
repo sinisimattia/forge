@@ -91,9 +91,27 @@ describe('decideFederatedSignIn', () => {
       outcome: FederatedSignInOutcome.REFUSE_EMAIL_BELONGS_TO_ANOTHER_ACCOUNT,
       existingUserId: OUTSIDER,
     });
-    // Stated as its own assertion because it is the property, not a detail of
-    // the shape: no branch of this function ever answers SIGN_IN_EXISTING for a
-    // subject that is not linked.
+  });
+
+  // The property above the shape: not "this one input refuses", but "no input
+  // shaped like this ever signs in". Kept as its own table-driven case, over a
+  // setup none of the other cases use, so it reds independently of the D11
+  // `toEqual` rather than behind it — a `toEqual` on a specific shape and a
+  // property quantified over several inputs fail for different reasons, and a
+  // suite that only ever exercises the first has not actually tested the
+  // second, however it reads.
+  it.each<[string, Partial<FederatedAccount>, { readonly id: UserId } | null]>([
+    ['a verified address matching an existing account', {}, { id: OUTSIDER }],
+    ['a verified address matching nobody', {}, null],
+    ['an unverified address', { emailVerified: false }, null],
+    ['an absent address', { email: null }, null],
+  ])('never signs in an unlinked subject — %s', (_description, accountOverrides, userWithMatchingEmail) => {
+    const decision = decideFederatedSignIn({
+      account: account(accountOverrides),
+      linkedIdentity: null,
+      userWithMatchingEmail,
+    });
+
     expect(decision.outcome).not.toBe(FederatedSignInOutcome.SIGN_IN_EXISTING);
   });
 
