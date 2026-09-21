@@ -14,5 +14,6 @@ export * from './audit.fetchers';
 export * from './auth.fetchers';
 export * from './authorization.fetchers';
 export * from './identity.fetchers';
+export * from './oauth.fetchers';
 export * from './organization.fetchers';
 export * from './user.fetchers';

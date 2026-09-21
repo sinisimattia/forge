@@ -14,5 +14,6 @@
 export { AuthHttpService } from './auth.service';
 export { AuthorizationHttpService } from './authorization.service';
 export { IdentityHttpService } from './identity.service';
+export { authorizationPathFor, OAuthHttpService } from './oauth.service';
 export { OrganizationHttpService } from './organization.service';
 export { UserHttpService } from './user.service';

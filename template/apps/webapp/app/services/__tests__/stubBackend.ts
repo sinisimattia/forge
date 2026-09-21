@@ -243,6 +243,21 @@ export interface StubBackend {
    * detection is the part of renewal that never gets tested.
    */
   presentRenewalCookie: (value: string | null) => void;
+  /**
+   * Declares which providers this deployment has configured, exactly as
+   * `GET /auth/oauth/providers` answers and `POST /users/me/identities/:provider`
+   * accepts.
+   *
+   * **Empty until a driver calls this**, which is what the real
+   * `OAuthProviderRegistry` answers before any adapter is registered — an
+   * unconfigured provider is absent from the list, never an error (ADR-0008).
+   * A test that wants `listProviders` to answer with something, or `beginLink`
+   * to succeed for a given provider, has to say so explicitly; nothing here
+   * defaults to a populated deployment, because a stub that did would let a
+   * webapp be written against "some provider is always there" and fail only
+   * against a fresh one.
+   */
+  configureOAuthProviders: (providers: readonly AuthProvider[]) => void;
 }
 
 /** The reason phrase the backend's filter derives from a status. */
@@ -336,6 +351,8 @@ export function stubBackend(): StubBackend {
   let cookie: string | null = null;
   /** How many renewals have been asked for. The number a concurrency test counts. */
   let refreshes = 0;
+  /** Which providers this world's `/auth/oauth/providers` answers with. See `configureOAuthProviders`. */
+  let availableProviders: readonly AuthProvider[] = [];
 
   let sequence = 0;
   /** The next id of a kind, in this store's own format. */
@@ -949,6 +966,12 @@ export function stubBackend(): StubBackend {
   const auth = (request: ApiRequest, tail: string, presented: string | null): unknown => {
     const { method } = request;
 
+    // Public, same as the real `OAuthController.providers` — no `actorOf` call,
+    // because there is no session yet for whoever is reading a login page.
+    if (method === 'GET' && tail === '/oauth/providers') {
+      return { providers: [...availableProviders] };
+    }
+
     if (method === 'POST' && tail === '/register') {
       const input = body<{ email: string; displayName: string; secret: string }>(request);
       // The policy judgement is made first and out loud, before the address is
@@ -1191,6 +1214,24 @@ export function stubBackend(): StubBackend {
       return undefined;
     }
 
+    // `POST /users/me/identities/:provider` — begins a link. Already behind
+    // `actorOf(request)` above, exactly like the real route: this whole
+    // controller carries no `@Public()`, unlike `OAuthController`'s sign-in
+    // routes. A provider this world was never told about answers the same
+    // plain 404 the real `OAuthProviderRegistry.find` produces for one this
+    // deployment never registered — no `code`, because the backend's is a
+    // bare `NotFoundException`, not a `DomainError`.
+    if (request.method === 'POST' && unlinking !== null) {
+      const provider = unlinking[1] as AuthProvider;
+      if (!availableProviders.includes(provider)) refuse(404, 'errors.http.not_found');
+      // `actor` is carried on the synthesised URL so a driver can assert
+      // *which* actor the world resolved this request as — the credential
+      // presented, and nothing the caller asserted about itself.
+      const authorizationUrl = `https://stub-oauth.example.test/authorize`
+        + `?provider=${provider}&actor=${String(actor.userId)}&state=${nextId('oauth-state')}`;
+      return { authorizationUrl };
+    }
+
     refuse(405, 'errors.http.bad_request');
   };
 
@@ -1410,6 +1451,10 @@ export function stubBackend(): StubBackend {
 
     presentRenewalCookie(value: string | null): void {
       cookie = value;
+    },
+
+    configureOAuthProviders(providers: readonly AuthProvider[]): void {
+      availableProviders = providers;
     },
   };
 }
