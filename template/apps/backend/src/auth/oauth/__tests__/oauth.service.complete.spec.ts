@@ -515,15 +515,33 @@ describe('OAuthService.complete', () => {
       // belt-and-braces check that the id is not smuggled in anywhere as a
       // string either.
       expect(JSON.stringify(result)).not.toContain(owner);
+    });
 
-      // The audit trail is a different question — it is never returned to
-      // the actor — and it is written against the incumbent, not whoever
-      // attempted the link, the same convention the D11 entry above uses.
+    it('records IDENTITY_LINK_CONFLICT against the attempting actor, not the incumbent', async () => {
+      // Deliberately a DIFFERENT action from D11's FEDERATED_LINK_REFUSED,
+      // and a DIFFERENT actor rule: this request is authenticated, so
+      // whoever made the attempt is already known, and recording the
+      // incumbent instead — the account that did nothing — would be a false
+      // statement in a table nothing is permitted to correct. See
+      // `AuditAction.IDENTITY_LINK_CONFLICT`'s own TSDoc for the full
+      // argument against `FEDERATED_LINK_REFUSED`'s opposite rule.
+      const owner = await seedUser({ email: 'owner@example.test' });
+      await seedIdentity(owner, AuthProvider.GOOGLE, 'shared-subject');
+      const actor = await seedUser({ email: 'actor@example.test' });
+      await seedRow({ purpose: OAuthAuthorizationPurpose.LINK, userId: actor });
+      googleFetchAccount = async () => account({ subject: 'shared-subject' });
+
+      await service.complete('GOOGLE', CODE, STATE, CLIENT);
+
       // (FakeDataSource enforces no unique constraint on auth_identities —
       // see this file's own top-of-file note — so this is only checking what
       // OAuthService itself chose to write, not that a real race could not
       // produce two rows.)
-      expect(auditOf(AuditAction.FEDERATED_LINK_REFUSED)[0].actorUserId).toBe(owner);
+      expect(auditOf(AuditAction.FEDERATED_LINK_REFUSED)).toHaveLength(0);
+      const entries = auditOf(AuditAction.IDENTITY_LINK_CONFLICT);
+      expect(entries).toHaveLength(1);
+      expect(entries[0].actorUserId).toBe(actor);
+      expect(entries[0].actorUserId).not.toBe(owner);
     });
 
     it('treats a subject the actor already holds as done, not as an error', async () => {

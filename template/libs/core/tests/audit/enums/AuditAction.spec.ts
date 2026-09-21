@@ -47,6 +47,7 @@ describe('AuditAction enum values', () => {
     GRANT_REVOKED: 'GRANT_REVOKED',
     IDENTITY_LINKED: 'IDENTITY_LINKED',
     FEDERATED_LINK_REFUSED: 'FEDERATED_LINK_REFUSED',
+    IDENTITY_LINK_CONFLICT: 'IDENTITY_LINK_CONFLICT',
   };
 
   it('every member has the expected string value', () => {

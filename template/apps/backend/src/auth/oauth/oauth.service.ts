@@ -552,6 +552,17 @@ export class OAuthService {
    * local part is at least a value the account's own owner chose, unlike an
    * invented placeholder every provisioned-with-no-name account would
    * otherwise share.
+   *
+   * **A display convenience only, carrying no identity meaning.** `email`
+   * here is always the address `decideFederatedSignIn`'s `PROVISION_NEW`
+   * has already established as verified — `REFUSE_UNVERIFIED_EMAIL` refuses
+   * an absent or unverified one before this function is ever reached — but
+   * what THIS function returns is not itself a verified fact about anybody:
+   * it is a string derived from one, shown back to the account's own owner
+   * and nobody else. Nothing may ever compare against it, look an account up
+   * by it, or treat it as though a provider had asserted it — that would be
+   * mistaking a cosmetic default for a fact this function was never in a
+   * position to establish.
    */
   private static resolveDisplayName(displayName: string | null, email: string): string {
     const trimmed = displayName?.trim() ?? '';
@@ -604,37 +615,30 @@ export class OAuthService {
         // would record a link that did not happen, a second time.
         return { status: 'LINKED', redirectTo: row.redirectTo };
 
-      case FederatedLinkOutcome.LINKED_TO_ANOTHER_ACCOUNT: {
+      case FederatedLinkOutcome.LINKED_TO_ANOTHER_ACCOUNT:
         // Refused without saying whose account it is — `decision` itself
         // carries no id, for exactly that reason (see
         // `FederatedLinkDecision`'s own TSDoc), and neither `code` nor
         // `redirectTo` below can leak one either.
         //
-        // The audit entry is different: it is never returned to the actor,
-        // so it is written against the account that already held the
-        // subject — the incumbent, never whoever attempted the link — the
-        // same actor convention this action's other call site (D11, above)
-        // uses. Here, unlike there, the attempt itself DOES have a known
-        // actor (an authenticated session made it); it is deliberately not
-        // what this entry's `actorId` names, so that a reader of this table
-        // can read `actorId` on any `FEDERATED_LINK_REFUSED` entry as "who
-        // already held it" without first having to know which call site
-        // wrote it.
-        if (linkedIdentity === null) {
-          // Unreachable: `decideFederatedLink` reaches this outcome only
-          // when `input.linkedIdentity` is not null. Narrowed explicitly
-          // rather than cast, so a change that ever broke that correlation
-          // fails loudly here instead of silently trusting a cast.
-          throw new Error('OAuthService: LINKED_TO_ANOTHER_ACCOUNT with no linked identity');
-        }
+        // The audit entry is `IDENTITY_LINK_CONFLICT`, not
+        // `FEDERATED_LINK_REFUSED` — a deliberately different action from
+        // D11's, above, because the actor rule has to be the opposite one.
+        // D11 arrives unauthenticated, so nothing is known about whoever
+        // made the attempt and the incumbent is the only honest actor to
+        // record. This request is authenticated: `actorId` IS who made the
+        // attempt, established before this flow ever began, and recording
+        // the incumbent here instead would misattribute the attempt to an
+        // account that did nothing. See `AuditAction.IDENTITY_LINK_CONFLICT`'s
+        // own TSDoc for the full argument — it is the useful part of having
+        // two actions rather than one with two incompatible actor rules.
         await this.record(
-          AuditAction.FEDERATED_LINK_REFUSED,
-          linkedIdentity.userId,
+          AuditAction.IDENTITY_LINK_CONFLICT,
+          actorId,
           { provider },
           now,
         );
         return { status: 'REFUSED', code: 'IDENTITY_ALREADY_LINKED', redirectTo: row.redirectTo };
-      }
 
       default:
         return assertNever(decision);

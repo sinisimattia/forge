@@ -71,4 +71,25 @@ export enum AuditAction {
    * attempt, which is the point.
    */
   FEDERATED_LINK_REFUSED = 'FEDERATED_LINK_REFUSED',
+  /**
+   * An authenticated actor tried to link a federated subject another account
+   * already holds.
+   *
+   * **The actor rule is the opposite of {@link AuditAction.FEDERATED_LINK_REFUSED}'s,
+   * and the reason is the difference between the two situations, not a
+   * stylistic choice.** `FEDERATED_LINK_REFUSED` records the incumbent
+   * because a sign-in attempt arrives unauthenticated — nothing has been
+   * established about whoever made it, so naming the account that already
+   * existed is the only honest entry available. Here the opposite is true:
+   * the actor is authenticated before this flow ever begins — proving who
+   * they are is the entire reason a link flow exists rather than a second
+   * sign-in — so everything is established about them, and recording the
+   * incumbent instead would attribute the attempt to an account that did
+   * nothing while losing the identity of the account that made it. That is
+   * not merely less useful; it is a false statement in a table nothing is
+   * permitted to correct, of exactly the kind a reader investigating "who
+   * tried to claim this identity" would be misled by. The actor recorded
+   * here is the one making the attempt, never the incumbent.
+   */
+  IDENTITY_LINK_CONFLICT = 'IDENTITY_LINK_CONFLICT',
 }
