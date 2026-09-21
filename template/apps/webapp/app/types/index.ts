@@ -2,7 +2,7 @@
 // entry point stable means a type can move between files here without touching a consumer.
 export type { IconName } from './ui';
 export type { OwnSession } from './account';
-export { API_ERROR_CODES } from './api';
+export { API_ERROR_CODES, FEDERATED_REFUSAL_CODES } from './api';
 export type {
   ApiClient,
   ApiErrorBody,
@@ -11,6 +11,7 @@ export type {
   ApiErrorViolation,
   ApiRequest,
   AuthResponseBody,
+  FederatedRefusalCode,
   HttpMethod,
   IssuedCredential,
   PrincipalResponseBody,

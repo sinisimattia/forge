@@ -113,6 +113,50 @@ export const API_ERROR_CODES = [
 /** One of the names {@link API_ERROR_CODES} lists. */
 export type ApiErrorCode = typeof API_ERROR_CODES[number];
 
+/**
+ * A machine-readable name for why a federated sign-in or link was refused.
+ *
+ * **A second hand-maintained snapshot, of a second table — not the same one
+ * {@link API_ERROR_CODES} mirrors.** These seven never pass through
+ * `HttpExceptionFilter` and never carry a `code` in a JSON body: they travel as
+ * the `?error=` query parameter on the `302` `OAuthController.callback` sends
+ * the browser back with, minted from the backend's own
+ * `FederatedRefusalCode` (`apps/backend/src/auth/oauth/oauth.service.ts`). That
+ * type's own TSDoc states the reason none of it may be a provider's error text:
+ * it is attacker-influenced, and this application would be the one rendering it.
+ *
+ * Sorted with **`localeCompare`**, the same comparator {@link API_ERROR_CODES}
+ * is sorted with and for the same reason: Phase 3's triage item 2 was this exact
+ * list — the webapp's copy sorted with a bare `.sort()`, which agrees with
+ * `localeCompare` on most pairs and not on every one, so the check that was
+ * supposed to keep the two eyeball-comparable passed while comparing an
+ * out-of-order copy to itself. `types/__tests__/federated-refusal-code.spec.ts`
+ * pins both the literal and the comparator; read its own comment for what it
+ * found when it went looking for a discriminating pair in this particular
+ * seven — there is not one, which is itself worth knowing before trusting a
+ * green run here more than it can support.
+ *
+ * No backend list is derived and exported for this one the way
+ * `DOMAIN_ERROR_CODES` is: these codes are minted directly in
+ * `OAuthController`, never routed through the exception filter's table, so
+ * there is nothing on that side to pin against beyond the union's own literal.
+ * The same completeness caveat `API_ERROR_CODES` states for itself therefore
+ * applies here too, unweakened: an eighth code the backend starts minting and
+ * this file never learns about is a silent gap, not a red test.
+ */
+export const FEDERATED_REFUSAL_CODES = [
+  'ACCOUNT_UNAVAILABLE',
+  'AUTHORIZATION_EXPIRED',
+  'AUTHORIZATION_UNKNOWN',
+  'EMAIL_ALREADY_REGISTERED',
+  'EMAIL_UNVERIFIED',
+  'IDENTITY_ALREADY_LINKED',
+  'PROVIDER_UNAVAILABLE',
+] as const;
+
+/** One of the names {@link FEDERATED_REFUSAL_CODES} lists. */
+export type FederatedRefusalCode = typeof FEDERATED_REFUSAL_CODES[number];
+
 /** One field-level complaint about a request body. */
 export interface ApiErrorDetail {
   /** The offending field, dotted for a nested one. */

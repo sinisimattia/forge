@@ -8,9 +8,11 @@ import { ApiError } from '~/fetchers';
 import type { StubBackend } from '~/services/__tests__/stubBackend';
 import { stubBackend } from '~/services/__tests__/stubBackend';
 import { useAuthStore } from '~/stores/auth';
+import { FEDERATED_REFUSAL_CODES } from '~/types';
 import type { ApiClient, ApiErrorCode, ApiRequest } from '~/types';
 import ForgotPasswordPage from '../forgot-password.vue';
 import LoginPage from '../login.vue';
+import OAuthCallbackPage from '../oauth/callback.vue';
 import ResetPasswordPage from '../reset-password.vue';
 import VerifyEmailPage from '../verify-email.vue';
 
@@ -47,6 +49,17 @@ const ACTOR: UserJSON = {
 
 /** Something the world will never answer to. Its shape is irrelevant; it is not real. */
 const LINK_VALUE = 'stub-verification-fixture';
+
+/**
+ * What a forged or stale `token`/`accessToken` query parameter looks like: real
+ * shapes, naming nothing the world holds. Named bindings rather than literals at
+ * their use site, for the reason the seam spec gives — the extraction gate
+ * strips interpolations from a template literal before judging the remainder,
+ * and a short quoted remainder under a secret-shaped key reads as a populated
+ * credential.
+ */
+const FORGED_CREDENTIAL = 'not-a-real-credential';
+const FORGED_ACCESS_CREDENTIAL = 'also-not-a-real-credential';
 
 describe('the pages a signed-out visitor meets', () => {
   let backend: StubBackend;
@@ -302,6 +315,150 @@ describe('the pages a signed-out visitor meets', () => {
       await flushPromises();
 
       expect(navigations).toEqual([]);
+    });
+  });
+
+  describe('oauth/callback', () => {
+    /**
+     * Leaves a real, valid renewal cookie sitting in `backend`'s own world — the
+     * same thing `OAuthController.callback` leaves behind before it redirects
+     * here — without leaving the *store under test* already signed in.
+     *
+     * A throwaway store does the signing in and is then discarded; a fresh
+     * `Pinia` (and therefore a fresh `useAuthStore()`) is what the page under
+     * test actually sees. That split is not test plumbing invented for this
+     * file — it is production's own shape: the cookie in the world and the
+     * store that has never asked about it are exactly what a browser holds the
+     * instant it lands on this page, `accessToken` having never been part of
+     * anything that travelled (see `stores/auth.ts` → `heldCredential`). Reusing
+     * the *same* store for both halves would leave it already `authenticated`
+     * before the page ever mounted, and every assertion below would pass for a
+     * page that renews nothing at all.
+     */
+    async function presentAValidRenewalCookie(): Promise<void> {
+      const bootstrap = useAuthStore();
+      bootstrap.adoptTransport(backend.client);
+      await bootstrap.login(ACTOR.email, PLAINTEXT);
+
+      setActivePinia(createPinia());
+      useAuthStore().adoptTransport(backend.client);
+    }
+
+    it('renews through the store — not a URL credential — then goes where redirectTo said', async () => {
+      await presentAValidRenewalCookie();
+      route.query = { redirectTo: '/account/sessions' };
+
+      mount(OAuthCallbackPage, { global: mountOptions() });
+      await flushPromises();
+
+      expect(navigations).toEqual(['/account/sessions']);
+      expect(useAuthStore().isAuthenticated).toBe(true);
+    });
+
+    it('goes to / when nothing named a place to go back to', async () => {
+      await presentAValidRenewalCookie();
+      route.query = {};
+
+      mount(OAuthCallbackPage, { global: mountOptions() });
+      await flushPromises();
+
+      expect(navigations).toEqual(['/']);
+    });
+
+    it('does NOT go where a protocol-relative redirectTo asked', async () => {
+      // The same open-redirect shape `login.vue`'s own `redirect` is guarded
+      // against, on the query name this page reads instead.
+      await presentAValidRenewalCookie();
+      route.query = { redirectTo: '//elsewhere.example/x' };
+
+      mount(OAuthCallbackPage, { global: mountOptions() });
+      await flushPromises();
+
+      expect(navigations).toEqual(['/']);
+    });
+
+    it('ignores a token in the query string, and does NOT sign in from it alone', async () => {
+      // No cookie was ever presented to this world — nothing seeded it, unlike
+      // every test above. This is what a forged or stale link looks like: real
+      // shaped values, naming nothing real. A page that read `token` or
+      // `accessToken` off the query string and trusted it would sign in here
+      // regardless of the world; this is the assertion that it does not.
+      route.query = {
+        token: FORGED_CREDENTIAL,
+        accessToken: FORGED_ACCESS_CREDENTIAL,
+        redirectTo: '/account/sessions',
+      };
+
+      const wrapper = mount(OAuthCallbackPage, { global: mountOptions() });
+      await flushPromises();
+
+      expect(navigations).toEqual([]);
+      expect(useAuthStore().isAuthenticated).toBe(false);
+      expect(useAuthStore().accessToken).toBeNull();
+      expect(wrapper.text()).toContain('auth.oauthCallback.failed');
+    });
+
+    it('does NOT attempt a renewal at all once the backend already refused', async () => {
+      const seen: string[] = [];
+      useAuthStore().adoptTransport(<T>(request: ApiRequest): Promise<T> => {
+        seen.push(request.path);
+        return backend.client<T>(request);
+      });
+      route.query = { error: 'PROVIDER_UNAVAILABLE' };
+
+      mount(OAuthCallbackPage, { global: mountOptions() });
+      await flushPromises();
+
+      expect(seen).toEqual([]);
+      expect(navigations).toEqual([]);
+    });
+
+    it('carries the remedy for an address that already belongs to an account — the human half of D11', async () => {
+      route.query = { error: 'EMAIL_ALREADY_REGISTERED' };
+
+      const wrapper = mount(OAuthCallbackPage, { global: mountOptions() });
+      await flushPromises();
+
+      expect(navigations).toEqual([]);
+      expect(wrapper.text()).toContain('auth.oauthCallback.errors.EMAIL_ALREADY_REGISTERED');
+    });
+
+    it('gives every one of the seven refusal codes its own message', async () => {
+      const seen = new Map<string, string>();
+      for (const code of FEDERATED_REFUSAL_CODES) {
+        route.query = { error: code };
+        const wrapper = mount(OAuthCallbackPage, { global: mountOptions() });
+        await flushPromises();
+        seen.set(code, wrapper.text());
+      }
+
+      expect(seen.size).toBe(FEDERATED_REFUSAL_CODES.length);
+      // Distinct precisely because each names its own translation key — a
+      // shared fallback for two of the seven would collapse this to fewer
+      // than seven distinct strings.
+      expect(new Set(seen.values()).size).toBe(FEDERATED_REFUSAL_CODES.length);
+    });
+
+    it('falls back to a real message for a code it has never heard of — never the raw code, never blank', async () => {
+      route.query = { error: 'SOMETHING_A_LATER_BACKEND_INVENTED' };
+
+      const wrapper = mount(OAuthCallbackPage, { global: mountOptions() });
+      await flushPromises();
+
+      expect(wrapper.text()).not.toContain('SOMETHING_A_LATER_BACKEND_INVENTED');
+      expect(wrapper.text()).toContain('auth.oauthCallback.failed');
+    });
+
+    it('shows a generic failure, not a specific code, when the renewal itself simply fails', async () => {
+      // No `error` on the query at all, and nothing seeded in the world to renew
+      // — what a direct hit on this path, or a lapsed cookie, looks like.
+      route.query = {};
+
+      const wrapper = mount(OAuthCallbackPage, { global: mountOptions() });
+      await flushPromises();
+
+      expect(navigations).toEqual([]);
+      expect(wrapper.text()).toContain('auth.oauthCallback.failed');
     });
   });
 });

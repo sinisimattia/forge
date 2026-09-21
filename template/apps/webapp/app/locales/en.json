@@ -91,6 +91,19 @@
       "failed": "We could not set your password just now. Please try again.",
       "endsEverySession": "Setting a new password signs you out everywhere, including any device you left signed in.",
       "done": "Your password is set, and every session has ended. Sign in again to continue."
+    },
+    "oauthCallback": {
+      "title": "Signing you in",
+      "failed": "We could not complete that sign-in just now. Please try again.",
+      "errors": {
+        "AUTHORIZATION_EXPIRED": "That sign-in attempt took too long and has expired. Please start again.",
+        "AUTHORIZATION_UNKNOWN": "We could not recognise that sign-in attempt. Please start again.",
+        "PROVIDER_UNAVAILABLE": "We could not reach that sign-in provider just now. Please try again.",
+        "EMAIL_UNVERIFIED": "That provider has not confirmed the address it gave us. Confirm it with the provider, then try again.",
+        "EMAIL_ALREADY_REGISTERED": "An account already exists for that address. Sign in the way you already do, then link this provider from your account settings.",
+        "IDENTITY_ALREADY_LINKED": "That sign-in is already linked to a different account.",
+        "ACCOUNT_UNAVAILABLE": "That account cannot sign in right now."
+      }
     }
   },
   "account": {
