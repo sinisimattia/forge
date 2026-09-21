@@ -202,10 +202,10 @@ export class GitHubOAuthProvider implements IOAuthProvider {
 
   /**
    * @returns the account's verified primary address, or `{ email: null,
-   *   emailVerified: false }` when none qualifies — including when the scope
-   *   granted at authorization did not include `user:email` at all, which is
-   *   a legitimate answer, not a fault: this must not throw and must not
-   *   guess at an address to report instead.
+   *   emailVerified: false }` when none qualifies — including when the token
+   *   cannot see addresses at all, which is a legitimate answer, not a
+   *   fault: this must not throw and must not guess at an address to report
+   *   instead.
    *
    * **Only the entry with `primary: true` is ever considered, and only when
    * that same entry also carries `verified: true`.** A primary address GitHub
@@ -215,6 +215,33 @@ export class GitHubOAuthProvider implements IOAuthProvider {
    * reporting a different one changes which account a later sign-in or link
    * attempt would match, invisibly to everyone involved. This is the single
    * most important piece of logic in this adapter.
+   *
+   * **`403` and `404` from this endpoint mean "this token cannot see
+   * addresses", not "this request failed", and resolve to no address rather
+   * than throwing.** This is not the shape a first read of `authorizationUrl`
+   * suggests: that method already asks for `user:email`, so in the ordinary
+   * case a token this adapter minted always carries it. But `authorizationUrl`
+   * only controls what *this deployment* requested — it does not control what
+   * GitHub, or an organisation's own OAuth-app policy, later leaves the token
+   * able to see, and GitHub answers a token that cannot see addresses with a
+   * `403` here (`404` is the same signal on some API versions), never a `200`
+   * with an empty list. Throwing on that response would cost more than a
+   * failed address lookup: `decideFederatedSignIn`'s first branch signs in an
+   * already-linked subject unconditionally, before any address is examined,
+   * specifically so a provider that stops disclosing an address cannot lock
+   * somebody out of an account they already hold. A throw here reaches
+   * `fetchAccount` before that branch ever runs, so every existing GitHub user
+   * of a deployment whose token loses `user:email` scope — an organisation
+   * policy change is enough — would stop being able to sign in at all, not
+   * merely fail to link a new one. Reporting no address instead lets an
+   * already-linked subject keep signing in exactly as it should, while a
+   * brand-new subject reaches the correct, legible `REFUSE_UNVERIFIED_EMAIL`
+   * outcome rather than an opaque failure.
+   *
+   * **Every other non-2xx still throws.** `401` means the access token itself
+   * is invalid — not a scope question — and a `5xx` is a real endpoint
+   * failure; treating either as "no address" would hide a fault this adapter
+   * should surface.
    */
   private async fetchPrimaryEmail(accessToken: string): Promise<PrimaryEmail> {
     const response = await this.http(EMAILS_ENDPOINT, {
@@ -225,6 +252,9 @@ export class GitHubOAuthProvider implements IOAuthProvider {
     });
 
     if (!response.ok) {
+      if (response.status === 403 || response.status === 404) {
+        return { email: null, emailVerified: false };
+      }
       throw new Error(`${AuthProvider.GITHUB}: emails endpoint answered ${response.status}.`);
     }
 

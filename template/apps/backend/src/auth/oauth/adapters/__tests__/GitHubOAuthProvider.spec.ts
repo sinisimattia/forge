@@ -85,6 +85,18 @@ describe('GitHubOAuthProvider', () => {
       expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     });
 
+    it('requests the user:email scope, so an under-scoped token is GitHub\'s or an organisation\'s doing, not this adapter\'s', async () => {
+      const adapter = adapterWith(stubHttp({}));
+
+      const url = new URL(await adapter.authorizationUrl({
+        state: 's', codeChallenge: 'c', redirectUri: 'https://app.example.test/cb',
+      }));
+
+      const scope = url.searchParams.get('scope');
+      expect(scope).toContain('user:email');
+      expect(scope).toContain('read:user');
+    });
+
     it('never carries the client secret', async () => {
       const adapter = adapterWith(stubHttp({}));
 
@@ -282,10 +294,42 @@ describe('GitHubOAuthProvider', () => {
       await expect(adapter.fetchAccount(EXCHANGE_PARAMS)).rejects.toThrow(/403/);
     });
 
-    it('throws when the emails endpoint answers a non-2xx', async () => {
-      const adapter = adapterWith(stubHttp({ emailsStatus: 403 }));
+    it('treats a 403 from the emails endpoint as no address, not a failure', async () => {
+      // This is the shape a token that cannot see addresses actually takes on
+      // GitHub — an under-scoped token gets 403 here, never a 200 with an
+      // empty list. Throwing on it would cost more than a failed address
+      // lookup: decideFederatedSignIn's first branch signs in an
+      // already-linked subject unconditionally, before any address is
+      // examined, precisely so a provider that stops disclosing an address
+      // cannot lock somebody out of an account they already hold. A throw
+      // here would defeat that for every existing GitHub user of a
+      // deployment whose token loses user:email scope.
+      const adapter = adapterWith(stubHttp({ emailsStatus: 403, emailsBody: {} }));
 
-      await expect(adapter.fetchAccount(EXCHANGE_PARAMS)).rejects.toThrow(/403/);
+      await expect(adapter.fetchAccount(EXCHANGE_PARAMS)).resolves.toMatchObject({
+        email: null, emailVerified: false,
+      });
+    });
+
+    it('treats a 404 from the emails endpoint as no address, not a failure', async () => {
+      // The same signal as 403, observed on some API versions/deployments.
+      const adapter = adapterWith(stubHttp({ emailsStatus: 404, emailsBody: {} }));
+
+      await expect(adapter.fetchAccount(EXCHANGE_PARAMS)).resolves.toMatchObject({
+        email: null, emailVerified: false,
+      });
+    });
+
+    it('still throws when the emails endpoint answers 401 — the token itself is bad, not merely scope-limited', async () => {
+      const adapter = adapterWith(stubHttp({ emailsStatus: 401, emailsBody: {} }));
+
+      await expect(adapter.fetchAccount(EXCHANGE_PARAMS)).rejects.toThrow(/401/);
+    });
+
+    it('still throws when the emails endpoint answers a 5xx — a real provider failure, not a scope question', async () => {
+      const adapter = adapterWith(stubHttp({ emailsStatus: 500, emailsBody: {} }));
+
+      await expect(adapter.fetchAccount(EXCHANGE_PARAMS)).rejects.toThrow(/500/);
     });
 
     it('throws when the user endpoint response carries no id', async () => {
