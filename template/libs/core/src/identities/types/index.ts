@@ -1,5 +1,10 @@
 export type { AuthIdentityId } from './AuthIdentityId';
 export type { AuthIdentityJSON } from './AuthIdentityJSON';
 export type { AuthIdentityProps } from './AuthIdentityProps';
+export type { FederatedAccount } from './FederatedAccount';
+export type { FederatedLinkDecision } from './FederatedLinkDecision';
+export type { FederatedLinkInput } from './FederatedLinkInput';
+export type { FederatedSignInDecision } from './FederatedSignInDecision';
+export type { FederatedSignInInput } from './FederatedSignInInput';
 export type { PasswordPolicy } from './PasswordPolicy';
 export type { PasswordPolicyViolation } from './PasswordPolicyViolation';
