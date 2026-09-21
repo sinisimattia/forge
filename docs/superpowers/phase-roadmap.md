@@ -110,18 +110,17 @@ Phase 3's own discoveries. Each cost at least a fix round; the evidence is in
 `phase-3-decision-log.md`, and **its opening five are the ones to read before touching
 authorization or the migration guards.**
 
-- **Give Storybook a gate before adding another story to it — nothing has ever compiled the
-  ones that exist.** `storybook` in `ci.yml` is PR-only *and* `continue-on-error: true` *and*
-  fails on every single run, before it reaches story content (`✓ 0 modules transformed`, then
-  a `moduleType` error unrelated to what any story says). Those three facts stack: no commit
-  in this phase has had a passing Storybook build, so no commit has had its story files
-  actually transformed by any gate, on a PR or on push. Phase 3 shipped four
-  (`GrantList`, `InvitationList`, `MemberList`, `OrganizationSwitcher.stories.ts`) on that
-  basis — this is not a hypothetical risk, it is the exact position Phase 4's own stories will
-  ship from until the `moduleType` failure is root-caused and `continue-on-error` comes off.
-  Root-cause it, or at minimum add a cheaper gate this phase did not have — a `vue-tsc`/lint
-  pass over `stories/**` that does not depend on the Storybook build succeeding — before
-  trusting a fifth story to have been checked by anything.
+- **~~Give Storybook a gate before adding another story to it — nothing has ever compiled the
+  ones that exist.~~ Done, Phase 4 Task 1 (2026-09-21).** The failure was a Vite major-version
+  split inside one build: Nuxt 4.5 contributes a Rolldown-native plugin that Storybook's
+  Rollup-based Vite 7 build cannot call, and it threw on the entry HTML before any module was
+  transformed — which is why the error named `vite:build-html` and nothing that was actually
+  involved. Two further faults sat behind it. The job now runs on push and PR and blocks; the
+  write-up is beside it in `.github/workflows/ci.yml`. **What carries forward: `storybook
+  build` exits 0 over an empty module graph, so this gate is worth exactly what its `stories`
+  glob is worth.** `apps/webapp/app/test/storybook-config.spec.ts` guards that in the fast
+  tier. A green tick is not on its own evidence that any story was compiled — check the
+  module count.
 - **A green fast tier says nothing about whether the application boots.** Phase 3's own
   instance: a guard is instantiated in the module context of the controller that names it, so
   a module hosting a guarded controller must register every repository that guard injects.
@@ -189,25 +188,27 @@ give you it, and any `nx`/`npm` command run by hand here runs on 26. That is a g
 gate's mismatch warning fired correctly every time a by-hand run diverged, which is the guard
 working, on the narrower gap it actually covers.
 
-**2. Storybook's build failure is still un-root-caused, and the job stays PR-only on
-purpose.** `✓ 0 modules transformed`, then `[vite:build-html] Missing field 'moduleType'`,
-reproduced again on 2026-09-20 against a freshly generated project installed with `npm ci`
-against the lockfile that pins the combination once believed to be the fix. It did **not**
-move to push with `generated-project` and `docker`, and the reasoning is the reverse of the one
-that moved them: those moved because a gate that does not run on `main` protects nothing, while
-this one protects nothing either way — it is `continue-on-error: true` and it fails every time.
-**The consequence, stated plainly: nothing compiles the story files.** PR-only decides *when*
-the job runs; `continue-on-error: true` plus a build that fails before it reaches story
-content decides *whether it has ever verified anything*, and the answer is no. Phase 3 shipped
-four story files (`GrantList`, `InvitationList`, `MemberList`,
-`OrganizationSwitcher.stories.ts`) that no gate has ever executed. See "What Phase 4 must not
-get wrong" above — this is that section's first item, not a triage-table line, because the
-next story shipped under the same conditions is unverified the same way.
-Running it on every push would buy zero protection and train people to read a yellow CI page as
-normal, at which point the next failure in a job that *does* block is one more yellow mark among
-the yellow marks. **The exit condition is recorded in `.github/workflows/ci.yml` beside the job,
-not in anyone's memory: when the `moduleType` failure is root-caused, it flips twice in one
-commit — `continue-on-error` comes off and `if:` becomes `github.event_name != 'schedule'`.**
+**2. Storybook's build failure is root-caused and the job now blocks, as of Phase 4 Task 1
+(2026-09-21).** It was `✓ 0 modules transformed`, then `[vite:build-html] Missing field
+'moduleType'` — and neither half of that named anything that was wrong. Nuxt 4.5's
+`@nuxt/vite-builder` contributes a `nuxt:replace` plugin that is Rolldown-native (Nuxt 4.5
+builds on Vite 8), while `@storybook/builder-vite@9` builds with Vite 7 / Rollup, which calls
+it with an argument shape the native binding rejects. It threw on `iframe.html`, the first
+module in the graph, so nothing downstream ever ran and the plugin named in the error was
+merely the one holding that file's transform chain. Behind it sat two more faults, invisible
+until the build got far enough to reach them: `.storybook/preview.ts` imported a stylesheet
+this template has never had, and the stories' `libs/core` imports could not be bundled out of
+core's CommonJS `dist/`. The job is now `github.event_name != 'schedule'` with no
+`continue-on-error`, and the four Phase 3 stories have been compiled for the first time.
+
+**The part worth remembering is not the fix.** For the whole time this job was red it was
+*also* verifying nothing, and those are two independent facts — had the `moduleType` error not
+happened to be fatal, the identical job would have gone green having transformed zero modules,
+and the yellow mark that made someone look would never have appeared. A failed run even leaves
+a `storybook-static/` directory behind. The exit code was never the evidence here; the module
+count is. `apps/webapp/app/test/storybook-config.spec.ts` asserts in the fast tier that the
+`stories` glob still matches real files, because that assumption is the one this job cannot
+check about itself.
 
 ## Triage: thirteen minors deferred from Phase 3
 

@@ -227,16 +227,14 @@ token substitution.
   and the one that catches an extraction mistake), then `npm test`.
 - **generated-project** — every push and PR: generate a real project and run its own gates
   (`npm run test:integration`).
-- **storybook** — PR-only, and currently **non-blocking** (`continue-on-error: true`):
-  builds the template's Storybook (`nx run webapp:build-storybook`, a target `nx run-many
-  -t build` never invokes on its own, so it needs its own step to be exercised at all). It
-  is not yet a hard gate because it currently fails for a known, pre-existing reason — see
-  "Known limitations" below. It is also the one slow tier deliberately **not** extended to
-  push: it is non-blocking and known-red, so running it on every push would buy no
-  protection and would spend every push producing an expected yellow annotation — which is
-  how a team learns to read a non-green CI page as normal. When the failure is root-caused,
-  it flips twice in one commit: `continue-on-error` off, and `if:` to match the two tiers
-  around it.
+- **storybook** — every push and PR, and blocking: builds the template's Storybook (`nx run
+  webapp:build-storybook`, a target `nx run-many -t build` never invokes on its own, so it
+  needs its own step to be exercised at all). This is the only thing that compiles the story
+  files. It was non-blocking and known-red from the day it was added until 2026-09-21; the
+  cause is written up in the job's comment in `.github/workflows/ci.yml`. Note that
+  `storybook build` exits 0 over an empty module graph, so a green tick here is only worth
+  what the `stories` glob is worth — `apps/webapp/app/test/storybook-config.spec.ts` asserts
+  in the fast tier that the glob still matches real files.
 - **docker** — every push and PR, and the slowest: `npm run test:integration` with
   `FORGE_E2E=1`, which boots the generated stack for real and asserts `/health` returns
   `{"status":"ok"}`.
@@ -268,25 +266,6 @@ install.
   reference in that file would ship silently today. Validating it would need a YAML parser,
   which conflicts with the zero-dependency constraint (`docs/adrs/0002-dependency-free-generator.md`)
   — this is accepted as a known gap rather than an oversight.
-- **The template's Storybook build fails on a freshly generated project, for a reason that
-  is still unknown.** `template/package-lock.json` pins the whole workspace (root,
-  `libs/core`, `apps/backend`, `apps/webapp`), and a generated project installs against it
-  with `npm ci` — this fixed the general reproducibility problem the template used to have
-  (two builds a week apart no longer resolve different dependency trees), and it fixed
-  `npm ci` inside the Dockerfiles, which previously needed a host `npm install` first just
-  to produce a lockfile for `COPY package-lock.json` to find.
-  It did **not** fix Storybook. The lockfile pins the exact combination once believed to be
-  the cause (`@storybook/builder-vite@9.1.2`, `@storybook/vue3-vite@9.1.2`,
-  `@rolldown/pluginutils@1.0.1` — all three re-checked against the current lockfile), and
-  `npx nx run webapp:build-storybook` still fails identically on a generated project:
-  `✓ 0 modules transformed`, then `[vite:build-html] Missing field 'moduleType'` while
-  building `iframe.html`. That disproves the dependency-drift hypothesis this project
-  previously recorded (see `docs/superpowers/phase-1-decision-log.md`) — the exact same
-  resolved versions still fail, lockfile or not. Note that a `storybook-static/` directory
-  is produced even by the failed run, so its existence is not evidence of a successful
-  build. The `storybook` CI job stays `continue-on-error: true` (non-blocking) pending real
-  root-causing of this failure. Do not re-attribute it to "no lockfile" without re-testing
-  — that specific fix has been tried and did not work.
 - **No drift/update tooling.** A generated project's `forge.json` records the Forge commit
   it was generated from, so re-syncing against a newer template stays *possible*, but no
   tooling to do it exists yet (`docs/adrs/0003-extraction-is-copy-out-only.md`).

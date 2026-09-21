@@ -10,11 +10,12 @@ name: CI
 #                         once for the inventory suite. It installs with `npm ci` so the
 #                         committed lockfile is exercised by the same command Docker and
 #                         dev:up use.
-#   - storybook:          PR-only, non-blocking. `build-storybook` is a separate nx target
-#                         that `nx run-many -t build` never invokes; this job is the only
-#                         thing that exercises it. See its own comment below for why it
-#                         currently fails, why it doesn't block the PR, and why — alone
-#                         among the slow tiers — it is deliberately NOT run on push.
+#   - storybook:          push AND PR, and blocking. `build-storybook` is a separate nx
+#                         target that `nx run-many -t build` never invokes; this job is the
+#                         only thing that compiles the story files at all. It was
+#                         non-blocking and known-red until 2026-09-21 — see its own comment
+#                         below for what was actually wrong, and for why a green tick here
+#                         means nothing without the glob assertion that backs it.
 #   - docker:             push AND PR, and the slowest. Boots the generated stack for real
 #                         and checks `/health`.
 #
@@ -95,66 +96,58 @@ jobs:
           node-version: 22
       - run: npm run test:integration
 
-  # PR-tier. `build-storybook` is a separate nx target that `nx run-many -t build` never
-  # invokes, so a broken story would otherwise pass every check — this job is the only
-  # thing that exercises it.
+  # Push AND PR, and blocking. `build-storybook` is a separate nx target that `nx run-many
+  # -t build` never invokes, so a broken story would otherwise pass every check — this job is
+  # the only thing that compiles the story files at all.
   #
-  # NON-BLOCKING for now, and NOT because of a missing lockfile: `template/package-lock.json`
-  # was added and pins the exact combination once believed to be the fix
-  # (@storybook/builder-vite@9.1.2, @storybook/vue3-vite@9.1.2, @rolldown/pluginutils@1.0.1
-  # — all three re-checked against the current lockfile on 2026-09-20). Installing with
-  # `npm ci` against that lockfile still produces the identical failure, reproduced again on
-  # 2026-09-20 against a freshly generated project: `✓ 0 modules transformed`, then
-  # `[vite:build-html] Missing field 'moduleType'` while building iframe.html — unrelated to
-  # story content. Note the run still leaves a `storybook-static/` directory behind, so its
-  # existence is not evidence the build worked. That disproves the earlier
-  # dependency-drift hypothesis recorded in docs/superpowers/phase-1-decision-log.md: the
-  # exact same resolved versions fail with or without the lockfile. Root cause is unknown.
-  # Leave this non-blocking until it is actually root-caused — do not flip
-  # `continue-on-error` off just because a lockfile now exists, and do not re-attribute the
-  # failure to "no lockfile" again without re-testing. See the README's "Known limitations".
+  # ## It was non-blocking and known-red until 2026-09-21, and this is what was wrong
   #
-  # ## Why this one job stayed PR-only when `generated-project` and `docker` moved to push
+  # The failure was always `✓ 0 modules transformed` followed by `[vite:build-html] Missing
+  # field 'moduleType'`, and every word of that is a false lead. `vite:build-html` is not at
+  # fault; it is merely the plugin that owned the transform chain for `iframe.html`, which is
+  # the first module in the graph. The real cause is a Vite major-version split inside one
+  # build: Nuxt 4.5's `@nuxt/vite-builder` contributes a `nuxt:replace` plugin that is a
+  # *Rolldown-native* plugin (Nuxt 4.5 builds on Vite 8 / Rolldown), while Storybook builds
+  # with `@storybook/builder-vite@9`, which is Vite 7 / Rollup. Rollup calls that native
+  # plugin's `transform` with Rollup's argument shape and the NAPI binding rejects it over a
+  # field Rollup has no concept of. It throws on the entry HTML, so nothing is ever
+  # transformed. Two further faults were hidden behind it, both of which only became visible
+  # once the build got far enough to reach them: `.storybook/preview.ts` imported a
+  # stylesheet that has never existed in this template, and the stories' `libs/core` imports
+  # could not be bundled from core's CommonJS `dist/`. All three fixes are in
+  # `template/apps/webapp/.storybook/`, each with the reasoning next to it.
   #
-  # Deliberate, and the reverse of the reasoning that moved the other two. They moved
-  # because a gate that does not run on `main` protects nothing. This job does not protect
-  # anything *either way*: it is `continue-on-error: true` and it fails every single time,
-  # for a reason nobody has root-caused. Running it on push would not make `main` any safer
-  # by one assertion; it would spend ~20 minutes of every push producing a yellow annotation
-  # that is already known, already documented here and already expected.
+  # Earlier attempts attributed this to dependency drift and then to a missing lockfile.
+  # Neither was it; see `docs/superpowers/phase-1-decision-log.md` for that history, which is
+  # left standing as a record of what was believed rather than corrected.
   #
-  # And it would cost something. A permanently-failing job on every push is how a team
-  # learns to read a non-green CI page as normal — at which point the next failure, in a job
-  # that *does* block, is one more yellow mark among the yellow marks. A broken gate that
-  # everybody has learned to ignore is worse than an absent one, because it looks like
-  # coverage.
+  # ## The one fact worth carrying forward: the exit code here proves nothing on its own
   #
-  # So it stays where it can be seen by whoever is looking at a change to the webapp, and no
-  # further. **When the `moduleType` failure is root-caused, this job flips twice in one
-  # commit: `continue-on-error` comes off and `if:` becomes `github.event_name != 'schedule'`
-  # like the two tiers above.** Not before — a green-but-PR-only Storybook job would be the
-  # same gap this task just closed, re-opened in the one tier nobody is watching.
+  # `storybook build` exits 0 over an empty module graph. For the entire time this job was
+  # red it was also, separately, verifying nothing — and had the `moduleType` error not
+  # happened to be fatal, the same job would have gone *green* having compiled zero stories,
+  # and nobody would have looked. A failed run even leaves a `storybook-static/` directory
+  # behind, so that directory's existence is not evidence either.
   #
-  # ## The consequence, stated plainly: nothing compiles the story files
+  # So this job's value rests entirely on the `stories` glob in `.storybook/main.ts`
+  # continuing to match real files. `app/test/storybook-config.spec.ts` asserts exactly that,
+  # in the fast tier, for milliseconds — it does not replace this job (it reads text and the
+  # filesystem; this one builds), it guards the assumption this job cannot check about
+  # itself. If you change the glob, the stories' location, or the framework, read that spec
+  # before trusting a green tick here.
   #
-  # PR-only is a choice about *when* this job runs; `continue-on-error: true` plus a build
-  # that fails before it reaches story content (`✓ 0 modules transformed`, then the
-  # `moduleType` error) is a separate fact about what it has ever actually verified — which
-  # is nothing. No commit in this phase has had a passing Storybook build, so no commit has
-  # had its story files successfully transformed by this or any other gate. Phase 3 shipped
-  # four (`GrantList.stories.ts`, `InvitationList.stories.ts`, `MemberList.stories.ts`,
-  # `OrganizationSwitcher.stories.ts`) with zero compiled confirmation that any of them is
-  # even syntactically valid Storybook config, and that stays true of every story a later
-  # phase adds until the `moduleType` failure is root-caused. See
-  # `docs/superpowers/phase-roadmap.md`'s "What Phase 4 must not get wrong" for the gate
-  # this is owed.
+  # Verified when this was fixed: a passing run transforms 604 modules, and deliberately
+  # breaking one story's import turns the run red naming that story file.
   storybook:
-    name: template Storybook build (PR-tier; known-red, non-blocking — see comment)
+    name: template Storybook build (compiles every story file)
     needs: unit
-    if: github.event_name == 'pull_request'
+    # Push AND PR, like `generated-project` and `docker` and for the same reason: a gate that
+    # runs only on the path somebody can choose not to take is not a gate. It was PR-only
+    # while it was known-red — running a permanently-yellow job on every push is how a team
+    # learns to read a non-green CI page as normal — and that reason expired with the fix.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
