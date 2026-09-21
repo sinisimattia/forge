@@ -66,6 +66,15 @@ services:
       # apps/backend/src/mail/templates/reset-password.ts for why this is never taken
       # from an incoming request instead.
       PUBLIC_WEBAPP_URL: http://localhost:${WEBAPP_PORT:-3001}
+      # The origin `OAuthService` builds every provider redirect URI from, and —
+      # since Task 12 registered it as an ordinary provider of `AuthModule` — a
+      # value this container now refuses to boot without, whether or not any
+      # federated provider is actually configured (`ConfigService.getOrThrow`
+      # runs at construction, not on first use). Same reasoning as
+      # `PUBLIC_WEBAPP_URL` above and `oauth.config.ts`'s own doc: never taken
+      # from an incoming request, because that would let anyone who can reach
+      # this API choose where an authorization code is delivered.
+      PUBLIC_API_URL: http://localhost:${BACKEND_PORT:-3000}
       # The key access credentials are signed with. Obviously-local and inline, exactly
       # as the postgres credentials above are and for the same reason: a dev stack that
       # needs a populated .env before it will start is a dev stack nobody runs. The

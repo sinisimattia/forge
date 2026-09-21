@@ -91,6 +91,13 @@ services:
       # apps/backend/src/mail/templates/reset-password.ts for why it can never be taken
       # from the incoming request instead, which is the "fix" a missing value invites.
       PUBLIC_WEBAPP_URL: ${PUBLIC_WEBAPP_URL:?required}
+      # The origin `OAuthService` builds every provider redirect URI from —
+      # required, with no default, for the same reason `PUBLIC_WEBAPP_URL` is:
+      # a wrong value here is a redirect URI pointing at somebody else's
+      # domain. Since Task 12 registered `OAuthService` as an ordinary
+      # provider of `AuthModule`, this deployment refuses to boot without it
+      # regardless of whether any federated provider is actually configured.
+      PUBLIC_API_URL: ${PUBLIC_API_URL:?required}
       # Where the dev mailer writes one JSON file per message. It has a default because a
       # wrong value costs a message nobody could have read anyway; the origin above does
       # not, because a wrong value there is a credential delivered to the wrong place.

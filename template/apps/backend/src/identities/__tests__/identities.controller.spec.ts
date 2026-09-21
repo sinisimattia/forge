@@ -1,4 +1,4 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, NotFoundException } from '@nestjs/common';
 import { MODULE_METADATA } from '@nestjs/common/constants';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule, JwtService } from '@nestjs/jwt';
@@ -17,6 +17,8 @@ import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
 import { AuditService } from '../../audit/audit.service';
 
 import { FakeDataSource, recordingAudit } from '../../common/testing';
+import { AuthModule } from '../../auth/auth.module';
+import { OAuthService } from '../../auth/oauth/oauth.service';
 import { JwtStrategy } from '../../auth/strategies';
 import { AuthIdentityRecord } from '../auth-identity-record.entity';
 import { Argon2PasswordHasher } from '../hashing';
@@ -84,6 +86,13 @@ describe('IdentitiesController', () => {
   let recorded: RecordAuditEntryInput[];
   /** The repository the service was built with, so a test can make it fail. */
   let identityRepo: Repository<AuthIdentityRecord>;
+  /**
+   * A stand-in for the real `OAuthService`, which this controller now depends
+   * on for `beginLink` alone — its own suite (`auth/oauth/__tests__`) is what
+   * proves `beginLink` itself; this file only proves the controller reaches
+   * it and returns what it hands back.
+   */
+  let oauth: { beginLink: jest.Mock };
 
   beforeEach(async () => {
     source = new FakeDataSource();
@@ -105,6 +114,7 @@ describe('IdentitiesController', () => {
       new Argon2PasswordHasher(),
       audit,
     );
+    oauth = { beginLink: jest.fn() };
 
     const moduleRef = await Test.createTestingModule({
       imports: [
@@ -125,6 +135,7 @@ describe('IdentitiesController', () => {
         { provide: AuditService, useValue: audit },
         JwtStrategy,
         { provide: IdentitiesService, useValue: identities },
+        { provide: OAuthService, useValue: oauth },
       ],
     }).compile();
 
@@ -290,14 +301,69 @@ describe('IdentitiesController', () => {
     });
   });
 
-  describe('IdentitiesModule wires it, which no probe application can show', () => {
-    it('registers the controller, without which the route exists nowhere', () => {
-      expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, IdentitiesModule)).toContain(
-        IdentitiesController,
-      );
+  describe('beginning a link', () => {
+    it('is closed to a caller with no credential', async () => {
+      // The link route carries no @Public(): the global JwtAuthGuard closes
+      // it exactly as it closes `list` and `unlink` above. See the metadata
+      // assertion in `auth/oauth/__tests__/oauth.controller.spec.ts`, which
+      // reads this off the shipped handler rather than calling it.
+      await request(app.getHttpServer()).post('/users/me/identities/GOOGLE').expect(401);
+      expect(oauth.beginLink).not.toHaveBeenCalled();
     });
 
-    it('provides the service the controller resolves', () => {
+    it('asks OAuthService.beginLink for the actor and the named provider', async () => {
+      oauth.beginLink.mockResolvedValue('https://provider.example.test/authorize?state=abc');
+
+      const response = await request(app.getHttpServer())
+        .post('/users/me/identities/GOOGLE')
+        .set('Authorization', bearer(ADA))
+        .expect(200);
+
+      expect(response.body).toEqual({
+        authorizationUrl: 'https://provider.example.test/authorize?state=abc',
+      });
+      expect(oauth.beginLink).toHaveBeenCalledWith(ADA, 'GOOGLE');
+    });
+
+    it('answers JSON, not a redirect — a fetch response, never followed by the browser', async () => {
+      oauth.beginLink.mockResolvedValue('https://provider.example.test/authorize');
+
+      const response = await request(app.getHttpServer())
+        .post('/users/me/identities/GOOGLE')
+        .set('Authorization', bearer(ADA));
+
+      expect(response.status).toBe(200);
+      expect(response.header.location).toBeUndefined();
+    });
+
+    it('passes through whatever OAuthService refuses with, unmodified', async () => {
+      // An unregistered provider is `OAuthService.beginLink`'s own refusal
+      // (`NotFoundException`) — this controller adds no refusal of its own on
+      // top of it.
+      oauth.beginLink.mockRejectedValue(new NotFoundException());
+
+      await request(app.getHttpServer())
+        .post('/users/me/identities/NOT-A-PROVIDER')
+        .set('Authorization', bearer(ADA))
+        .expect(404);
+    });
+  });
+
+  describe('who wires it, which no probe application can show', () => {
+    it('AuthModule registers the controller — not IdentitiesModule, whose own module houses the file', () => {
+      // See `IdentitiesController`'s own doc, and `identities.module.ts`'s:
+      // `beginLink` needs `OAuthService`, which lives in `AuthModule`, and
+      // `AuthModule` already imports `IdentitiesModule` for `AuthService`'s
+      // own need of `IdentitiesService` — importing it back would cycle the
+      // two modules.
+      expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, AuthModule)).toContain(
+        IdentitiesController,
+      );
+      expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, IdentitiesModule) ?? [])
+        .not.toContain(IdentitiesController);
+    });
+
+    it('IdentitiesModule still provides the service every consumer of it resolves', () => {
       expect(Reflect.getMetadata(MODULE_METADATA.PROVIDERS, IdentitiesModule)).toContain(
         IdentitiesService,
       );

@@ -130,9 +130,12 @@ both in one file.
   `@Public()`, without which the global guard answers it `401` and nothing that waits on
   `service_healthy` ever starts.
 - **Configuration this package refuses to boot without:** `DATABASE_URL`, `JWT_SECRET`
-  (the key access credentials are signed with) and `PUBLIC_WEBAPP_URL` (the origin every
-  mail link is built from — verification, password reset **and** invitation). All three are `getOrThrow` with no default, deliberately —
-  see `.env.example`.
+  (the key access credentials are signed with), `PUBLIC_WEBAPP_URL` (the origin every
+  mail link is built from — verification, password reset **and** invitation) and, since
+  Task 12 of Phase 4 registered `OAuthService` as an ordinary provider of `AuthModule`,
+  `PUBLIC_API_URL` (the origin every federated provider redirect URI is built from) —
+  required at construction whether or not any federated provider is actually configured.
+  All four are `getOrThrow` with no default, deliberately — see `.env.example`.
 - `nest-cli.json` carries `"entryFile": "apps/backend/src/main"` **and**
   `"outDir": "dist/apps/backend/src"` on its `assets` entry, and both are load-bearing.
   `tsconfig.json` pins `rootDir` to the workspace root, so `nest build` emits

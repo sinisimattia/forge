@@ -14,10 +14,11 @@ import {
 import type { Request, Response } from 'express';
 import { AuthenticationStatus } from '__FORGE_SCOPE__/core/auth/enums';
 import { SessionNotFoundError } from '__FORGE_SCOPE__/core/auth/errors';
-import type { ClientContext, SessionId } from '__FORGE_SCOPE__/core/auth/types';
+import type { SessionId } from '__FORGE_SCOPE__/core/auth/types';
 import { assertNever } from '__FORGE_SCOPE__/core/shared/policies';
 import { ParseUuidParamPipe } from '../common/pipes';
 import { AuthService } from './auth.service';
+import { clientContextOf } from './client-context';
 import { CurrentUser, Public } from './decorators';
 import {
   ChangePasswordDto,
@@ -137,7 +138,7 @@ export class AuthController {
     const result = await this.auth.signIn({
       email: body.email,
       secret: body.secret,
-      client: AuthController.clientOf(request),
+      client: clientContextOf(request),
     });
 
     switch (result.outcome.status) {
@@ -187,7 +188,7 @@ export class AuthController {
     if (presented === null) throw new UnauthorizedException();
 
     try {
-      const credentials = await this.refresh.rotate(presented, AuthController.clientOf(request));
+      const credentials = await this.refresh.rotate(presented, clientContextOf(request));
       REFRESH_COOKIE.set(response, credentials.refreshToken);
       const user = await this.auth.userOf(credentials.session.userId);
       return {
@@ -280,7 +281,7 @@ export class AuthController {
       actor.userId,
       body.currentSecret,
       body.newSecret,
-      AuthController.clientOf(request),
+      clientContextOf(request),
     );
     REFRESH_COOKIE.set(response, credentials.refreshToken);
     const user = await this.auth.userOf(actor.userId);
@@ -329,25 +330,5 @@ export class AuthController {
     @Param('id', ParseUuidParamPipe) id: string,
   ): Promise<void> {
     await this.auth.revokeSession(actor.userId, id as SessionId);
-  }
-
-  /**
-   * What could be told about where a request came from.
-   *
-   * Both values are recorded and neither is ever trusted for a decision — they
-   * exist so the person who owns a session can recognize it in a list. The
-   * address is taken from Express's own `req.ip`, which honours the
-   * `trust proxy` setting; behind a proxy that is not configured it is the
-   * proxy's address, which is wrong but harmless, whereas reading
-   * `X-Forwarded-For` directly would take a value the client itself chose.
-   */
-  private static clientOf(request: Request): ClientContext {
-    const label = request.get('user-agent');
-    return {
-      address: request.ip ?? null,
-      // Bounded, because it is stored: a header is whatever its sender made it,
-      // and an unbounded one is a way to write as much as you like into a table.
-      label: label === undefined ? null : label.slice(0, 200),
-    };
   }
 }

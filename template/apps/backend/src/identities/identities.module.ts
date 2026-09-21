@@ -5,7 +5,6 @@ import { AuditModule } from '../audit/audit.module';
 import { AuthIdentityRecord } from './auth-identity-record.entity';
 import { BREACHED_PASSWORD_REGISTRY, NoOpBreachedPasswordRegistry } from './breached-passwords';
 import { Argon2PasswordHasher, PASSWORD_HASHER } from './hashing';
-import { IdentitiesController } from './identities.controller';
 import { IdentitiesService } from './identities.service';
 
 /**
@@ -19,10 +18,22 @@ import { IdentitiesService } from './identities.service';
  * harmless today, because both are stateless, and exactly the kind of accident
  * that stops being harmless the moment one of them holds a connection or a
  * cache.
+ *
+ * **`IdentitiesController` is not registered here.** It still lives in this
+ * package (`identities.controller.ts`), but Task 12 gave it a route —
+ * `beginLink` — that needs `OAuthService`, which lives in `AuthModule`.
+ * `AuthModule` already imports this module for `AuthService`'s own need of
+ * `IdentitiesService`; importing `AuthModule` back from here to reach
+ * `OAuthService` would make the two modules depend on each other, resolvable
+ * in Nest only with `forwardRef` on both sides. `AuthModule` registers the
+ * controller instead — see its own module doc and
+ * `identities/identities.controller.ts`'s own doc for the full reasoning.
+ * This module still provides and exports `IdentitiesService`, which is all
+ * that controller (and `AuthService`, and `OAuthService`) actually need from
+ * it.
  */
 @Module({
   imports: [TypeOrmModule.forFeature([AuthIdentityRecord]), AuditModule],
-  controllers: [IdentitiesController],
   providers: [
     IdentitiesService,
     {

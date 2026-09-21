@@ -17,13 +17,20 @@ import { configureApp } from '../app.setup';
 import { AuditEntryRecord } from '../audit/audit-entry-record.entity';
 import { AuditModule } from '../audit/audit.module';
 import { AuthController } from '../auth/auth.controller';
-import { AuthModule, accessTokenSigningOptions } from '../auth/auth.module';
+import {
+  AuthModule,
+  accessTokenSigningOptions,
+  OAUTH_PROVIDERS_PROVIDER,
+  OAUTH_PROVIDER_REGISTRY_PROVIDER,
+} from '../auth/auth.module';
 import { Public } from '../auth/decorators';
 import { EmailVerificationTokenRecord } from '../auth/entities/email-verification-token-record.entity';
 import { PasswordResetTokenRecord } from '../auth/entities/password-reset-token-record.entity';
 import { RefreshTokenRecord } from '../auth/entities/refresh-token-record.entity';
 import { SessionRecord } from '../auth/entities/session-record.entity';
 import { OAuthAuthorizationRequestRecord } from '../auth/oauth/oauth-authorization-request.entity';
+import { OAuthController } from '../auth/oauth/oauth.controller';
+import { OAuthService } from '../auth/oauth/oauth.service';
 import { REFRESH_COOKIE } from '../auth/refresh-cookie';
 import { ACCESS_TOKEN_TTL_SECONDS, SessionService } from '../auth/session/session.service';
 import { JwtStrategy } from '../auth/strategies';
@@ -33,6 +40,7 @@ import { PrincipalService } from '../authorization/principal.service';
 import { ResourceGrantRecord } from '../authorization/resource-grant-record.entity';
 import { HealthModule } from '../health/health.module';
 import { AuthIdentityRecord } from '../identities/auth-identity-record.entity';
+import { IdentitiesController } from '../identities/identities.controller';
 import { IdentitiesModule } from '../identities/identities.module';
 import { IdentitiesService } from '../identities/identities.service';
 import { MailModule } from '../mail';
@@ -100,6 +108,10 @@ import { UsersModule } from '../users/users.module';
  * | `authorization.module.ts`: `PermissionsGuard` or `PrincipalService` from `providers`/`exports` | `AuthorizationModule › provides and exports what the guarded controllers resolve` |
  * | `invitations.controller.ts`: `@UseGuards(PermissionsGuard)` on any of the three organization-scoped routes | `organizations/__tests__/invitations.controller.spec.ts › authorization: what a role does and does not carry` — one case per route, each measured red on its own deletion. Without them a MEMBER or a VIEWER could invite, list and revoke, because the service checks membership and never the role |
  * | `authorization.module.ts`: an entity from `forFeature` | `AuthorizationModule › registers every table the hydrator reads` — `PrincipalService` reads three and the guard reads the fourth; a missing one is a repository Nest cannot resolve |
+ * | `auth.module.ts`: `OAuthController`/`IdentitiesController` from `controllers` | `AuthModule › registers OAuthController and IdentitiesController` — without either, its routes exist nowhere; this is the fault Task 11's own `⚠️` flagged: `OAuthService` was registered in no module at all |
+ * | `auth.module.ts`: `OAuthService` from `providers` | `AuthModule › provides OAuthService, which OAuthController and IdentitiesController resolve` |
+ * | `auth.module.ts`: `OAuthAuthorizationRequestRecord` from its own `TypeOrmModule.forFeature` | `AuthModule › registers the table OAuthService reads and writes` — a `Repository<OAuthAuthorizationRequestRecord>` Nest cannot resolve, on top of the one already caught in the app-wide entity list above (that one is for the database *connection*; this one is for *this module's own* repository provider, which `OAuthService`'s `@InjectRepository` actually resolves from) |
+ * | `identities.module.ts`: `IdentitiesController` left in `controllers` (i.e. not moved to `AuthModule`) | `identities/__tests__/identities.controller.spec.ts › who wires it › AuthModule registers the controller` — `beginLink` needs `OAuthService`, which only `AuthModule` can resolve without a module cycle |
  *
  * What is still beyond reach: the single line `configureApp(app)` in `main.ts`.
  * Reaching it would mean starting the real `AppModule`, which needs a database.
@@ -347,6 +359,48 @@ describe('the composition root', () => {
       expect(usesFactory(dynamicImport(AuthModule, JwtModule), accessTokenSigningOptions)).toBe(
         true,
       );
+    });
+
+    /**
+     * Task 12's own ⚠️, closed: `OAuthService` was registered in no module at
+     * all, and every existing test built it with `new` — nothing proved any
+     * module could actually provide its five dependencies. These four
+     * assertions are what would have caught it, watched failing (see the
+     * task's own report): deleting `OAuthController` from `controllers`
+     * turns the two route-registration assertions red and nothing else in
+     * this file, and deleting `OAuthAuthorizationRequestRecord` from this
+     * module's own `TypeOrmModule.forFeature` turns only the table
+     * assertion red — `OAuthService`'s `@InjectRepository` for that entity
+     * would otherwise resolve nothing, an `UnknownDependenciesException` at
+     * start-up that no fast tier before this file could see.
+     */
+    it('registers OAuthController and IdentitiesController, without which their routes exist nowhere', () => {
+      // `IdentitiesController` here, not in `IdentitiesModule` — see that
+      // controller's own doc and `identities.module.ts`'s for why: its
+      // `beginLink` route needs `OAuthService`, and only this module can
+      // provide both without a module cycle.
+      expect(moduleControllers(AuthModule)).toContain(OAuthController);
+      expect(moduleControllers(AuthModule)).toContain(IdentitiesController);
+    });
+
+    it('provides OAuthService, which OAuthController and IdentitiesController resolve', () => {
+      expect(moduleProviders(AuthModule)).toContain(OAuthService);
+    });
+
+    it('builds OAUTH_PROVIDERS and OAuthProviderRegistry from the exported providers, not inlined copies', () => {
+      // Reference equality, the same discipline `GLOBAL_PROVIDERS` is pinned
+      // with: the point is that the module uses THESE objects, not merely
+      // objects shaped like them.
+      expect(moduleProviders(AuthModule)).toContain(OAUTH_PROVIDERS_PROVIDER);
+      expect(moduleProviders(AuthModule)).toContain(OAUTH_PROVIDER_REGISTRY_PROVIDER);
+    });
+
+    it('registers the table OAuthService reads and writes', () => {
+      const registered = dynamicImport(AuthModule, TypeOrmModule);
+      const tokens = ((registered?.providers ?? []) as { provide?: unknown }[]).map(
+        (provider) => provider.provide,
+      );
+      expect(tokens).toContain(getRepositoryToken(OAuthAuthorizationRequestRecord));
     });
   });
 
