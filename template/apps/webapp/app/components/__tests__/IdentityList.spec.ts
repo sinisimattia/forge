@@ -24,8 +24,8 @@ function identity(id: string, provider: AuthProvider, account: string): AuthIden
 const BY_PASSWORD = identity('identity-1', AuthProvider.PASSWORD, 'ada@example.test');
 const BY_GOOGLE = identity('identity-2', AuthProvider.GOOGLE, '117392044118');
 
-function list(identities: AuthIdentity[]) {
-  return mount(IdentityList, { props: { identities }, global: mountOptions() });
+function list(identities: AuthIdentity[], providers: AuthProvider[] = []) {
+  return mount(IdentityList, { props: { identities, providers }, global: mountOptions() });
 }
 
 describe('IdentityList', () => {
@@ -66,5 +66,63 @@ describe('IdentityList', () => {
       global: mountOptions(),
     });
     expect(busy.find('button').attributes('disabled')).toBeDefined();
+  });
+
+  it('offers a link control for each configured provider the account does not hold', async () => {
+    const wrapper = list([BY_PASSWORD], [AuthProvider.GOOGLE, AuthProvider.GITHUB]);
+
+    const buttons = wrapper.findAll('button');
+    expect(buttons).toHaveLength(2);
+    expect(wrapper.text()).toContain('account.identities.providerGoogle');
+    expect(wrapper.text()).toContain('account.identities.providerGithub');
+
+    await buttons[0]?.trigger('click');
+    await buttons[1]?.trigger('click');
+    expect(wrapper.emitted('link')).toEqual([[AuthProvider.GOOGLE], [AuthProvider.GITHUB]]);
+  });
+
+  it('offers no link control for a provider the account already holds', () => {
+    // Two identities, so the unlink control is offered too — this isolates
+    // "already held" from "nothing to show at all".
+    const wrapper = list([BY_PASSWORD, BY_GOOGLE], [AuthProvider.GOOGLE]);
+
+    const buttons = wrapper.findAll('button');
+    expect(buttons).toHaveLength(2);
+    expect(buttons.every((button) => button.text() === 'account.identities.unlink')).toBe(true);
+  });
+
+  it('offers no link control for a provider this deployment has not configured', () => {
+    // Two identities, so a version that fell back to "every provider core
+    // knows about" rather than reading `providers` would still show a button
+    // here to fail on.
+    const wrapper = list([BY_PASSWORD, BY_GOOGLE], []);
+
+    const buttons = wrapper.findAll('button');
+    expect(buttons).toHaveLength(2);
+    expect(buttons.every((button) => button.text() === 'account.identities.unlink')).toBe(true);
+  });
+
+  it('disables the link control too, while a request is in flight', () => {
+    const busy = mount(IdentityList, {
+      props: { identities: [BY_PASSWORD], providers: [AuthProvider.GOOGLE], busy: true },
+      global: mountOptions(),
+    });
+    expect(busy.find('button').attributes('disabled')).toBeDefined();
+  });
+
+  it('still hides the unlink control at one identity, and still does not enforce the rule', () => {
+    // This case predates linking, and the existing comment on this component
+    // says why: hiding a control that would certainly be refused is an
+    // affordance, not a decision. Linking does not change that, and this case
+    // exists so the next edit does not quietly make it a decision. A linkable
+    // provider is deliberately in play here too, so the one button on screen
+    // has to be read for what it is — a link control, not the unlink control
+    // back under a different guise.
+    const wrapper = list([BY_PASSWORD], [AuthProvider.GOOGLE]);
+
+    const buttons = wrapper.findAll('button');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.text()).toBe('account.identities.link');
+    expect(wrapper.emitted('unlink')).toBeUndefined();
   });
 });

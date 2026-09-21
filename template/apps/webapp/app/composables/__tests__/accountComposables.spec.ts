@@ -227,6 +227,98 @@ describe('the account composables', () => {
       expect(identities.lastRemaining.value).toBe(false);
       expect(identities.failed.value).toBe(true);
     });
+
+    describe('link', () => {
+      /**
+       * `happy-dom`'s own `Location` never performs a real navigation, which is
+       * exactly why it can be read back here: swapping it for a plain
+       * `{ href }` object makes what `link` assigned observable without
+       * depending on whatever happy-dom's own navigation stub happens to do
+       * with a cross-origin URL today.
+       */
+      const realLocation = window.location;
+
+      beforeEach(() => {
+        Object.defineProperty(window, 'location', {
+          configurable: true,
+          writable: true,
+          value: { href: '' },
+        });
+      });
+
+      afterEach(() => {
+        Object.defineProperty(window, 'location', {
+          configurable: true,
+          writable: true,
+          value: realLocation,
+        });
+      });
+
+      /**
+       * `backend.client`, with whatever credential the store currently holds
+       * attached to every request — the shape `beginLink` is actually driven
+       * with in production, where `createApiClient` presents `heldCredential`
+       * regardless of what the fetcher itself put on the request.
+       *
+       * The suite's own top-level `adoptTransport(backend.client)` is **not**
+       * this: it is what every other call in this describe rides, and it
+       * authenticates through `ApiRequest.actor` — the field
+       * `IdentityHttpService`'s fetchers thread explicitly and the
+       * conformance suites' own test-only shortcut (see `ApiRequest.actor`).
+       * `beginLink` carries no such field, by design (see its own TSDoc), so
+       * a `link` test that kept riding the suite's default transport would
+       * authenticate nothing and would be refused with a plain `401` no
+       * matter which provider or actor was in play — a check that cannot
+       * fail for the right reason. `oauth.service.spec.ts`'s own
+       * `clientWithCredential` is the same fix for the same gap.
+       */
+      function credentialedTransport(): ApiClient {
+        return async <T>(request: ApiRequest): Promise<T> => {
+          const credential = useAuthStore().accessToken;
+          return backend.client<T>({ ...request, ...(credential === null ? {} : { credential }) });
+        };
+      }
+
+      it('navigates to the URL beginLink resolves with, rather than fetching and waiting', async () => {
+        backend.configureOAuthProviders([AuthProvider.GOOGLE]);
+        await signIn();
+        useAuthStore().adoptTransport(credentialedTransport());
+        const identities = useIdentities();
+
+        await identities.link(AuthProvider.GOOGLE);
+
+        // `stubBackend`'s own `POST /users/me/identities/:provider` carries the
+        // provider and the actor it resolved the request as onto the
+        // authorization URL — asserting both here is what tells this apart
+        // from a call that merely reached the endpoint at all.
+        expect(window.location.href).toMatch(/^https:\/\/stub-oauth\.example\.test\/authorize\?/);
+        expect(window.location.href).toContain('provider=GOOGLE');
+        expect(window.location.href).toContain(`actor=${ACTOR_ID}`);
+      });
+
+      it('does NOT navigate, and reports the generic failure, for a provider never configured', async () => {
+        // No `configureOAuthProviders` call: this deployment configured nothing.
+        await signIn();
+        useAuthStore().adoptTransport(credentialedTransport());
+        const identities = useIdentities();
+
+        await identities.link(AuthProvider.GOOGLE);
+
+        expect(window.location.href).toBe('');
+        expect(identities.failed.value).toBe(true);
+      });
+
+      it('does NOT navigate at all when nobody is signed in', async () => {
+        backend.configureOAuthProviders([AuthProvider.GOOGLE]);
+        useAuthStore().adoptTransport(credentialedTransport());
+        const identities = useIdentities();
+
+        await identities.link(AuthProvider.GOOGLE);
+
+        expect(window.location.href).toBe('');
+        expect(identities.failed.value).toBe(false);
+      });
+    });
   });
 
   describe('useProfile', () => {

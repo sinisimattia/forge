@@ -53,6 +53,21 @@ export const TheLastOne: Story = {
   },
 };
 
+/**
+ * One held identity, and one configured provider still open to link. The
+ * unlink control stays hidden — one identity is one identity, whether or not
+ * another provider could be added — while the link row offers the provider
+ * this account does not hold yet.
+ */
+export const OffersToLink: Story = {
+  args: {
+    identities: [
+      identity('identity-1', AuthProvider.PASSWORD, 'ada@example.test', '2026-09-18T18:30:00.000Z'),
+    ],
+    providers: [AuthProvider.GOOGLE],
+  },
+};
+
 export const Busy: Story = {
   args: { ...Several.args, busy: true },
 };

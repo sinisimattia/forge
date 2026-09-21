@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import type { AuthIdentity } from '__FORGE_SCOPE__/core/identities/entities';
-import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
+import type { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
 import type { AuthIdentityId } from '__FORGE_SCOPE__/core/identities/types';
+import { PROVIDER_LABEL_KEYS } from '~/utils/providerLabels';
 import { formatInstant } from '~/utils/formatInstant';
 
 /**
- * Every way the person can prove who they are.
+ * Every way the person can prove who they are, one they do not hold yet for
+ * each configured provider still open to them, and a way to remove or add one.
  *
- * Presentational, for the reason `SessionList` gives: reading and unlinking are
- * `useIdentities`'.
+ * Presentational, for the reason `SessionList` gives: reading, linking and
+ * unlinking are `useIdentities`'.
  *
  * ## The unlink control disappears at one identity, and that is not the rule
  *
@@ -21,41 +23,47 @@ import { formatInstant } from '~/utils/formatInstant';
  * under its own name.
  *
  * Stated the other way round: deleting the `v-if` below would change what a
- * person can click and would change nothing about what can happen.
+ * person can click and would change nothing about what can happen. Offering a
+ * link control does not change that either — linking only ever adds a way in,
+ * so it carries no version of this rule to enforce or to hide behind.
  */
 interface Props {
   /** The identities to show. */
   identities: readonly AuthIdentity[];
+  /**
+   * The federated providers this deployment has configured, in the order to
+   * offer them. A provider already held is not offered again — see
+   * {@link linkable} — and a provider absent from this list is never offered
+   * at all, the same "absent, not empty" rule `OAuthButtons` follows for the
+   * same reason (ADR-0008).
+   */
+  providers?: readonly AuthProvider[];
   /** Whether a request is in flight; every control is disabled while it is. */
   busy?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  providers: () => [],
   busy: false,
 });
 
 const emit = defineEmits<{
   /** Unlink that identity. The parent does it and re-reads the list. */
   unlink: [identityId: AuthIdentityId];
+  /** Link that provider. The parent does it, and navigates away to do so. */
+  link: [provider: AuthProvider];
 }>();
 
 const { t } = useI18n();
 
-/**
- * One translation key per provider.
- *
- * A `Record` over core's enum, so a provider added there is a compile error here
- * rather than a row labelled with a raw enum value.
- */
-const PROVIDER_LABEL_KEYS: Record<AuthProvider, string> = {
-  [AuthProvider.PASSWORD]: 'account.identities.providerPassword',
-  [AuthProvider.GOOGLE]: 'account.identities.providerGoogle',
-  [AuthProvider.GITHUB]: 'account.identities.providerGithub',
-  [AuthProvider.OIDC]: 'account.identities.providerOidc',
-};
-
 /** Whether unlinking anything is offered at all. See this component's own note. */
 const unlinkable = computed(() => props.identities.length > 1);
+
+/** `providers`, minus whichever ones the account already holds. */
+const linkable = computed(() => {
+  const held = new Set(props.identities.map((identity) => identity.provider));
+  return props.providers.filter((provider) => !held.has(provider));
+});
 </script>
 
 <template>
@@ -84,6 +92,21 @@ const unlinkable = computed(() => props.identities.length > 1);
             @click="emit('unlink', identity.id)"
           >
             {{ t('account.identities.unlink') }}
+          </AppButton>
+        </AppTableCell>
+      </AppTableRow>
+      <AppTableRow v-for="provider in linkable" :key="provider">
+        <AppTableCell emphasis="primary">{{ t(PROVIDER_LABEL_KEYS[provider]) }}</AppTableCell>
+        <AppTableCell />
+        <AppTableCell />
+        <AppTableCell align="right">
+          <AppButton
+            variant="secondary"
+            size="sm"
+            :disabled="busy"
+            @click="emit('link', provider)"
+          >
+            {{ t('account.identities.link') }}
           </AppButton>
         </AppTableCell>
       </AppTableRow>

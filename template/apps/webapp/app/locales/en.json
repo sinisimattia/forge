@@ -142,6 +142,7 @@
       "failed": "We could not read this just now. Please try again.",
       "lastRemaining": "This is your only way to sign in. Add another before removing it.",
       "unlink": "Remove",
+      "link": "Link",
       "neverUsed": "Never",
       "columnProvider": "Method",
       "columnAccount": "Account",

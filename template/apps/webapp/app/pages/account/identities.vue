@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import type { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
 import type { AuthIdentityId } from '__FORGE_SCOPE__/core/identities/types';
 
 /**
- * Every way the person can prove who they are, and a way to remove one.
+ * Every way the person can prove who they are, a way to add another, and a
+ * way to remove one.
  *
- * Read after mount, for the reason `sessions.vue` gives.
+ * Read after mount, for the reason `sessions.vue` gives — both the held
+ * identities and the deployment's configured providers, so `IdentityList`
+ * can tell "already held" apart from "never offered" for itself.
  *
  * `lastRemaining` is rendered separately from `failed` because it is the one
  * refusal with a remedy: add another way in first. The rule behind it is core's
@@ -16,15 +20,27 @@ definePageMeta({
   middleware: 'auth',
 });
 
-const { identities, loading, failed, lastRemaining, load, unlink } = useIdentities();
+const { identities, loading, failed, lastRemaining, load, unlink, link } = useIdentities();
+const { providers, load: loadProviders } = useOAuthProviders();
 const { t } = useI18n();
 
 useHead({ title: t('account.identities.title') });
 
-onMounted(load);
+onMounted(() => {
+  void load();
+  void loadProviders();
+});
 
 async function onUnlink(identityId: AuthIdentityId): Promise<void> {
   await unlink(identityId);
+}
+
+/**
+ * Begins linking `provider`. This leaves the page — see `useIdentities.link`'s
+ * own TSDoc for why nothing follows this `await` on the way out.
+ */
+async function onLink(provider: AuthProvider): Promise<void> {
+  await link(provider);
 }
 </script>
 
@@ -39,7 +55,14 @@ async function onUnlink(identityId: AuthIdentityId): Promise<void> {
       <AppAlert v-if="failed" variant="error">{{ t('account.identities.failed') }}</AppAlert>
       <AppText v-if="loading && identities.length === 0">{{ t('common.states.loading') }}</AppText>
       <AppText v-else-if="identities.length === 0">{{ t('account.identities.empty') }}</AppText>
-      <IdentityList v-else :identities="identities" :busy="loading" @unlink="onUnlink" />
+      <IdentityList
+        v-else
+        :identities="identities"
+        :providers="providers"
+        :busy="loading"
+        @unlink="onUnlink"
+        @link="onLink"
+      />
     </AppStack>
   </AppCard>
 </template>
