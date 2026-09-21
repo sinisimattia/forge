@@ -1,5 +1,9 @@
 import { ConfigService } from '@nestjs/config';
 import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
+import { DevOAuthProvider } from '../adapters/DevOAuthProvider';
+import { GitHubOAuthProvider } from '../adapters/GitHubOAuthProvider';
+import { GoogleOAuthProvider } from '../adapters/GoogleOAuthProvider';
+import { OidcOAuthProvider } from '../adapters/OidcOAuthProvider';
 import { buildOAuthProviders } from '../oauth.config';
 import type { IOAuthProvider } from '../IOAuthProvider';
 
@@ -127,6 +131,64 @@ describe('buildOAuthProviders', () => {
         OAUTH_DEV_ENABLED: '1',
       }));
       expect(built.map((p) => p.provider)).toEqual([AuthProvider.OIDC]);
+    });
+  });
+
+  describe('the placeholder seam is closed', () => {
+    // `UnimplementedOAuthProvider` (the placeholder Tasks 6-8 replaced branch by
+    // branch) has been deleted outright — this task was its last construction
+    // site, and a placeholder with nothing left constructing it is dead code, not
+    // a safety net. What replaces "no provider is an instanceof the placeholder"
+    // is the stronger, positive form: every provider this factory can return is
+    // an instance of a real, named adapter class. A closed accept-list catches
+    // exactly what the negative check caught (a provider that looks registered
+    // but authenticates nobody) and additionally catches any *other* stand-in
+    // that might be reintroduced later, which a check against one specific
+    // deleted class name could not.
+    //
+    // `OAUTH_DEV_ENABLED` and the real OIDC variables can never be configured
+    // together (the PF-1 guard above throws first) — see `buildOAuthProviders`'s
+    // own "Two refusals" doc — so "every provider it is legal to enable at once"
+    // is two configurations, not one: dev + Google + GitHub, and real OIDC +
+    // Google + GitHub.
+    const REAL_ADAPTER_CLASSES = [
+      DevOAuthProvider, GoogleOAuthProvider, GitHubOAuthProvider, OidcOAuthProvider,
+    ];
+
+    function expectOnlyRealAdapters(providers: IOAuthProvider[]): void {
+      for (const provider of providers) {
+        expect(REAL_ADAPTER_CLASSES.some((Adapter) => provider instanceof Adapter)).toBe(true);
+      }
+    }
+
+    it('builds only real adapters with the development provider alongside Google and GitHub', () => {
+      const built = buildOAuthProviders(configOf({
+        PUBLIC_API_URL: 'http://localhost:3000',
+        OAUTH_DEV_ENABLED: '1',
+        OAUTH_GOOGLE_CLIENT_ID: 'id', OAUTH_GOOGLE_CLIENT_SECRET: 'OAUTH_GOOGLE_CLIENT_SECRET',
+        OAUTH_GITHUB_CLIENT_ID: 'id', OAUTH_GITHUB_CLIENT_SECRET: 'OAUTH_GITHUB_CLIENT_SECRET',
+      }));
+
+      expect(built.map((p) => p.provider)).toEqual(
+        [AuthProvider.GOOGLE, AuthProvider.GITHUB, AuthProvider.OIDC],
+      );
+      expectOnlyRealAdapters(built);
+    });
+
+    it('builds only real adapters with the real generic OIDC provider alongside Google and GitHub', () => {
+      const built = buildOAuthProviders(configOf({
+        PUBLIC_API_URL: 'http://localhost:3000',
+        OAUTH_OIDC_CLIENT_ID: 'id',
+        OAUTH_OIDC_CLIENT_SECRET: 'OAUTH_OIDC_CLIENT_SECRET',
+        OAUTH_OIDC_ISSUER_URL: 'https://issuer.example.test',
+        OAUTH_GOOGLE_CLIENT_ID: 'id', OAUTH_GOOGLE_CLIENT_SECRET: 'OAUTH_GOOGLE_CLIENT_SECRET',
+        OAUTH_GITHUB_CLIENT_ID: 'id', OAUTH_GITHUB_CLIENT_SECRET: 'OAUTH_GITHUB_CLIENT_SECRET',
+      }));
+
+      expect(built.map((p) => p.provider)).toEqual(
+        [AuthProvider.GOOGLE, AuthProvider.GITHUB, AuthProvider.OIDC],
+      );
+      expectOnlyRealAdapters(built);
     });
   });
 });

@@ -1,7 +1,6 @@
 import { ConfigService } from '@nestjs/config';
-import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
-import type { FederatedAccount } from '__FORGE_SCOPE__/core/identities/types';
 import { DevOAuthProvider } from './adapters/DevOAuthProvider';
+import { GitHubOAuthProvider } from './adapters/GitHubOAuthProvider';
 import { GoogleOAuthProvider } from './adapters/GoogleOAuthProvider';
 import { OidcOAuthProvider } from './adapters/OidcOAuthProvider';
 import type { IOAuthProvider } from './IOAuthProvider';
@@ -15,57 +14,6 @@ function isConfigured(config: ConfigService, key: string): boolean {
 /** An adapter needing a client id and a client secret has both, or neither counts. */
 function hasCredentialPair(config: ConfigService, idKey: string, secretKey: string): boolean {
   return isConfigured(config, idKey) && isConfigured(config, secretKey);
-}
-
-/**
- * Stands in for a real adapter until Tasks 6–8 write one. **Exported, and named
- * so a grep for it finds every use**, on purpose: this class must not survive
- * to the end of the phase.
- *
- * `buildOAuthProviders` below decides WHICH providers a deployment has — the
- * config-presence rules are this task's (Task 5's) whole job. What each
- * provider actually does once called is Tasks 6, 7 and 8's: the development
- * adapter, Google, the generic OIDC adapter and GitHub. Nothing in this
- * factory's own tests calls `authorizationUrl` or `fetchAccount`, and no route
- * can reach them yet either — `OAuthProviderRegistry` is not consumed until
- * Task 12 — so this class carries only the one thing the factory's contract
- * needs right now, `provider`, set correctly, and refuses loudly rather than
- * returning a value that would look like it worked.
- *
- * ADR-0008 says an unconfigured provider is *absent* — "never a crash or a
- * broken button" — and an instance of this class reachable from a deployment's
- * own registry is exactly a broken button: it looks registered, and throws the
- * moment a browser reaches it. The seam is therefore not left to Tasks 6, 7
- * and 8 to remember to close by convention alone. **A test in the final
- * adapter task asserts that no provider `buildOAuthProviders` returns is an
- * `instanceof UnimplementedOAuthProvider`** — so the phase cannot close with
- * one still wired into a real deployment's provider list, whichever of the
- * three tasks happens to land last.
- *
- * Each of Tasks 6, 7 and 8 replaces the branch below that constructs one of
- * these with `new <Provider>OAuthProvider(...)`. Nothing else in this file —
- * the presence rules, the two refusals, the exported signature — is theirs to
- * change; see `IOAuthProvider`'s own note that the factory is used by
- * reference, not by copy.
- */
-export class UnimplementedOAuthProvider implements IOAuthProvider {
-  constructor(public readonly provider: AuthProvider) {}
-
-  async authorizationUrl(): Promise<string> {
-    return this.notImplemented();
-  }
-
-  fetchAccount(): Promise<FederatedAccount> {
-    return this.notImplemented();
-  }
-
-  private notImplemented(): never {
-    throw new Error(
-      `${this.provider}: no adapter is registered yet. buildOAuthProviders only decides `
-      + 'which providers this deployment has; Tasks 6–8 write the adapters this placeholder '
-      + 'stands in for.',
-    );
-  }
 }
 
 /**
@@ -181,7 +129,10 @@ export function buildOAuthProviders(config: ConfigService): IOAuthProvider[] {
     }));
   }
   if (githubConfigured) {
-    providers.push(new UnimplementedOAuthProvider(AuthProvider.GITHUB));
+    providers.push(new GitHubOAuthProvider({
+      clientId: config.getOrThrow<string>('OAUTH_GITHUB_CLIENT_ID'),
+      clientSecret: config.getOrThrow<string>('OAUTH_GITHUB_CLIENT_SECRET'),
+    }));
   }
   // oidcConfigured and devEnabled are mutually exclusive by construction: the PF-1
   // guard above throws before this point whenever both are true, so at most one of
