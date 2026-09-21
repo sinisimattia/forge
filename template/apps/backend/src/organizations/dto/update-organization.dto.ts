@@ -17,7 +17,7 @@ export class UpdateOrganizationDto {
   @MaxLength(200, { message: validationMessage('validation.MAX_LENGTH') })
   readonly name?: string;
 
-  /** The new path segment identifying the organization. Omit it to leave the slug alone. */
+  /** The new handle identifying the organization. Omit it to leave the slug alone. */
   @IsOptional()
   @IsString({ message: validationMessage('validation.IS_STRING') })
   @IsNotEmpty({ message: validationMessage('validation.IS_NOT_EMPTY') })

@@ -17,17 +17,23 @@ export class Organization {
   /** The name shown to its members, stored trimmed. */
   readonly name: string;
   /**
-   * A slug this project is willing to put in a path.
+   * A stable, human-readable handle for the organization: supplied by the
+   * caller, editable, shown wherever the organization itself is, and unique
+   * per organization.
    *
    * Lowercase letters, digits and single hyphens, never leading or trailing.
-   * Deliberately narrower than what a URL permits: the value ends up in
-   * `/organizations/<slug>` and in mail links, and a slug that needs escaping
-   * in either is a slug that will eventually be escaped differently in the two.
+   * **Not currently used in any URL** — nothing in this project builds a path
+   * or a link from it today. The rule stays narrower than what a URL permits
+   * anyway, and deliberately: it is *reserved* for that use, not put to it yet,
+   * so a later phase can start putting it in a path with no migration and no
+   * loosened regex to reconsider first. Say it that way and no other, or the
+   * next reader inherits a claim this file no longer keeps.
    *
    * The entity does **not** derive this from the name. Two organizations
    * called "Acme Works" would collide on a value neither chose, and a rename
-   * would silently change every URL naming the old one. The caller supplies
-   * it; this only refuses one that cannot be in a path.
+   * would silently invalidate anything that had already keyed off the old one.
+   * The caller supplies it; this only refuses one that could not be reserved
+   * for that future use.
    */
   readonly slug: string;
   /** When the organization came into being. */
