@@ -12,6 +12,7 @@
     "typecheck": { "cache": true, "dependsOn": ["^build"] },
     "purity": { "cache": true },
     "layers": { "cache": true },
-    "coverage": { "cache": true, "inputs": ["default", "^production"] }
+    "coverage": { "cache": true, "inputs": ["default", "^production"] },
+    "build-storybook": { "cache": true, "inputs": ["production", "^production"] }
   }
 }

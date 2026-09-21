@@ -29,8 +29,23 @@ jobs:
           cache: npm
       - run: npm ci
       - uses: nrwl/nx-set-shas@v5
-      - name: Lint, typecheck, test, build, purity, layers, coverage (affected)
-        run: npx nx affected -t lint typecheck test build purity layers coverage --base=$NX_BASE --head=$NX_HEAD
+      # `build-storybook` is named explicitly and that is not redundant: it is a separate nx
+      # target, and `-t build` does not invoke it. Leaving it off this line is how a story
+      # file ends up compiled by nothing at all — Forge's own CI had exactly that gap for two
+      # phases, and the stories it shipped in that window were never once bundled.
+      #
+      # It is on the same `affected` line as the rest rather than in a job of its own so that
+      # it runs on every push and pull request this workflow handles, with no
+      # `continue-on-error` and no condition of its own. A gate that runs only on the path
+      # somebody can choose not to take is not a gate.
+      #
+      # One thing to know before trusting a green run: `storybook build` exits 0 over an empty
+      # module graph, so its exit code alone is not evidence that any story was compiled. The
+      # count it prints is. `apps/webapp/app/test/storybook-config.spec.ts` asserts in the fast
+      # tier that the `stories` glob still matches real files, which is the assumption this
+      # step cannot check about itself.
+      - name: Lint, typecheck, test, build, storybook, purity, layers, coverage (affected)
+        run: npx nx affected -t lint typecheck test build build-storybook purity layers coverage --base=$NX_BASE --head=$NX_HEAD
 
   docker:
     runs-on: ubuntu-latest
