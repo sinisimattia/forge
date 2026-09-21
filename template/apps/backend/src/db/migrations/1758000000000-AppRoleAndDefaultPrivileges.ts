@@ -40,11 +40,13 @@ async function exec(
   // it still collapses `%%` to `%` — so this stays a `format()` call rather
   // than running the template directly.
   const rendered: { sql: string }[] = await queryRunner.query(
+    // eslint-disable-next-line migration-sql/sql-is-a-string-literal -- Not a schema statement: this is the `format()` plumbing that renders one, and its own text is fixed here rather than coming from anywhere a migration author writes. The schema statement is the `template` argument at the `exec()` call, which is a literal and is what the guards read.
     placeholders.length === 0
       ? 'SELECT format($1::text) AS sql'
       : `SELECT format($1::text, ${placeholders.join(', ')}) AS sql`,
     [template, ...bound],
   );
+  // eslint-disable-next-line migration-sql/sql-is-a-string-literal -- The one shape this rule cannot pin and this backend genuinely needs. The statement is rendered by `format()` IN THE SERVER, from a template that IS a literal at the `exec()` call above and is therefore read by every guard in `__tests__/migration-sql.spec.ts`; only the role name, already validated by `requireAppRoleName`, is interpolated, and `%I` is the parser's own escaping. Postgres refuses a bind parameter in a GRANT or REVOKE, so there is no literal-only way to write this. That spec asserts the EXACT set of exemptions in this directory, so a fourth one turns a test red rather than passing unnoticed.
   await queryRunner.query(rendered[0].sql);
 }
 

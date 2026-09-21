@@ -58,6 +58,40 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  * "refuses" is a property this suite checks rather than one a reader infers
  * from a regex.
  *
+ * ## And the lexer fails closed, because modelling constructs does not
+ * converge either
+ *
+ * Round 6 found the next layer down. Moving off per-spelling matching had
+ * fixed the *guards*; the lexer underneath them still had a default case, and
+ * two constructs fell into it — `E'\''`, whose escape rules end the literal
+ * one character later than a plain literal's do, and a `$` abutting an
+ * identifier, where Postgres's longest-match rule means `x$q$` opens no dollar
+ * quote at all. Both hid an executable `ALTER TABLE … OWNER TO` or `REASSIGN
+ * OWNED BY` from every guard at once. Both were strict regressions: the
+ * raw-text regex the canonical form replaced had caught them. Both were
+ * confirmed against Postgres 17, with ownership actually moving.
+ *
+ * Adding a branch for each would have been the same move that failed five
+ * times, one level lower. So `canonicalize` no longer has a default case. It
+ * recognises a fixed list of token starts and **refuses the whole argument**
+ * the moment it meets anything else, reducing it to `UNMODELLED` and turning
+ * `no migration contains a construct the lexer does not model` red. The
+ * precedent was already in the file: `U&"…"` has been marked-and-refused
+ * rather than decoded since round 5, because `UESCAPE` can redefine the
+ * escape character. Refusal generalizes that from one construct to every
+ * construct. The supply of SQL spellings is not finite; the list of things
+ * this lexer claims to understand is, and that is the only one worth
+ * enumerating.
+ *
+ * That makes the refusal the largest concentration of risk in the file — a
+ * refusal that stopped refusing would make all six guards blind at once, in
+ * silence. `the canonical form refuses what it does not model` is therefore
+ * one case per refusal rule plus the shapes that must NOT be refused, and
+ * every rule was mutation-tested: deleting any one of them turns this suite
+ * red. One rule written in the first draft could not be killed that way — a
+ * second refusal covering input another rule already refused — and was
+ * removed rather than kept with a test that only asserted its message.
+ *
  * Canonicalization deliberately does **not** erase what a guard needs to see.
  * String literals survive verbatim, which is why `audit_entries is never given
  * a foreign key` still has to exclude statements that open `COMMENT ON`: the
@@ -74,38 +108,57 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  * A textual guard over SQL embedded in TypeScript still cannot be made
  * complete, and saying which shapes get past these ones is more useful than
  * implying none do. Each bullet below was constructed and confirmed open
- * before being written here, because this list has been wrong three times —
+ * before being written here, because this list has been wrong four times —
  * once naming a case that was already covered, once omitting one that was
- * live, and once (round 5) omitting a regression the canonical form itself had
- * introduced, because nobody had thought to ask which of SQL's lexical
- * constructs the lexer actually knew about. The answer to that last question
- * is now written out on `canonicalize`, construct by construct, and each one
- * is pinned by a test.
+ * live, once (round 5) omitting a regression the canonical form itself had
+ * introduced, and once (round 6) describing two gaps as permanently open when
+ * they were closable, just not from inside this file.
  *
- * Both bullets are about the *extractor's reach*, not the guards: the
- * statement never reaches a guard as text. Anything that does reach one — any
- * spelling of any statement — is the canonical form's problem, and that is
- * where the effort goes.
+ * The two that were closable were both about the *extractor's reach* rather
+ * than the guards: the statement never reached a guard as text at all. No
+ * smarter extractor could have fixed either, so neither was fixed by one.
+ * They are closed at **authoring time** instead, by two ESLint rules in
+ * `eslint-rules/migration-sql.mjs` scoped to `src/db/migrations/**`:
  *
- * - **SQL that is not a literal at the call.** `sqlStatements` reads the
- *   string written at `queryRunner.query(…)` / `exec(queryRunner, …)`. A
- *   hoisted `const sql = '…'; await queryRunner.query(sql)` yields nothing at
- *   all; `'ALTER TABLE ' + table + ' OWNER TO app'` yields only the first
- *   fragment; a `${}` interpolation of a variable yields text with the
- *   variable's name in it where the table's name should be. All three pass
- *   every "no statement does X" assertion in this file.
- * - **Schema changes made through TypeORM's QueryRunner API rather than SQL.**
- *   `queryRunner.createForeignKey('audit_entries', …)` adds exactly the
- *   foreign key this file exists to forbid, and leaves no SQL text anywhere
- *   for a guard to read. The migrations here use `query()` and `exec()`
- *   throughout; nothing in the type system requires the next one to.
+ * - **SQL that is not a literal at the call** — a hoisted `const`, a
+ *   concatenation, a `${}` interpolation — is now a lint error.
+ *   `migration SQL is pinned to string literals at the call site` asserts both
+ *   rules are wired on, and asserts the EXACT set of `eslint-disable`
+ *   exemptions the migrations take, so a fourth one is a red test rather than
+ *   a line in a diff. The three that exist are all `format()` plumbing inside
+ *   an `exec` helper, where Postgres refuses a bind parameter and the schema
+ *   statement is the literal template passed in.
+ * - **Schema changes made through TypeORM's `QueryRunner` API** —
+ *   `createForeignKey('audit_entries', …)` and every sibling — are forbidden
+ *   outright, by an allow-list of one method (`query`), for the same reason
+ *   `PERMITTED_ALTERS` is an allow-list: the dangerous members cannot be
+ *   enumerated and the interface is TypeORM's to extend.
  *
- * Neither is a way to weaken the database that a reviewer reading the
- * migration could not see, and what stands behind all of it is D13: Task 19
- * runs the real statement against the real Postgres, and its fault injections
- * include the foreign-key bypass. If a change to the audit table cannot be
- * made obvious in the text, that is a reason to be suspicious of the change,
- * not of the test.
+ * **Neither rule closes the lexer's class, and the lexer does not close
+ * theirs.** It is worth being exact, because the two fixes look
+ * interchangeable. `E'\''` and a `$` abutting an identifier ARE string
+ * literals at the call; the lint rules accept them without a word. A `const`
+ * hoist defeats the lexer however much the lexer models, because the lexer is
+ * never shown the string. Both were needed.
+ *
+ * What remains open, and is not closable this way:
+ *
+ * - **Aliasing the query runner.** `const qr = queryRunner; qr.createForeignKey(…)`
+ *   roots at a different binding, and a syntactic rule without type
+ *   information cannot follow it. Smaller and far more visible than what it
+ *   replaced — it is three lines of deliberate indirection in a migration —
+ *   but it is not nothing.
+ * - **Prose is read as SQL, not the reverse.** `sqlStatements` matches its
+ *   call shapes anywhere in the file, comments included, so a TSDoc line
+ *   mentioning `exec(queryRunner, '…')` becomes a statement and can fail a
+ *   guard. That is the safe direction and is left alone deliberately: the
+ *   alternative is an extractor that skips regions, which is a place to hide
+ *   one.
+ *
+ * What stands behind all of it is D13: Task 19 runs the real statement against
+ * the real Postgres, and its fault injections include the foreign-key bypass.
+ * If a change to the audit table cannot be made obvious in the text, that is a
+ * reason to be suspicious of the change, not of the test.
  */
 
 const MIGRATIONS_DIR = join(__dirname, '..', 'migrations');
@@ -149,15 +202,21 @@ const allMigrations: readonly (readonly [string, string])[] = readdirSync(MIGRAT
  * two of the three delimiters is a bypass in its own right, and a silent one:
  * the injected statement is not refused, it is simply never seen.
  *
- * A shape that remains invisible — SQL that is not a literal at the call at
- * all — is disclosed at the top of this file.
+ * SQL that is not a literal at the call at all is invisible to this function
+ * by construction, and always will be. It is no longer invisible to the
+ * project: the `migration-sql/sql-is-a-string-literal` ESLint rule makes it an
+ * error where a migration author would write it, which is the only place the
+ * information still exists. See `migration SQL is pinned to string literals at
+ * the call site`, and the disclosure at the top of this file for why that is a
+ * different class from anything the canonical form can address.
  *
  * The `yields the SQL of %s` cases below are a weaker guard than that gap
- * needs, and it is worth being exact about which: each fires when its migration
- * yields *no* statements at all, so they catch the extractor being broken or a
- * whole migration written in a shape it cannot read. They do not fire on a
- * single unreadable statement inside a migration whose other statements read
- * fine, which is exactly what hoisting one query into a `const` produces.
+ * needed, and it is worth being exact about which: each fires when its
+ * migration yields *no* statements at all, so they catch the extractor being
+ * broken or a whole migration written in a shape it cannot read. They do not
+ * fire on a single unreadable statement inside a migration whose other
+ * statements read fine, which is exactly what hoisting one query into a
+ * `const` produces — and is exactly what the lint rule now refuses.
  */
 function sqlStatements(source: string): string[] {
   const call = /(?:queryRunner\.query|exec)\(\s*(?:queryRunner\s*,\s*)?(?:`([^`]*)`|'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)")/g;
@@ -199,6 +258,33 @@ function endOfStringLiteral(raw: string, at: number): number {
 }
 
 /**
+ * The index just past the double-quoted identifier starting at `at`, or -1
+ * when it is never closed.
+ *
+ * `""` inside is an escaped quote and does not close the identifier, exactly
+ * as `''` does not close a string literal. An unterminated one is refused
+ * rather than read to the end of the argument: `ALTER TABLE "x; REASSIGN
+ * OWNED BY owner TO app` would otherwise become a single identifier whose
+ * text nothing splits at `;`, which is a way to hide a statement.
+ *
+ * @param raw - the argument being scanned
+ * @param at - the index of the opening double quote
+ * @returns the index just past the closing double quote, or -1
+ */
+function endOfQuotedIdentifier(raw: string, at: number): number {
+  let end = at + 1;
+  while (end < raw.length) {
+    if (raw[end] === '"' && raw[end + 1] === '"') {
+      end += 2;
+      continue;
+    }
+    if (raw[end] === '"') return end + 1;
+    end += 1;
+  }
+  return -1;
+}
+
+/**
  * The index just past the dollar-quoted literal starting at `at`, or -1 when
  * `at` does not open one or it is never closed.
  *
@@ -220,6 +306,15 @@ function endOfStringLiteral(raw: string, at: number): number {
  * so five guards read an empty corpus and reported clean. That is the risk
  * of one lexer under every guard, arriving: the failure is not one guard
  * being lenient, it is all of them being blind at once.
+ *
+ * **This function is only ever called at a `$` that does not abut an
+ * identifier character on its left**, and that precondition is load-bearing
+ * rather than incidental. Postgres's lexer takes the longest match, so in
+ * `SELECT 1 AS x$q$` the text `x$q$` is one identifier and no dollar quote is
+ * opened at all; calling this here would open one and swallow everything up
+ * to the next `$q$`. `canonicalize` refuses that shape outright rather than
+ * relying on getting Postgres's longest-match rule right — see the
+ * `$`-abutting-an-identifier rule there.
  *
  * There is an irony in the construct. `AppRoleAndDefaultPrivileges` used to
  * wrap its `CREATE ROLE` in a `DO $do$ … $do$` block and that block was
@@ -248,8 +343,96 @@ function endOfDollarLiteral(raw: string, at: number): number {
 }
 
 /**
+ * What a `query()` argument reduces to when the lexer meets a construct it
+ * does not model.
+ *
+ * One string, standing for the whole argument: everything else in it is
+ * discarded, because a lexer that has just admitted it does not understand
+ * the text is in no position to say what the rest of it means.
+ * `no migration contains a construct the lexer does not model` is what turns
+ * this into a red test.
+ */
+const UNMODELLED = 'unmodelled_sql_construct';
+
+/**
+ * Every character `canonicalize` will accept as punctuation or an operator.
+ *
+ * Postgres's own lexer scanner, verbatim: its `self` characters (the
+ * brackets, comma, dot, semicolon, colon and the arithmetic and comparison
+ * signs) and its `op_chars` (`~ ! @ # ^ & |`, a backtick and `?`). `$`,
+ * `'` and `"` are not here — each has its own branch. **Anything not in this
+ * set is a construct the lexer does not model, and is refused.** That is the
+ * whole of the whitelist: `\` (which is what makes `E'\''` unreachable by a
+ * second route), `{`/`}` (a `${}` interpolation surviving into the extracted
+ * text), and every non-ASCII letter Postgres would accept in an identifier
+ * all fall outside it.
+ */
+const MODELLED_PUNCTUATION = new Set([...',()[].;:+-*/%^<>=', ...'~!@#^&|`?']);
+
+/**
  * The statements of one `query()` argument, each in the single spelling every
- * guard in this file is written against.
+ * guard in this file is written against — or a refusal.
+ *
+ * ## Fail closed: a whitelist of token starts, not a list of bypasses
+ *
+ * Rounds 1–5 of this file's review each closed one *spelling* of a table
+ * reference and each was followed by the discovery of another; round 5
+ * replaced per-spelling matching with this canonical form, and the review
+ * that followed found two more shapes — `E'…'` and a `$` abutting an
+ * identifier — that the lexer itself did not model. Adding a branch for each
+ * would have been the sixth round of a move that has failed five times.
+ *
+ * So this is not a scanner with a default case. It recognises a fixed list of
+ * token starts — whitespace, the two comment forms, a word, a numeric
+ * constant, `$`, `'`, `"`, and the punctuation in `MODELLED_PUNCTUATION` —
+ * and **refuses the entire argument the moment it meets anything else**,
+ * returning `UNMODELLED` in place of every statement in it. The supply of SQL
+ * spellings is not finite; the supply of things this lexer claims to
+ * understand is, and that is the only one worth enumerating.
+ *
+ * The precedent is `U&"…"`, already handled this way: it is marked and never
+ * decoded, because `UESCAPE` can redefine the escape character and decoding
+ * would mean writing a parser. Refusal generalizes that from one construct to
+ * every construct.
+ *
+ * The rules that refuse, each pinned by a case in `the canonical form refuses
+ * what it does not model`:
+ *
+ * - **A word immediately followed by `'`**, or by `&'` — `E'…'`, `B'…'`,
+ *   `X'…'`, `U&'…'`. Their escape rules differ from a plain literal's:
+ *   `E'\''` contains an escaped apostrophe, so a lexer without an `E` branch
+ *   reads `''` as a doubled quote and runs past the literal's true end.
+ *   Verified executable against Postgres 17, with ownership actually moving.
+ * - **A word immediately followed by `$`.** `SELECT 1 AS x$q$` is one
+ *   identifier to Postgres, by the longest-match rule, and `$q$` opens
+ *   nothing; a lexer that opens a dollar quote there swallows the rest of the
+ *   argument. Also verified executable. The alternative — lexing the whole of
+ *   `x$q$` as an identifier, which is what Postgres does — was rejected
+ *   because it makes every guard depend on this file having got a lexing rule
+ *   of another program right, and `$` in an identifier appears nowhere in
+ *   this schema.
+ * - **A quoted identifier that is unterminated, or that is not an ordinary
+ *   name** (anything outside `[A-Za-z0-9_$]`). `"a;b"` is one identifier to
+ *   Postgres and two statements to the split below, which is a fragmentation
+ *   a guard can be walked through.
+ * - **A numeric constant with an identifier character after it.** Postgres
+ *   rejects `1abc` as trailing junk; reading it as `1` then `abc` is a
+ *   invented spelling.
+ * - **Any other character.** See `MODELLED_PUNCTUATION`.
+ *
+ * Two shapes are deliberately *not* refused, because ordinary text hides
+ * nothing and a noisier failure is worse than a precise one: an unterminated
+ * `'`, and a bare `$` that opens neither a dollar quote nor a `$n` parameter.
+ * Each becomes the character it is and scanning carries on, so everything
+ * after it stays visible to every guard. Neither is valid SQL, so nothing
+ * legitimate depends on the choice.
+ *
+ * An unterminated `$tag$` *used* to be in that list and no longer is: the
+ * `q` in `$q$ unterminated` is a word immediately followed by `$`, so the
+ * rule above refuses the argument before the question of the dangling quote
+ * arises. That is a change in which guard goes red, not in whether one does
+ * — the statement after the stray tag was visible before and the whole
+ * argument is refused now, and both are closed.
  *
  * ## What it does, and which bypass each part retires
  *
@@ -269,11 +452,6 @@ function endOfDollarLiteral(raw: string, at: number): number {
  *   after it out of view — the regression `endOfDollarLiteral` exists to fix,
  *   and the sharpest illustration of what one shared lexer costs when it is
  *   wrong.
- * - **An unterminated literal, of either kind, is not treated as a literal at
- *   all.** Its opening character becomes ordinary text and scanning carries
- *   on, so nothing after it is hidden. Such a statement is not valid SQL and
- *   Postgres would refuse it, so the choice is only about what the guards can
- *   see, and more is the safe answer.
  * - **Quoted identifiers are unquoted and folded**, so `"audit_entries"`,
  *   `"AUDIT_ENTRIES"` and `audit_entries` are one name (rounds 1–2).
  * - **Everything outside a literal is lower-cased**, so no guard needs an `i`
@@ -306,7 +484,8 @@ function endOfDollarLiteral(raw: string, at: number): number {
  * prose — is the failure mode that actually bites.
  *
  * @param raw - one `query()` argument, as written
- * @returns its statements, canonical, in order, with empties dropped
+ * @returns its statements, canonical, in order, with empties dropped; or a
+ *   single `UNMODELLED` string if any part of it was not modelled
  */
 function canonicalize(raw: string): string[] {
   const literals: string[] = [];
@@ -319,60 +498,27 @@ function canonicalize(raw: string): string[] {
     index = end;
   };
 
+  /**
+   * Refuse the whole argument, naming what stopped the lexer and where.
+   *
+   * The excerpt is kept in its original case on purpose. Every guard in this
+   * file matches lower case, and migration SQL is written with upper-case
+   * keywords, so a refusal message is unlikely to make a second, unrelated
+   * guard fire on the text quoted inside it — and if it does, the effect is
+   * one more red test, never one fewer.
+   */
+  const refuse = (at: number, what: string): string[] => [
+    `${UNMODELLED} (${what}) at ${at}: `
+    + raw.slice(Math.max(0, at - 24), at + 24).replace(/\s+/g, ' '),
+  ];
+
   while (index < raw.length) {
     const here = raw[index];
-    const next = raw[index + 1];
+    const next = raw[index + 1] ?? '';
 
-    const dollar = endOfDollarLiteral(raw, index);
-    if (dollar !== -1) {
-      lift(dollar);
-      continue;
-    }
-
-    if (here === '\'') {
-      const end = endOfStringLiteral(raw, index);
-      if (end !== -1) {
-        lift(end);
-        continue;
-      }
-      // Unterminated. Falls through to ordinary text on purpose — see the
-      // TSDoc above for why that is the safe direction.
-    }
-
-    if (here === '"') {
-      let end = index + 1;
-      let identifier = '';
-      while (end < raw.length) {
-        if (raw[end] === '"' && raw[end + 1] === '"') {
-          identifier += '"';
-          end += 2;
-          continue;
-        }
-        if (raw[end] === '"') {
-          end += 1;
-          break;
-        }
-        identifier += raw[end];
-        end += 1;
-      }
-      if (text.endsWith('u&')) {
-        // `U&"…"` is a Unicode-escaped identifier: what is between the quotes
-        // is an escape sequence, not a name, so `U&"\0061udit_entries"` names
-        // `audit_entries` and canonicalizing it would mean decoding — with an
-        // escape character that a trailing `UESCAPE 'x'` clause can itself
-        // redefine. This does not decode it. It marks it, and
-        // `no migration writes a Unicode-escaped identifier` refuses the whole
-        // construct, which is complete without understanding any of it.
-        //
-        // Matched only where the `&` abuts the quote, because that is the only
-        // place Postgres accepts it: `U& "audit_entries"` with a space is not
-        // this syntax and not any other, it is a syntax error, so it is not a
-        // spelling of anything.
-        text = `${text.slice(0, -2)}unicode_escaped_identifier`;
-      } else {
-        text += identifier.toLowerCase();
-      }
-      index = end;
+    if (/[ \t\r\n\f\v]/.test(here)) {
+      text += ' ';
+      index += 1;
       continue;
     }
 
@@ -404,8 +550,117 @@ function canonicalize(raw: string): string[] {
       continue;
     }
 
-    text += here.toLowerCase();
-    index += 1;
+    // A word: a keyword or an unquoted identifier. Deliberately stops before
+    // `$` — see the refusal rules on this function.
+    if (/[A-Za-z_]/.test(here)) {
+      let end = index + 1;
+      while (end < raw.length && /[A-Za-z0-9_]/.test(raw[end])) end += 1;
+      const word = raw.slice(index, end).toLowerCase();
+      const after = raw[end] ?? '';
+
+      if (word === 'u' && after === '&' && raw[end + 1] === '"') {
+        // `U&"…"` is a Unicode-escaped identifier: what is between the quotes
+        // is an escape sequence, not a name, so `U&"\0061udit_entries"` names
+        // `audit_entries` and canonicalizing it would mean decoding — with an
+        // escape character that a trailing `UESCAPE 'x'` clause can itself
+        // redefine. This does not decode it. It marks it, and
+        // `no migration writes a Unicode-escaped identifier` refuses the whole
+        // construct, which is complete without understanding any of it.
+        //
+        // Matched only where the `&` abuts the quote, because that is the only
+        // place Postgres accepts it: `U& "audit_entries"` with a space is not
+        // this syntax and not any other, it is a syntax error, so it is not a
+        // spelling of anything.
+        const closed = endOfQuotedIdentifier(raw, end + 1);
+        if (closed !== -1) {
+          text += 'unicode_escaped_identifier';
+          index = closed;
+          continue;
+        }
+        // Unterminated, so this is not that construct after all. Falls through
+        // deliberately rather than refusing here: the `u` is then an ordinary
+        // word and the `"` reaches the quoted-identifier branch, which refuses
+        // the argument for the dangling quote. A second rule refusing the same
+        // input is a rule no test can be written to kill — the mutation that
+        // deleted it left this suite entirely green — and an unkillable rule is
+        // indistinguishable from a rule that has stopped working.
+      }
+      if (after === '\'' || (after === '&' && raw[end + 1] === '\'')) {
+        return refuse(index, `the string-literal prefix ${word}`);
+      }
+      if (after === '$') return refuse(index, 'a $ abutting an identifier');
+
+      text += word;
+      index = end;
+      continue;
+    }
+
+    if (/[0-9]/.test(here) || (here === '.' && /[0-9]/.test(next))) {
+      const numeric
+        = /^(?:0[xXoObB][0-9A-Fa-f_]+|(?:[0-9][0-9_]*(?:\.[0-9_]*)?|\.[0-9][0-9_]*)(?:[Ee][+-]?[0-9]+)?)/
+          .exec(raw.slice(index));
+      if (numeric === null) return refuse(index, 'a numeric constant');
+      const end = index + numeric[0].length;
+      if (/[A-Za-z_$]/.test(raw[end] ?? '')) {
+        return refuse(index, 'trailing junk after a numeric constant');
+      }
+      text += numeric[0].toLowerCase();
+      index = end;
+      continue;
+    }
+
+    if (here === '$') {
+      const dollar = endOfDollarLiteral(raw, index);
+      if (dollar !== -1) {
+        lift(dollar);
+        continue;
+      }
+      const parameter = /^\$[0-9]+/.exec(raw.slice(index));
+      if (parameter !== null) {
+        text += parameter[0];
+        index += parameter[0].length;
+        continue;
+      }
+      // A `$` that opens neither a dollar quote nor a `$n` parameter. Postgres
+      // refuses it outright, so this is only about what the guards can see:
+      // as ordinary text it hides nothing, which is the safe direction.
+      text += '$';
+      index += 1;
+      continue;
+    }
+
+    if (here === '\'') {
+      const end = endOfStringLiteral(raw, index);
+      if (end !== -1) {
+        lift(end);
+        continue;
+      }
+      // Unterminated. Ordinary text on purpose — see the TSDoc above for why
+      // that is the safe direction.
+      text += '\'';
+      index += 1;
+      continue;
+    }
+
+    if (here === '"') {
+      const closed = endOfQuotedIdentifier(raw, index);
+      if (closed === -1) return refuse(index, 'an unterminated quoted identifier');
+      const name = raw.slice(index + 1, closed - 1).replace(/""/g, '"');
+      if (!/^[A-Za-z0-9_$]+$/.test(name)) {
+        return refuse(index, 'a quoted identifier that is not an ordinary name');
+      }
+      text += name.toLowerCase();
+      index = closed;
+      continue;
+    }
+
+    if (MODELLED_PUNCTUATION.has(here)) {
+      text += here;
+      index += 1;
+      continue;
+    }
+
+    return refuse(index, `the character ${JSON.stringify(here)}`);
   }
 
   const folded = text
@@ -671,6 +926,29 @@ function unicodeEscapedIdentifiers(statements: readonly Tagged[]): string[] {
   return statementsMatching(/\bunicode_escaped_identifier\b/, statements);
 }
 
+/**
+ * Statements the lexer refused to read.
+ *
+ * This is the one guard that is not about a shape of SQL at all: it reports
+ * every `query()` argument `canonicalize` gave up on, and giving up is what it
+ * does with any construct outside the fixed list it models. The other six
+ * guards are each written against a property of a canonical statement, and
+ * every one of them is only as good as the claim that the canonical form is
+ * the statement. This guard is that claim, made falsifiable.
+ *
+ * It is also the file's largest concentration of risk, which is why it is
+ * tested harder than anything else here: a refusal that stopped refusing would
+ * not make one guard lenient, it would make all six blind at once and in
+ * silence — the round-5 failure mode, one layer down. `the canonical form
+ * refuses what it does not model` runs one case per refusal rule, and
+ * `the unmodelled-construct guard: its corpus-size check is what refuses an
+ * empty corpus` holds the assertion itself to the same non-vacuity standard as
+ * its five neighbours.
+ */
+function unmodelledConstructs(statements: readonly Tagged[]): string[] {
+  return statementsMatching(new RegExp(`\\b${UNMODELLED}\\b`), statements);
+}
+
 describe('the audit migration', () => {
   const source = migrationSource('AuditAppendOnly');
 
@@ -884,6 +1162,84 @@ describe('the statement extractor', () => {
   });
 });
 
+describe('migration SQL is pinned to string literals at the call site', () => {
+  // The other half of Task 22a, and the half the canonical form cannot do.
+  //
+  // Every guard in this file reads the string written at
+  // `queryRunner.query(…)` / `exec(queryRunner, …)`. Two shapes give it
+  // nothing to read, and no improvement to the extractor can change that,
+  // because the statement never reaches the extractor: SQL that is not a
+  // literal at the call (a hoisted `const`, a concatenation, a `${}`
+  // interpolation), and a schema change made through TypeORM's `QueryRunner`
+  // API, which leaves no SQL text anywhere. Both used to be disclosed at the
+  // top of this file as permanently open.
+  //
+  // They are closed at authoring time instead, by two ESLint rules in
+  // `eslint-rules/migration-sql.mjs` scoped to `src/db/migrations/**`. That
+  // converts an unbounded extraction problem into a bounded syntactic one.
+  //
+  // **It does not close Item 1's class, and Item 1 does not close this one.**
+  // `E'\''` and a `$` abutting an identifier — the two shapes that reached a
+  // real Postgres past the canonical form — ARE string literals at the call,
+  // and these rules accept them without a word; they are closed by the lexer
+  // refusing constructs it does not model. A `const` hoist, conversely,
+  // defeats the lexer however much the lexer models, because the lexer is
+  // never shown the string. Both are needed and neither substitutes for the
+  // other.
+  //
+  // The two tests here are what stops the rules from being decorative: one
+  // says they are switched on, the other says nobody has quietly switched
+  // them off a line at a time.
+
+  const CONFIG = join(__dirname, '..', '..', '..', 'eslint.config.mjs');
+
+  it('has both rules wired on as errors, scoped to the migrations directory', () => {
+    // A lint rule nobody has wired up is indistinguishable from one that
+    // passes, and the wiring lives in a file no test would otherwise read.
+    const config = readFileSync(CONFIG, 'utf8');
+    expect(config).toContain('files: [\'src/db/migrations/**/*.ts\']');
+    expect(config).toContain('\'migration-sql/sql-is-a-string-literal\': \'error\'');
+    expect(config).toContain('\'migration-sql/no-query-runner-schema-api\': \'error\'');
+  });
+
+  it('takes exactly the three exemptions it is known to take, and no others', () => {
+    // The hole in any lint rule: `eslint-disable` is one comment away, and a
+    // disabled rule reports nothing, which reads exactly like a rule with
+    // nothing to report. Set equality over the whole migrations directory is
+    // what turns taking a fourth exemption into a red test that a person has
+    // to look at, rather than a line in a diff nobody queries.
+    //
+    // All three are the `format()` plumbing inside an `exec` helper, and none
+    // of them is a schema statement: the schema statement is the `template`
+    // argument at the `exec()` call, which IS a literal and IS read by every
+    // guard here. Postgres refuses a bind parameter in a GRANT
+    // or REVOKE, so the role name has to become part of the statement text and
+    // `format('%I')` is the escaping the parser itself agrees with — there is
+    // no literal-only way to write it.
+    const exemptions = allMigrations.flatMap(([name, source]) =>
+      source
+        .split('\n')
+        .filter((line) => line.includes('eslint-disable'))
+        .map((line) => `${name}: ${(/eslint-disable[a-z-]*\s+(\S+)/.exec(line) ?? [])[1]}`),
+    );
+    expect(exemptions.sort()).toEqual([
+      '1758000000000-AppRoleAndDefaultPrivileges.ts: migration-sql/sql-is-a-string-literal',
+      '1758000000000-AppRoleAndDefaultPrivileges.ts: migration-sql/sql-is-a-string-literal',
+      '1758000002000-AuditAppendOnly.ts: migration-sql/sql-is-a-string-literal',
+    ]);
+  });
+
+  it('and every exemption says why, on the line that takes it', () => {
+    // Set equality above counts them; this one makes each one answerable. An
+    // exemption with no reason on it is the same diff as an exemption with a
+    // bad reason, and only one of those should survive review.
+    const lines = allMigrations.flatMap(([, source]) =>
+      source.split('\n').filter((line) => line.includes('eslint-disable')));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) expect(line).toMatch(/ -- \S/);
+  });
+});
+
 describe('the canonical form of a statement', () => {
   // The normalizer is the single component every guard below depends on, so a
   // bug in it weakens all of them at once and in silence. These tests are what
@@ -1014,13 +1370,18 @@ describe('the canonical form of a statement', () => {
       .toEqual([`select ${body}`, OWNER_TO]);
   });
 
-  it('an unterminated dollar quote is not a literal, so what follows stays visible', () => {
+  it('an unterminated dollar quote refuses the argument rather than hiding what follows', () => {
     // Fails closed, deliberately. Postgres refuses an unterminated dollar quote
     // outright, so no valid migration contains one and nothing legitimate is
     // affected; what the choice decides is whether an *invalid* one can be used
-    // to hide the statement after it. It cannot.
+    // to hide the statement after it. It cannot — though the mechanism changed.
+    // This used to reduce to `['select $q$ unterminated', OWNER_TO]`, leaving
+    // the `ALTER TABLE` visible to its own guard. The `$`-abutting-an-identifier
+    // rule now fires first, on the `q$`, and refuses the whole argument. Both
+    // are red; this one is red in `no migration contains a construct the lexer
+    // does not model` instead of in the ALTER TABLE allow-list.
     expect(canonicalize('SELECT $q$ unterminated; ALTER TABLE audit_entries OWNER TO app'))
-      .toEqual(['select $q$ unterminated', OWNER_TO]);
+      .toEqual([expect.stringContaining(UNMODELLED)]);
   });
 
   it('an unterminated string literal is not a literal either, for the same reason', () => {
@@ -1073,6 +1434,127 @@ describe('the canonical form of a statement', () => {
       .filter((sql) => /^create table audit_entries\b/.test(sql));
     expect(created).toHaveLength(1);
     expect(created[0]).not.toMatch(/\breferences\b/);
+  });
+});
+
+describe('the canonical form refuses what it does not model', () => {
+  // The fail-closed half of the lexer, and the part of this file with the most
+  // leverage per line: every rule below, if it stopped firing, would not make
+  // one guard lenient — it would hand every guard in the file a canonical form
+  // built by a lexer that had silently misread the statement, which is the
+  // round-5 failure mode one layer down. So each rule gets its own case, and
+  // each case is a construct that was verified to be *executable* rather than
+  // merely parseable: these are statements Postgres runs, not curiosities.
+  //
+  // The two at the top are strict regressions. Both were caught by the raw-text
+  // regex this canonical form replaced, both slipped past the canonical form as
+  // first written, and both were confirmed against Postgres 17 with ownership
+  // actually moving before the rule refusing them was written.
+
+  /** What a refusal looks like, without pinning the message text. */
+  function refused(sql: string): boolean {
+    const statements = canonicalize(sql);
+    return statements.length === 1 && statements[0].startsWith(UNMODELLED);
+  }
+
+  it('refuses the escape-string regression: E\'…\' reads past the literal\'s true end', () => {
+    // `E'\''` is an escaped apostrophe, not a doubled one. A lexer with no
+    // `E'…'` branch ends the literal at the `''` — one character too early —
+    // and the `ALTER TABLE` that follows is swallowed into the *next* literal
+    // instead of being split at `;` and shown to the allow-list.
+    const sql = 'SELECT E\'\\\'\'; ALTER TABLE audit_entries OWNER TO app; SELECT \'x\'';
+    expect(refused(sql)).toBe(true);
+    // ...and it is refused because of the prefix, not by accident of the rest.
+    expect(canonicalize(sql)[0]).toContain('string-literal prefix e');
+  });
+
+  it('refuses the dollar-tag regression: a $ abutting an identifier', () => {
+    // Postgres takes the longest match, so `x$q$` is one identifier and opens
+    // no dollar quote. `endOfDollarLiteral` opened one, and swallowed the
+    // `REASSIGN OWNED BY` between the two tags — guarding only the digit case,
+    // which is a different rule about a different character.
+    const sql = 'SELECT 1 AS x$q$; REASSIGN OWNED BY owner TO app; SELECT 1 AS y$q$';
+    expect(refused(sql)).toBe(true);
+    expect(canonicalize(sql)[0]).toContain('$ abutting an identifier');
+  });
+
+  it.each([
+    // A word abutting an apostrophe: every string-literal prefix at once,
+    // named and unnamed. Refusing the shape rather than the four spellings is
+    // the point — a fifth prefix needs no change here.
+    ['an E\'…\' escape string', 'SELECT E\'x\''],
+    ['a B\'…\' bit string', 'SELECT B\'1010\''],
+    ['an X\'…\' hex string', 'SELECT X\'ff\''],
+    ['a lower-case e\'…\'', 'SELECT e\'x\''],
+    ['a prefix this file has never heard of', 'SELECT zz\'x\''],
+    ['a U&\'…\' Unicode string', 'SELECT U&\'\\0041\''],
+    // A word abutting a dollar.
+    ['a $ inside an identifier', 'SELECT a$b FROM t'],
+    ['an unterminated dollar tag', 'SELECT $q$ unterminated'],
+    // Quoted identifiers that are not ordinary names.
+    ['an unterminated quoted identifier', 'ALTER TABLE "x; REASSIGN OWNED BY o TO app'],
+    ['a quoted identifier holding a semicolon', 'ALTER TABLE "a;b" OWNER TO app'],
+    ['a quoted identifier holding a space', 'ALTER TABLE "audit entries" OWNER TO app'],
+    ['a quoted identifier holding a quote', 'ALTER TABLE "a""b" OWNER TO app'],
+    ['an unterminated Unicode-escaped identifier', 'ALTER TABLE U&"audit_entries OWNER TO app'],
+    // ...refused by the quoted-identifier rule above, once the U& branch
+    // declines it. Listed here because the shape is what a reader looks for.
+    // Numerics.
+    ['trailing junk after a numeric', 'SELECT 1abc'],
+    ['a numeric abutting a dollar', 'SELECT 1$q$'],
+    // Characters outside the modelled set.
+    ['a backslash', 'SELECT 1 \\ 2'],
+    ['a surviving ${} interpolation', 'ALTER TABLE ${table} OWNER TO app'],
+    ['a non-ASCII identifier character', 'ALTER TABLE caf\u00e9 OWNER TO app'],
+    ['a backslash inside an otherwise ordinary statement', 'COMMENT ON TABLE t IS \\x'],
+  ])('refuses %s', (_label, sql) => {
+    expect(refused(sql)).toBe(true);
+  });
+
+  it.each([
+    // The other side of every rule above: what the lexer DOES model must still
+    // come through. Without these the refusal could be widened to "refuse
+    // everything" and this block would still be green, which is the shape a
+    // too-broad refusal takes.
+    ['the real schema\'s statements', 'CREATE TABLE audit_entries ( id uuid )'],
+    ['a $n bind parameter', 'SELECT format($1::text, $2::text) AS sql'],
+    ['a bare $ that opens nothing', 'SELECT $1$'],
+    ['an unterminated string literal', 'SELECT \'unterminated; SELECT 1'],
+    ['a dollar-quoted body', 'DO $do$ BEGIN END $do$'],
+    ['a format() placeholder', 'REVOKE UPDATE, DELETE ON audit_entries FROM %I'],
+    ['a numeric constant', 'SELECT 255, 1.5, .5, 1e10, 0x1f'],
+    ['a quoted ordinary name', 'ALTER TABLE "public"."audit_entries" OWNER TO app'],
+    ['a Unicode-escaped identifier', 'ALTER TABLE U&"\\0061udit_entries" OWNER TO app'],
+    ['an operator-heavy expression', 'SELECT a::text <> b || c, d[1] FROM t WHERE e ~ \'x\''],
+    ['a JSON default', 'ALTER TABLE t ALTER COLUMN metadata SET DEFAULT \'{}\'::jsonb'],
+  ])('and does not refuse %s', (_label, sql) => {
+    expect(refused(sql)).toBe(false);
+  });
+
+  it('refuses the WHOLE argument, not the offending statement alone', () => {
+    // The choice that makes this fail closed rather than merely loud. A lexer
+    // that has just said it does not understand the text cannot then claim to
+    // know where the statement boundaries in it are, so everything is dropped
+    // and one marker stands for the lot. Anything less would leave the guards
+    // reading a prefix that an attacker chose.
+    const statements = canonicalize(
+      'ALTER TABLE users OWNER TO app; SELECT E\'x\'; DROP TABLE audit_entries',
+    );
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).toContain(UNMODELLED);
+    expect(statements[0]).not.toContain('drop table');
+  });
+
+  it('and the marker survives extraction, so the guard can see it', () => {
+    // `canonicalStatements` is the path the real assertion takes. A refusal
+    // that were filtered out as an empty statement somewhere between here and
+    // there would be a refusal nobody ever reads.
+    const found = canonicalStatements(
+      'await queryRunner.query(`SELECT E\'x\'`);',
+    );
+    expect(found).toHaveLength(1);
+    expect(unmodelledConstructs(found.map((sql) => ['injected.ts', sql] as const)))
+      .not.toEqual([]);
   });
 });
 
@@ -1333,6 +1815,26 @@ describe('each guard fails, rather than passes, when what it examines is absent'
     expect(NOTHING.length).not.toBeGreaterThan(0);
   });
 
+  it('the unmodelled-construct guard: its corpus-size check is what refuses an empty corpus', () => {
+    // The guard with the most riding on it, held to the same standard as the
+    // rest. "No argument was refused" and "there were no arguments" are the
+    // same sentence to this predicate, and only the corpus-size check beside
+    // it tells them apart.
+    expect(unmodelledConstructs(NOTHING)).toEqual([]);
+    expect(NOTHING.length).not.toBeGreaterThan(0);
+  });
+
+  it('the unmodelled-construct guard: and its refusal branch is reachable at all', () => {
+    // The second way this guard goes vacuous, and the one the corpus-size
+    // check cannot see: a refusal rule that stopped firing would leave a
+    // corpus full of statements, none of them refused, and every assertion in
+    // this file green against a lexer that had quietly gone back to reading
+    // whatever it liked. So the branch is exercised here, on the shape that
+    // the real corpus must never contain.
+    const refused = canonicalize('SELECT E\'x\'').map((sql) => ['injected.ts', sql] as const);
+    expect(unmodelledConstructs(refused)).toHaveLength(1);
+  });
+
   it('and the real corpus is not empty, which is what makes all of the above matter', () => {
     const statements = allCanonicalStatements();
     expect(statements.length).toBeGreaterThan(0);
@@ -1465,6 +1967,24 @@ describe('audit_entries never has its privileges handed back', () => {
     const statements = allCanonicalStatements();
     expect(statements.length).toBeGreaterThan(0);
     expect(unicodeEscapedIdentifiers(statements)).toEqual([]);
+  });
+
+  it('and no migration contains a construct the lexer does not model', () => {
+    // The guard under the guards. Every other assertion in this file is a
+    // statement about a canonical form, and is worth exactly what the claim
+    // "this canonical form is that statement" is worth. Here is where that
+    // claim is checked: if any `query()` argument in any migration contains
+    // something `canonicalize` does not model, it is refused whole and this
+    // fails, rather than being read approximately and passed on to six guards
+    // that have no way of knowing.
+    //
+    // It is also the assertion that keeps the refusal honest in the other
+    // direction. A refusal written too broadly turns this red on the real
+    // migrations, which is the pressure that stops it being widened until it
+    // refuses everything and means nothing.
+    const statements = allCanonicalStatements();
+    expect(statements.length).toBeGreaterThan(0);
+    expect(unmodelledConstructs(statements)).toEqual([]);
   });
 });
 

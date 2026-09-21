@@ -69,6 +69,25 @@ expected rather than as corruption. `migration-sql.spec.ts` asserts that no stat
 migration gives this table a foreign key, however the key is written, and that
 `AuditEntryRecord` declares no relation for `migration:generate` to emit one from.
 
+That spec is a *text* guard: it reads the string written at the `query()` call, reduces it
+to a canonical form and refuses statements against that. Two things follow, and both are
+load-bearing rather than incidental.
+
+Its lexer **fails closed**. It recognises a fixed list of SQL token starts and refuses any
+argument containing anything else, rather than modelling constructs one at a time — five
+rounds of closing individual spellings, and then two constructs (`E'…'` escape strings and
+a `$` abutting an identifier) that slipped past the canonical form itself, are why. A
+migration that trips it gets a red test naming the construct, not a silent pass.
+
+And a text guard can only read text it is shown, so two ESLint rules in
+`apps/backend/eslint-rules/migration-sql.mjs`, scoped to the migrations directory, make sure
+it is shown everything: migration SQL must be a **string literal at the call site** (no
+hoisted `const`, no concatenation, no `${}` interpolation), and the only permitted method on
+the query runner is `query()` — TypeORM's `createForeignKey('audit_entries', …)` and its
+siblings would add exactly the foreign key this section forbids and leave no SQL text
+anywhere. Neither mechanism substitutes for the other: an `E'…'` *is* a string literal at
+the call, and a hoisted `const` defeats the lexer however much the lexer models.
+
 ### `TRUNCATE` is not `DELETE`
 
 They are separate privileges, and revoking one says nothing about the other. Measured: with

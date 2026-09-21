@@ -46,13 +46,14 @@ import { requireAppRoleName } from '../app-role';
  *   spelled `CREATE TABLE IF NOT EXISTS audit_entries` (with `DROP TABLE IF
  *   EXISTS` beside it) is the same statement to it as the plain spelling —
  *   that gap was disclosed as open for three rounds of that file's review and
- *   is now closed. **What it still cannot see is SQL that is not a literal at
- *   the call**: a rebuild assembled from a variable, or performed through
- *   TypeORM's `QueryRunner` schema API, leaves it nothing to read. If you are
- *   reading this bullet because you are about to rebuild this table, re-run
- *   this migration's `up()` afterwards regardless, or the application gets
- *   `UPDATE` and `DELETE` on the audit log back and nothing in the database
- *   will say so.
+ *   is now closed. A rebuild assembled from a variable, or performed through
+ *   TypeORM's `QueryRunner` schema API, used to leave that spec nothing to
+ *   read at all; both are now ESLint errors in this directory
+ *   (`eslint-rules/migration-sql.mjs`), so the SQL has to be written where a
+ *   text guard can see it. If you are reading this bullet because you are
+ *   about to rebuild this table, re-run this migration's `up()` afterwards
+ *   regardless, or the application gets `UPDATE` and `DELETE` on the audit log
+ *   back and nothing in the database will say so.
  * - Nothing here restricts the *owner*. Migrations, `psql` as the superuser and
  *   a backup restore can all still change these rows. The guarantee is
  *   deliberately about the application: it is the thing that is exposed, runs
@@ -92,5 +93,6 @@ async function exec(queryRunner: QueryRunner, template: string, role: string): P
     'SELECT format($1::text, $2::text) AS sql',
     [template, role],
   );
+  // eslint-disable-next-line migration-sql/sql-is-a-string-literal -- The one shape this rule cannot pin and this backend genuinely needs. The statement is rendered by `format()` IN THE SERVER, from a template that IS a literal at the `exec()` call above and is therefore read by every guard in `__tests__/migration-sql.spec.ts`; only the role name, already validated by `requireAppRoleName`, is interpolated, and `%I` is the parser's own escaping. Postgres refuses a bind parameter in a GRANT or REVOKE, so there is no literal-only way to write this. That spec asserts the EXACT set of exemptions in this directory, so a fourth one turns a test red rather than passing unnoticed.
   await queryRunner.query(rendered[0].sql);
 }
