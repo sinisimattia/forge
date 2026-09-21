@@ -45,7 +45,7 @@ export const DEV_OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
  * everything a real provider's callback does: the row lookup under a write
  * lock, single-use consumption, the exchange, `decideFederatedSignIn` or
  * `decideFederatedLink`, session issuance. **There has never been a page, and
- * Task 12 ruled out building one**: the first cut of this adapter left
+ * there is never going to be one.** An earlier shape of this adapter left
  * `authorizationUrl` pointing at an unbuilt `GET /auth/oauth/dev/authorize`
  * that 404'd — exactly the "button that fails when someone presses it"
  * ADR-0008 forbids, and it also made an end-to-end walk through this adapter
@@ -166,38 +166,39 @@ export class DevOAuthProvider implements IOAuthProvider {
    * every implementation behind it. See that interface's own doc for why.
    */
   public async authorizationUrl(params: AuthorizationUrlParams): Promise<string> {
-    const code = this.mintAuthorizationCode(this.address);
+    const code = this.mintAuthorizationCode();
     const query = new URLSearchParams({ code, state: params.state });
     return `${params.redirectUri}?${query.toString()}`;
   }
 
   /**
-   * Mints a code asserting `address`. Not part of {@link IOAuthProvider} —
-   * `authorizationUrl` is this class's only caller in production, always
-   * with {@link DevOAuthProvider.address}; kept `public` and parameterised
-   * (rather than reading `this.address` directly) because this suite mints
-   * codes for arbitrary test addresses to exercise `fetchAccount` in
-   * isolation.
+   * Mints a code asserting {@link DevOAuthProvider.address} — the only
+   * address this instance will ever assert. `private`, and takes no
+   * parameter: this is a total-bypass adapter, and "mint a code for
+   * whichever address you like" is exactly the extra reach such a class
+   * should not expose, even to its own package. `authorizationUrl` is its
+   * only caller. A test needing a code for a different address constructs a
+   * second instance configured with it, the same way a real deployment would
+   * only ever have one address configured per adapter instance.
    *
-   * The payload carries `exp` alongside `address`, signed together — Task
-   * 12's seam-closing: a code minted here is good for
-   * {@link DEV_OAUTH_CODE_TTL_MS} and no longer, checked in
-   * {@link DevOAuthProvider.fetchAccount} the same way a real provider's own
-   * authorization code would expire.
+   * The payload carries `exp` alongside `address`, signed together: a code
+   * minted here is good for {@link DEV_OAUTH_CODE_TTL_MS} and no longer,
+   * checked in {@link DevOAuthProvider.fetchAccount} the same way a real
+   * provider's own authorization code would expire.
    *
-   * `nonce` exists so that two codes minted for the same address within the
-   * same millisecond are never byte-identical — found by this class's own
-   * test for "mints a fresh code on every call" failing, the first time it
-   * was written, because `{ address, exp }` alone collides whenever `Date.now()`
-   * has not ticked between two calls. Two colliding codes would share one
-   * signature in {@link DevOAuthProvider.consumed}, so redeeming the first of
-   * two pending authorizations would silently spend the second's code too —
-   * a real, if narrow, correctness gap this field closes outright rather than
+   * `nonce` exists so that two codes minted within the same millisecond are
+   * never byte-identical — found by this class's own test for "mints a
+   * fresh code on every call" failing, the first time it was written,
+   * because `{ address, exp }` alone collides whenever `Date.now()` has not
+   * ticked between two calls. Two colliding codes would share one signature
+   * in {@link DevOAuthProvider.consumed}, so redeeming the first of two
+   * pending authorizations would silently spend the second's code too — a
+   * real, if narrow, correctness gap this field closes outright rather than
    * leaving to timing.
    */
-  public mintAuthorizationCode(address: string): string {
+  private mintAuthorizationCode(): string {
     const encoded = DevOAuthProvider.encode({
-      address,
+      address: this.address,
       exp: Date.now() + DEV_OAUTH_CODE_TTL_MS,
       nonce: randomBytes(9).toString('base64url'),
     });

@@ -4,17 +4,41 @@ import { DEV_OAUTH_CODE_TTL_MS, DevOAuthProvider } from '../DevOAuthProvider';
 const REDIRECT_URI = 'http://localhost:3000/auth/oauth/OIDC/callback';
 /** The one address a `DevOAuthProvider` instance below is configured to assert. */
 const CONFIGURED_ADDRESS = 'dev-signin@example.test';
-/** A distinct address used only where a test mints for an arbitrary subject. */
-const ADDRESS = 'ada@example.test';
+/** A distinct address, used only to build a second instance configured differently. */
+const OTHER_ADDRESS = 'ada@example.test';
+
+/**
+ * Mints a code the only way this suite is allowed to now: through
+ * `authorizationUrl`, on a fresh instance configured for `address`.
+ * `mintAuthorizationCode` is not part of this class's public surface — see
+ * its own doc for why a total-bypass adapter should not expose "mint for
+ * whatever address you like" beyond what a real sign-in ever needs.
+ */
+async function mintCode(address: string): Promise<{ adapter: DevOAuthProvider; code: string }> {
+  const adapter = new DevOAuthProvider(address);
+  const url = new URL(await adapter.authorizationUrl({
+    state: 's', codeChallenge: 'c', redirectUri: REDIRECT_URI,
+  }));
+  return { adapter, code: url.searchParams.get('code') as string };
+}
 
 describe('DevOAuthProvider', () => {
-  describe('authorizationUrl — no page, a direct round trip (Task 12 revision)', () => {
-    // The first cut of this adapter pointed authorizationUrl at
+  // Restored here, not at the end of each test that mocks it: a failing
+  // assertion inside a test skips whatever cleanup came after it, so a
+  // `mockRestore()` placed after the assertion leaves `Date.now` frozen for
+  // every later test in the file — one real failure becoming a cascade of
+  // misleading ones.
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  describe('authorizationUrl — no page, a direct round trip', () => {
+    // An earlier shape of this adapter pointed authorizationUrl at
     // `GET /auth/oauth/dev/authorize`, a page that was never built and that
     // 404'd — exactly ADR-0008's forbidden "button that fails when someone
-    // presses it." The coordinator's ruling: no page at all. authorizationUrl
-    // mints the code itself and hands back the real callback URL carrying it,
-    // so pressing the button lands directly back in `OAuthService.complete`.
+    // presses it." There is no page: authorizationUrl mints the code itself
+    // and hands back the real callback URL carrying it, so pressing the
+    // button lands directly back in `OAuthService.complete`.
 
     it('returns the callback URL it was given, unmodified, as the base', async () => {
       const adapter = new DevOAuthProvider(CONFIGURED_ADDRESS);
@@ -78,102 +102,56 @@ describe('DevOAuthProvider', () => {
     });
   });
 
-  it('asserts the address the code was minted for, as verified', async () => {
-    const adapter = new DevOAuthProvider(CONFIGURED_ADDRESS);
-    const code = adapter.mintAuthorizationCode(ADDRESS);
-
-    const account = await adapter.fetchAccount({ code, codeVerifier: 'v', redirectUri: REDIRECT_URI });
-
-    expect(account).toEqual({
-      provider: AuthProvider.OIDC,
-      subject: ADDRESS,
-      email: ADDRESS,
-      emailVerified: true,
-      displayName: null,
-    });
-  });
-
   it('is the only adapter whose account assertion needs no network', () => {
     // Not decoration: this is the property that makes it the development adapter.
     // If this class ever gains a fetch, it has stopped being one.
     expect(DevOAuthProvider.prototype.fetchAccount.toString()).not.toMatch(/fetch\(/);
   });
 
-  // Task 12: the seam Task 6 left open — `mintAuthorizationCode` had no
-  // expiry and no single-use enforcement, safe only because nothing called
-  // it. These two cases are the covering proof for the fix, watched failing
-  // against the pre-fix shape during development (a bare
-  // `base64url(address) + '.' + signature`, no `exp`, no `consumed` set):
-  // both cases below threw on `decoded.exp` being `undefined` in the first
-  // case (no expiry to compare against) and both fetches simply succeeded
-  // twice in the second (no set to consult). Load-bearing now, not merely
-  // prudent: `authorizationUrl` calls `mintAuthorizationCode` on every real
-  // sign-in through this adapter (see the describe block above).
-  describe('closes the mintAuthorizationCode seam (Task 12)', () => {
+  // The seam an earlier pass of this adapter left open: `mintAuthorizationCode`
+  // had no expiry and no single-use enforcement, safe only because nothing
+  // called it. Load-bearing now, not merely prudent: `authorizationUrl` calls
+  // it on every real sign-in through this adapter (see the describe block
+  // above).
+  describe('closes the mintAuthorizationCode seam', () => {
     it('refuses a code once it has expired', async () => {
       const mintedAt = 1_700_000_000_000;
-      const now = jest.spyOn(Date, 'now').mockReturnValue(mintedAt);
-      const adapter = new DevOAuthProvider(CONFIGURED_ADDRESS);
-      const code = adapter.mintAuthorizationCode(ADDRESS);
+      jest.spyOn(Date, 'now').mockReturnValue(mintedAt);
+      const { adapter, code } = await mintCode(CONFIGURED_ADDRESS);
 
       // Exactly at expiry, the code must already be refused — `exp` is a
       // deadline, not a still-good instant, so `<=` is the comparison this
       // test pins.
-      now.mockReturnValue(mintedAt + DEV_OAUTH_CODE_TTL_MS);
+      jest.spyOn(Date, 'now').mockReturnValue(mintedAt + DEV_OAUTH_CODE_TTL_MS);
 
       await expect(
         adapter.fetchAccount({ code, codeVerifier: 'v', redirectUri: REDIRECT_URI }),
       ).rejects.toThrow();
-
-      now.mockRestore();
     });
 
     it('accepts the same code the instant before it expires', async () => {
       // The direction the case above cannot prove on its own: a check that
       // refuses everything would also pass "refuses once expired."
       const mintedAt = 1_700_000_000_000;
-      const now = jest.spyOn(Date, 'now').mockReturnValue(mintedAt);
-      const adapter = new DevOAuthProvider(CONFIGURED_ADDRESS);
-      const code = adapter.mintAuthorizationCode(ADDRESS);
+      jest.spyOn(Date, 'now').mockReturnValue(mintedAt);
+      const { adapter, code } = await mintCode(CONFIGURED_ADDRESS);
 
-      now.mockReturnValue(mintedAt + DEV_OAUTH_CODE_TTL_MS - 1);
+      jest.spyOn(Date, 'now').mockReturnValue(mintedAt + DEV_OAUTH_CODE_TTL_MS - 1);
 
       await expect(
         adapter.fetchAccount({ code, codeVerifier: 'v', redirectUri: REDIRECT_URI }),
-      ).resolves.toMatchObject({ subject: ADDRESS });
-
-      now.mockRestore();
+      ).resolves.toMatchObject({ subject: CONFIGURED_ADDRESS });
     });
 
     it('refuses a code presented a second time, on the instance that minted it', async () => {
-      const adapter = new DevOAuthProvider(CONFIGURED_ADDRESS);
-      const code = adapter.mintAuthorizationCode(ADDRESS);
-
-      await expect(
-        adapter.fetchAccount({ code, codeVerifier: 'v', redirectUri: REDIRECT_URI }),
-      ).resolves.toMatchObject({ subject: ADDRESS });
-
-      // The exact same code, presented again. A caller who captured it off
-      // the first redirect must not be able to replay it.
-      await expect(
-        adapter.fetchAccount({ code, codeVerifier: 'v', redirectUri: REDIRECT_URI }),
-      ).rejects.toThrow();
-    });
-
-    it('refuses a code minted through authorizationUrl if presented twice', async () => {
-      // The end-to-end shape of the case above: the code a real sign-in
-      // attempt actually redeems — minted by authorizationUrl itself, not by
-      // a direct mintAuthorizationCode call — is exactly as single-use.
-      const adapter = new DevOAuthProvider(CONFIGURED_ADDRESS);
-      const url = new URL(await adapter.authorizationUrl({
-        state: 's', codeChallenge: 'c', redirectUri: REDIRECT_URI,
-      }));
-      const code = url.searchParams.get('code') as string;
+      const { adapter, code } = await mintCode(CONFIGURED_ADDRESS);
 
       await expect(
         adapter.fetchAccount({ code, codeVerifier: 'v', redirectUri: REDIRECT_URI }),
       ).resolves.toMatchObject({ subject: CONFIGURED_ADDRESS });
 
+      // The exact same code, presented again. A caller who captured it off
+      // the first redirect must not be able to replay it.
       await expect(
         adapter.fetchAccount({ code, codeVerifier: 'v', redirectUri: REDIRECT_URI }),
       ).rejects.toThrow();
@@ -194,9 +172,10 @@ describe('DevOAuthProvider', () => {
       // shallow implementation that only checks the code's shape — without
       // ever recomputing a signature — would pass it by accident. This one is
       // shaped exactly like a real code and fails only if the signature is
-      // actually verified against this instance's own secret.
-      const minter = new DevOAuthProvider(CONFIGURED_ADDRESS);
-      const codeFromAnotherInstance = minter.mintAuthorizationCode(ADDRESS);
+      // actually verified against this instance's own secret. A different
+      // configured address too, so a pass here cannot be mistaken for an
+      // address check succeeding by coincidence.
+      const { code: codeFromAnotherInstance } = await mintCode(OTHER_ADDRESS);
 
       const adapter = new DevOAuthProvider(CONFIGURED_ADDRESS);
       await expect(

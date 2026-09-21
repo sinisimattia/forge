@@ -104,11 +104,13 @@ export function accessTokenSigningOptions(config: ConfigService): JwtModuleOptio
  * **`OAuthService`, `OAuthController` and the `OAUTH_PROVIDERS` factory live
  * here too (Task 12).** This module already owns `SessionService` and the
  * refresh cookie both `OAuthService.complete` and `AuthController.login` share,
- * and `OAuthService`'s own five-dependency constructor (`Repository<UserRecord>`,
- * `IdentitiesService`, `SessionService`, `AuditService`, `DataSource`) is
- * satisfiable entirely from what this module already imports or provides —
- * `OAuthAuthorizationRequestRecord` is the one entity this task adds to the
- * `TypeOrmModule.forFeature` list below.
+ * and `OAuthService`'s own eight-dependency constructor
+ * (`Repository<OAuthAuthorizationRequestRecord>`, `Repository<UserRecord>`,
+ * `OAuthProviderRegistry`, `IdentitiesService`, `SessionService`, `AuditService`,
+ * `DataSource`, `ConfigService`) is satisfiable entirely from what this module
+ * already imports or provides — `OAuthAuthorizationRequestRecord` is the one
+ * entity this task adds to the `TypeOrmModule.forFeature` list below, and
+ * `OAuthProviderRegistry` is what `OAUTH_PROVIDER_REGISTRY_PROVIDER` builds.
  *
  * **`IdentitiesController` is registered here too, not by `IdentitiesModule`.**
  * See that controller's own doc and `identities.module.ts`'s: its new

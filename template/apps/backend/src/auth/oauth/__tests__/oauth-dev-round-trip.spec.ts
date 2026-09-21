@@ -29,8 +29,8 @@ const SIGNING_KEY = 'dev-round-trip-spec-signing-key';
  *
  * Every other suite in this folder tests `OAuthService` against fake
  * providers, or tests `DevOAuthProvider` in isolation. Neither, on its own,
- * demonstrates the property the coordinator's ruling is actually about:
- * that pressing "sign in" against the *real* `DevOAuthProvider`, wired
+ * demonstrates the property that actually matters: that pressing "sign in"
+ * against the *real* `DevOAuthProvider`, wired
  * through the *real* `OAuthService`, reaches a session with no page and no
  * 404 in between. This file constructs both for real — `FakeDataSource`
  * standing in for Postgres exactly as `oauth.service.complete.spec.ts` does,
@@ -83,9 +83,9 @@ describe('the development provider — the full round trip (Task 12 revision)', 
     const authorizationUrl = await service.begin('OIDC', null);
     const target = new URL(authorizationUrl);
 
-    // The property the coordinator's ruling exists for: the URL a browser
-    // lands on is this application's OWN callback, not a page under some
-    // other path that nothing serves.
+    // The property this whole file exists to prove: the URL a browser lands
+    // on is this application's OWN callback, not a page under some other
+    // path that nothing serves.
     expect(target.origin + target.pathname).toBe(`${PUBLIC_API_URL}/auth/oauth/OIDC/callback`);
 
     const code = target.searchParams.get('code');

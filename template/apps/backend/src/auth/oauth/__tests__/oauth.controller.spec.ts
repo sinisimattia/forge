@@ -1,6 +1,8 @@
-import { HttpStatus } from '@nestjs/common';
+import { HttpStatus, INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Test } from '@nestjs/testing';
 import type { Request, Response } from 'express';
+import request from 'supertest';
 import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
 import type { SessionId } from '__FORGE_SCOPE__/core/auth/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
@@ -171,6 +173,10 @@ describe('OAuthController', () => {
       await controller.callback('GOOGLE', 'code', 'state', CLIENT_REQUEST, response as unknown as Response);
 
       expect(redirectedTo(response)).toBe(`${PUBLIC_WEBAPP_URL}/`);
+      // Completing a LINK must never issue a session — the actor already had
+      // one, proven by reaching this authenticated flow in the first place.
+      // Only SIGNED_IN sets the renewal cookie.
+      expect(response.cookie).not.toHaveBeenCalled();
     });
 
     it('redirects, rather than answering a status code, on every refusal', async () => {
@@ -247,5 +253,91 @@ describe('OAuthController', () => {
         Reflect.getMetadata(IS_PUBLIC, IdentitiesController.prototype.beginLink),
       ).toBeUndefined();
     });
+  });
+});
+
+/**
+ * `OAuthController` compiled into a real Nest testing module and driven over
+ * HTTP — the same pattern `identities.controller.spec.ts` already uses.
+ *
+ * Every case above calls a method directly, with a hand-built `Response`
+ * mock, which is fast and precise about *what a method does with what it is
+ * given* but proves nothing about *whether Nest ever hands it those things
+ * in the first place*. Two properties specifically need a real, routed
+ * application to be evidenced at all:
+ *
+ * - **Route declaration order.** `oauth.controller.ts`'s own comment explains
+ *   that `providers` must be declared before `:provider`, or Express reads
+ *   `GET /auth/oauth/providers` as `:provider = "providers"` and the literal
+ *   route is never reached. Reordering the two methods breaks nothing a
+ *   direct-call test can see — `controller.providers()` still returns the
+ *   right thing when called directly — and the actual symptom is the login
+ *   page's own provider list 404ing, which is exactly the ADR-0008 failure
+ *   this whole task exists to prevent.
+ * - **The callback's argument binding.** `redirectToProvider`'s own suite
+ *   asserts `oauth.begin` is called with the right arguments; nothing did
+ *   the equivalent for `callback` — a swapped `@Query('code')`/`@Query('state')`,
+ *   or a dropped `clientContextOf(request)`, would pass every case above,
+ *   because they all call `controller.callback(...)` directly with
+ *   already-correct arguments rather than letting Nest extract them from a
+ *   request.
+ */
+describe('OAuthController — mounted as a real controller', () => {
+  let app: INestApplication;
+  let oauth: { begin: jest.Mock; beginLink: jest.Mock; complete: jest.Mock };
+
+  beforeEach(async () => {
+    oauth = { begin: jest.fn(), beginLink: jest.fn(), complete: jest.fn() };
+    const registry = new OAuthProviderRegistry(
+      [AuthProvider.GOOGLE, AuthProvider.GITHUB].map(fakeProvider),
+    );
+
+    const moduleRef = await Test.createTestingModule({
+      controllers: [OAuthController],
+      providers: [
+        { provide: OAuthService, useValue: oauth },
+        { provide: OAuthProviderRegistry, useValue: registry },
+        { provide: ConfigService, useValue: new ConfigService({ PUBLIC_WEBAPP_URL }) },
+      ],
+    }).compile();
+
+    app = moduleRef.createNestApplication();
+    await app.init();
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  it('answers GET /auth/oauth/providers itself, rather than letting :provider swallow it', async () => {
+    const response = await request(app.getHttpServer()).get('/auth/oauth/providers').expect(200);
+
+    expect(response.body).toEqual({ providers: [AuthProvider.GOOGLE, AuthProvider.GITHUB] });
+    // If the literal route had been swallowed, this would have reached
+    // `redirectToProvider` instead, which calls `begin` and tries to redirect —
+    // the negative half of the assertion above, made explicit.
+    expect(oauth.begin).not.toHaveBeenCalled();
+  });
+
+  it('binds the callback\'s code, state and client context to exactly what a request carried', async () => {
+    oauth.complete.mockResolvedValue({ status: 'REFUSED', code: 'AUTHORIZATION_UNKNOWN', redirectTo: null });
+
+    await request(app.getHttpServer())
+      .get('/auth/oauth/GOOGLE/callback')
+      .query({ code: 'the-real-code', state: 'the-real-state' })
+      .set('User-Agent', 'oauth-controller-spec-agent')
+      .expect(302);
+
+    expect(oauth.complete).toHaveBeenCalledTimes(1);
+    const [provider, code, state, client] = oauth.complete.mock.calls[0];
+    // Named individually, not `toHaveBeenCalledWith(...)` against the whole
+    // tuple: a swapped `code`/`state` is the exact defect this test exists
+    // to catch, and asserting each argument by its own name is what makes a
+    // swap fail on the argument that actually moved rather than on the call
+    // as an undifferentiated blob.
+    expect(provider).toBe('GOOGLE');
+    expect(code).toBe('the-real-code');
+    expect(state).toBe('the-real-state');
+    expect(client).toMatchObject({ label: 'oauth-controller-spec-agent' });
   });
 });
