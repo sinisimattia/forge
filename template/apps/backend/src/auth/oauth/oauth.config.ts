@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
 import type { FederatedAccount } from '__FORGE_SCOPE__/core/identities/types';
+import { DevOAuthProvider } from './adapters/DevOAuthProvider';
 import type { IOAuthProvider } from './IOAuthProvider';
 
 /** A config key is "configured" when it is present and non-empty — never merely truthy. */
@@ -168,7 +169,7 @@ export function buildOAuthProviders(config: ConfigService): IOAuthProvider[] {
     return [];
   }
 
-  config.getOrThrow<string>('PUBLIC_API_URL');
+  const publicApiUrl = config.getOrThrow<string>('PUBLIC_API_URL');
 
   const providers: IOAuthProvider[] = [];
   if (googleConfigured) {
@@ -184,7 +185,7 @@ export function buildOAuthProviders(config: ConfigService): IOAuthProvider[] {
     providers.push(new UnimplementedOAuthProvider(AuthProvider.OIDC));
   }
   if (devEnabled) {
-    providers.push(new UnimplementedOAuthProvider(AuthProvider.OIDC));
+    providers.push(new DevOAuthProvider(publicApiUrl));
   }
 
   return providers;
