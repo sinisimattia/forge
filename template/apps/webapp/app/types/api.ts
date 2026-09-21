@@ -126,11 +126,12 @@ export type ApiErrorCode = typeof API_ERROR_CODES[number];
  * it is attacker-influenced, and this application would be the one rendering it.
  *
  * Sorted with **`localeCompare`**, the same comparator {@link API_ERROR_CODES}
- * is sorted with and for the same reason: Phase 3's triage item 2 was this exact
- * list — the webapp's copy sorted with a bare `.sort()`, which agrees with
- * `localeCompare` on most pairs and not on every one, so the check that was
- * supposed to keep the two eyeball-comparable passed while comparing an
- * out-of-order copy to itself. `types/__tests__/federated-refusal-code.spec.ts`
+ * is sorted with and for the same reason: the same regression once passed
+ * unnoticed on that list — the webapp's copy sorted with a bare `.sort()`,
+ * which agrees with `localeCompare` on most pairs and not on every one, so
+ * the check that was supposed to keep the two eyeball-comparable passed while
+ * comparing an out-of-order copy to itself, because it used a different
+ * comparator from the backend's own sort. `types/__tests__/federated-refusal-code.spec.ts`
  * pins both the literal and the comparator; read its own comment for what it
  * found when it went looking for a discriminating pair in this particular
  * seven — there is not one, which is itself worth knowing before trusting a

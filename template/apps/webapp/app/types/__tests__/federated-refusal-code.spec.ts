@@ -10,10 +10,12 @@ import { FEDERATED_REFUSAL_CODES } from '../api';
  *
  * ## The comparator, and what this particular seven cannot prove
  *
- * Phase 3's triage item 2 was `API_ERROR_CODES` sorted with a bare `.sort()`
- * instead of `.localeCompare()`; the two disagree on `INVITATION_NO_LONGER_OPEN`
- * vs `INVITATION_NOT_FOUND`, and the sortedness check passed anyway because it
- * compared the (wrongly sorted) array to itself sorted the same wrong way.
+ * A past sort-comparator mismatch in `API_ERROR_CODES` went undetected this
+ * exact way: it was sorted with a bare `.sort()` instead of `.localeCompare()`.
+ * The two disagree on `INVITATION_NO_LONGER_OPEN` vs `INVITATION_NOT_FOUND`,
+ * and the sortedness check passed anyway because it used a different
+ * comparator from the backend's — it compared the (wrongly sorted) array to
+ * itself, sorted the same wrong way.
  *
  * This file uses `.localeCompare()` for the same reason — consistency with the
  * one convention that already caused a real defect — but a check on *this*
