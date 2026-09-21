@@ -316,6 +316,7 @@ describe('HttpExceptionFilter', () => {
     // would move with the value it is checking and could never fail.
     it('is exactly the list the webapp expects', () => {
       expect(DOMAIN_ERROR_CODES).toEqual([
+        'ALREADY_A_MEMBER',
         'DISPLAY_NAME_REQUIRED',
         'EMAIL_ALREADY_REGISTERED',
         'IDENTITY_ALREADY_LINKED',
@@ -323,6 +324,8 @@ describe('HttpExceptionFilter', () => {
         'INVALID_CREDENTIALS',
         'INVALID_ORGANIZATION_SLUG',
         'LAST_IDENTITY_REMOVAL',
+        'LAST_OWNER',
+        'MEMBERSHIP_NOT_FOUND',
         'ORGANIZATION_NAME_REQUIRED',
         'ORGANIZATION_NOT_FOUND',
         'SESSION_NOT_FOUND',

@@ -1,12 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, IsNull, Repository } from 'typeorm';
+import { DataSource, FindOptionsWhere, In, IsNull, Repository } from 'typeorm';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
-import { Organization } from '__FORGE_SCOPE__/core/organizations/entities';
+import { Membership, Organization } from '__FORGE_SCOPE__/core/organizations/entities';
 import { OrgRole } from '__FORGE_SCOPE__/core/organizations/enums';
-import { OrganizationNotFoundError } from '__FORGE_SCOPE__/core/organizations/errors';
+import {
+  LastOwnerError,
+  MembershipNotFoundError,
+  OrganizationNotFoundError,
+} from '__FORGE_SCOPE__/core/organizations/errors';
 import type {
   CreateOrganizationInput,
+  MemberQuery,
   OrganizationId,
   OrganizationQuery,
   UpdateOrganizationInput,
@@ -16,6 +21,7 @@ import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { AuditService } from '../audit/audit.service';
 import { MembershipRecord } from './membership-record.entity';
 import { OrganizationRecord } from './organization-record.entity';
+import { toMembershipEntity } from './to-membership';
 import { toOrganizationEntity } from './to-organization';
 
 /**
@@ -288,6 +294,185 @@ export class OrganizationsService {
     });
   }
 
+  /**
+   * The memberships of one organization.
+   *
+   * @param actorId - the user on whose behalf the call is made
+   * @param organizationId - the organization whose members are wanted
+   * @param query - which page is wanted, and an optional role filter
+   * @returns one page of memberships, with the totals a caller needs
+   * @throws OrganizationNotFoundError when the actor cannot see the organization
+   */
+  public async listMembers(
+    actorId: UserId,
+    organizationId: OrganizationId,
+    query: MemberQuery,
+  ): Promise<PaginatedResult<Membership>> {
+    await this.requireMember(actorId, organizationId);
+
+    const page = Math.max(1, Math.trunc(query.page));
+    const limit = Math.max(1, Math.trunc(query.limit));
+
+    const where: FindOptionsWhere<MembershipRecord> = { organizationId };
+    if (query.role !== undefined) where.role = query.role;
+
+    const [rows, total] = await this.memberships.findAndCount({
+      where,
+      // The same total-order reason `listOrganizations` gives: two
+      // memberships created in the same millisecond would otherwise return a
+      // different page 2 every time.
+      order: { createdAt: 'DESC', id: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      data: rows.map((row) => toMembershipEntity(row)),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  /**
+   * Gives a member a different role in one organization.
+   *
+   * **The last-owner check is a COUNT of remaining owners, taken inside the
+   * same transaction as the write — not an equality against the actor's own
+   * id.** Those two differ in exactly the case that matters: an ADMIN
+   * demoting the sole OWNER is not the owner demoting themselves, and
+   * `if (targetUserId === actorId) throw new LastOwnerError()` would let it
+   * through while passing every test where the owner acts on their own
+   * membership (spec §9.4, D15).
+   *
+   * The transaction runs at **`SERIALIZABLE`**, not the default `READ
+   * COMMITTED`. Under `READ COMMITTED`, two concurrent demotions of two
+   * *different* owners can each read "2 owners remain" before either writes —
+   * neither demotion touches the row the other just read, so no lock either
+   * would take blocks the other — and both then commit, leaving zero owners.
+   * `SERIALIZABLE` is what makes Postgres notice that the two transactions'
+   * reads and writes cannot be explained by any serial order and abort one of
+   * them with a `40001` serialization failure. That is the cost: a caller of
+   * this method must be prepared to retry a request that failed for no reason
+   * of its own. A weaker level bought back with an explicit
+   * `SELECT ... FOR UPDATE` lock on every `OWNER` row would avoid that retry,
+   * but it is not simpler — it is the same "read the set, then decide" shape
+   * with a lock bolted on — and this method touches only `memberships`, never
+   * a second table, so there is no multi-table anomaly here that
+   * `SERIALIZABLE` would be overkill for. `SERIALIZABLE` is chosen because it
+   * is the one level that makes the count-then-write itself the unit of
+   * atomicity, without this method also having to reason about which rows to
+   * lock and in what order.
+   *
+   * @param actorId - the user on whose behalf the call is made
+   * @param organizationId - the organization the membership is in
+   * @param targetUserId - the member whose role changes
+   * @param role - the role the member is to hold
+   * @returns the updated membership
+   * @throws OrganizationNotFoundError when the actor cannot see the organization
+   * @throws MembershipNotFoundError when the target is not a member of it
+   * @throws LastOwnerError when the change would leave the organization with no OWNER
+   */
+  public async changeMemberRole(
+    actorId: UserId,
+    organizationId: OrganizationId,
+    targetUserId: UserId,
+    role: OrgRole,
+  ): Promise<Membership> {
+    await this.requireMember(actorId, organizationId);
+    const now = new Date();
+
+    const membershipId = await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
+      const membership = await manager.findOne(MembershipRecord, {
+        where: { organizationId, userId: targetUserId },
+      });
+      if (membership === null) throw new MembershipNotFoundError(targetUserId);
+
+      // The count is read only when it could matter: demoting anybody who is
+      // not currently an OWNER, or promoting an OWNER to a role that is still
+      // OWNER, never threatens the invariant.
+      if (membership.role === OrgRole.OWNER && role !== OrgRole.OWNER) {
+        const owners = await manager.find(MembershipRecord, {
+          where: { organizationId, role: OrgRole.OWNER },
+        });
+        if (owners.length <= 1) throw new LastOwnerError();
+      }
+
+      await manager.update(MembershipRecord, { id: membership.id }, { role, updatedAt: now });
+      return membership.id as string;
+    });
+
+    await this.audit.record({
+      organizationId,
+      actorId,
+      action: AuditAction.MEMBER_ROLE_CHANGED,
+      resourceType: 'membership',
+      resourceId: membershipId,
+      metadata: { userId: targetUserId, role },
+      clientAddress: null,
+      clientLabel: null,
+      occurredAt: now,
+    });
+
+    // The later read is the point, the same reason `updateOrganization` gives:
+    // it is what catches an implementation that decides the write happened
+    // without ever having stored it.
+    return toMembershipEntity(await this.requireMembership(organizationId, targetUserId));
+  }
+
+  /**
+   * Ends somebody's membership of one organization. The account itself is
+   * untouched — this is about one tenant, not about the person.
+   *
+   * The same last-owner guard as {@link changeMemberRole}, for the same
+   * reason and at the same isolation level: removing the sole OWNER is
+   * exactly as ownerless an outcome as demoting them, by a different route,
+   * and whoever asks for it — the owner themselves or somebody else entirely
+   * — the answer is the same (D15).
+   *
+   * @param actorId - the user on whose behalf the call is made
+   * @param organizationId - the organization the membership is in
+   * @param targetUserId - the member to remove
+   * @throws OrganizationNotFoundError when the actor cannot see the organization
+   * @throws MembershipNotFoundError when the target is not a member of it
+   * @throws LastOwnerError when the removal would leave the organization with no OWNER
+   */
+  public async removeMember(
+    actorId: UserId,
+    organizationId: OrganizationId,
+    targetUserId: UserId,
+  ): Promise<void> {
+    await this.requireMember(actorId, organizationId);
+    const now = new Date();
+
+    const membershipId = await this.dataSource.transaction('SERIALIZABLE', async (manager) => {
+      const membership = await manager.findOne(MembershipRecord, {
+        where: { organizationId, userId: targetUserId },
+      });
+      if (membership === null) throw new MembershipNotFoundError(targetUserId);
+
+      if (membership.role === OrgRole.OWNER) {
+        const owners = await manager.find(MembershipRecord, {
+          where: { organizationId, role: OrgRole.OWNER },
+        });
+        if (owners.length <= 1) throw new LastOwnerError();
+      }
+
+      await manager.delete(MembershipRecord, { id: membership.id });
+      return membership.id as string;
+    });
+
+    await this.audit.record({
+      organizationId,
+      actorId,
+      action: AuditAction.MEMBER_REMOVED,
+      resourceType: 'membership',
+      resourceId: membershipId,
+      metadata: { userId: targetUserId },
+      clientAddress: null,
+      clientLabel: null,
+      occurredAt: now,
+    });
+  }
+
   // -------------------------------------------------------------------- private
 
   /**
@@ -317,6 +502,23 @@ export class OrganizationsService {
   private async require(organizationId: OrganizationId): Promise<OrganizationRecord> {
     const row = await this.organizations.findOne({ where: { id: organizationId } });
     if (row === null) throw new OrganizationNotFoundError(organizationId);
+    return row;
+  }
+
+  /**
+   * The membership binding `userId` to `organizationId`, or the domain's own
+   * not-found refusal — `MembershipNotFoundError`, not
+   * `OrganizationNotFoundError`: by the time this is called, `requireMember`
+   * has already established that the actor may see the organization, so a
+   * miss here is about the *target*, not about what the actor is allowed to
+   * know exists.
+   */
+  private async requireMembership(
+    organizationId: OrganizationId,
+    userId: UserId,
+  ): Promise<MembershipRecord> {
+    const row = await this.memberships.findOne({ where: { organizationId, userId } });
+    if (row === null) throw new MembershipNotFoundError(userId);
     return row;
   }
 }

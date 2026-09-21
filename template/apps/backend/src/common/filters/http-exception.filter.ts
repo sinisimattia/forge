@@ -16,7 +16,10 @@ import {
 import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policies';
 import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/types';
 import {
+  AlreadyAMemberError,
   InvalidOrganizationSlugError,
+  LastOwnerError,
+  MembershipNotFoundError,
   OrganizationNameRequiredError,
   OrganizationNotFoundError,
 } from '__FORGE_SCOPE__/core/organizations/errors';
@@ -162,8 +165,36 @@ const DOMAIN_ERRORS: {
   // the id parsed as a UUID and reached the service, 404 does not distinguish
   // "not yours" from "not real" at all.
   { type: OrganizationNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.http.not_found', code: 'ORGANIZATION_NOT_FOUND' },
+  // The same collapse, for the same reason, one level down: a membership
+  // outside an organization the actor may see is answered exactly as a
+  // membership id nobody ever issued. `changeMemberRole` and `removeMember`
+  // never reach this error for a non-member actor at all — `requireMember`
+  // throws `OrganizationNotFoundError` first — so this row is reached only
+  // once the actor's own standing is already established, and it is still
+  // the shared 404 key rather than a membership-specific one, so that
+  // "no such member" and "you may not see whether they are one" stay one
+  // answer in the body as well as the status.
+  { type: MembershipNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.http.not_found', code: 'MEMBERSHIP_NOT_FOUND' },
   { type: OrganizationNameRequiredError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.http.unprocessable', code: 'ORGANIZATION_NAME_REQUIRED' },
   { type: InvalidOrganizationSlugError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.http.unprocessable', code: 'INVALID_ORGANIZATION_SLUG' },
+  // 409, the same status `LastIdentityRemovalError` gets and for the same
+  // shape of reason: this is not a hidden thing (an organization the caller
+  // cannot see, or a resource that never existed) and it is not the request
+  // being malformed — it is a legal request refused because of the CURRENT
+  // state of the membership set, and the identical request would succeed
+  // once a second OWNER exists. 404 would be a lie (there is a real
+  // membership, and the actor can see it); 422 is what every domain error
+  // this table does not name falls through to, and this one deserves a name:
+  // a caller that wants to detect "you cannot demote/remove the sole owner"
+  // specifically, rather than "something about this request was refused",
+  // needs a stable `code` to switch on, which is what this row is for.
+  { type: LastOwnerError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict', code: 'LAST_OWNER' },
+  // Also 409, and also state rather than shape: the request is well-formed
+  // and the address is real, and it is refused because of who this
+  // organization's members already are. Grouped with `LastOwnerError` and
+  // `LastIdentityRemovalError` on purpose — all three are "cannot, given the
+  // current state of a set", none of them "cannot, given what you sent".
+  { type: AlreadyAMemberError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict', code: 'ALREADY_A_MEMBER' },
   // 422 and a code, rather than falling through to the unnamed-domain-error
   // branch below. A blank display name is the one refusal `PATCH /users/me` can
   // raise from the domain, and a caller that had to infer it from "a 422 on this

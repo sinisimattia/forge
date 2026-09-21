@@ -1,9 +1,11 @@
 import type { DataSource, ObjectLiteral, Repository } from 'typeorm';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
-import { Organization } from '__FORGE_SCOPE__/core/organizations/entities';
+import { Membership, Organization } from '__FORGE_SCOPE__/core/organizations/entities';
 import { OrgRole } from '__FORGE_SCOPE__/core/organizations/enums';
 import {
   InvalidOrganizationSlugError,
+  LastOwnerError,
+  MembershipNotFoundError,
   OrganizationNameRequiredError,
   OrganizationNotFoundError,
 } from '__FORGE_SCOPE__/core/organizations/errors';
@@ -33,8 +35,12 @@ import { OrganizationsService } from '../organizations.service';
  */
 
 const OWNER = 'user-owner' as UserId;
+const SECOND_OWNER = 'user-second-owner' as UserId;
+const ADMIN = 'user-admin' as UserId;
+const MEMBER = 'user-member' as UserId;
 const OUTSIDER = 'user-outsider' as UserId;
 const ABSENT = '99999999-9999-4999-8999-999999999999' as OrganizationId;
+const ABSENT_USER = 'user-absent' as UserId;
 
 const EPOCH = new Date('2026-09-20T10:00:00.000Z');
 
@@ -82,6 +88,24 @@ describe('OrganizationsService', () => {
         organizationId: id,
         userId: owner,
         role: OrgRole.OWNER,
+        createdAt: EPOCH,
+        updatedAt: EPOCH,
+      },
+    ]);
+  };
+
+  /** Adds one more membership to an already-seeded organization. */
+  const seedMembership = (
+    organizationId: string,
+    userId: string,
+    role: OrgRole,
+  ): void => {
+    source.seed(MembershipRecord, [
+      {
+        id: `membership-${organizationId}-${userId}`,
+        organizationId,
+        userId,
+        role,
         createdAt: EPOCH,
         updatedAt: EPOCH,
       },
@@ -351,6 +375,223 @@ describe('OrganizationsService', () => {
         .find((row) => row.action === AuditAction.ORGANIZATION_DELETED);
       expect(entry).toBeDefined();
       expect(entry!.organizationId).not.toBeNull();
+      expect(entry!.organizationId).toBe('org-1');
+      expect(entry!.actorUserId).toBe(OWNER);
+    });
+  });
+
+  describe('listMembers', () => {
+    const EVERYTHING = { page: 1, limit: 100 };
+
+    it('lists the seeded members, by identity and by role', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+      seedMembership('org-1', ADMIN, OrgRole.ADMIN);
+      seedMembership('org-1', MEMBER, OrgRole.MEMBER);
+
+      const page = await organizations.listMembers(OWNER, 'org-1' as OrganizationId, EVERYTHING);
+      expect(page.data).toHaveLength(3);
+      expect(page.meta.total).toBe(3);
+      expect(page.data[0]).toBeInstanceOf(Membership);
+
+      const byUser = (userId: UserId) => page.data.find((m) => m.userId === userId);
+      expect(byUser(OWNER)?.role).toBe(OrgRole.OWNER);
+      expect(byUser(ADMIN)?.role).toBe(OrgRole.ADMIN);
+      expect(byUser(MEMBER)?.role).toBe(OrgRole.MEMBER);
+    });
+
+    it('refuses a non-member', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+
+      await expect(
+        organizations.listMembers(OUTSIDER, 'org-1' as OrganizationId, EVERYTHING),
+      ).rejects.toBeInstanceOf(OrganizationNotFoundError);
+    });
+
+    it('filters to one role when asked', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+      seedMembership('org-1', ADMIN, OrgRole.ADMIN);
+
+      const page = await organizations.listMembers(OWNER, 'org-1' as OrganizationId, {
+        ...EVERYTHING,
+        role: OrgRole.ADMIN,
+      });
+      expect(page.data.map((m) => m.userId)).toEqual([ADMIN]);
+      expect(page.meta.total).toBe(1);
+    });
+  });
+
+  describe('changeMemberRole', () => {
+    it('changes a member\'s role and the change is readable afterwards', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+      seedMembership('org-1', MEMBER, OrgRole.MEMBER);
+
+      const changed = await organizations.changeMemberRole(
+        OWNER,
+        'org-1' as OrganizationId,
+        MEMBER,
+        OrgRole.ADMIN,
+      );
+      expect(changed).toBeInstanceOf(Membership);
+      expect(changed.role).toBe(OrgRole.ADMIN);
+      expect(changed.userId).toBe(MEMBER);
+
+      const reread = source.byId(MembershipRecord, `membership-org-1-${MEMBER}`);
+      expect(reread?.role).toBe(OrgRole.ADMIN);
+    });
+
+    it('rejects a target who is not a member of the organization', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+
+      await expect(
+        organizations.changeMemberRole(OWNER, 'org-1' as OrganizationId, ABSENT_USER, OrgRole.ADMIN),
+      ).rejects.toBeInstanceOf(MembershipNotFoundError);
+    });
+
+    // D15, and the discriminating half of it. The invariant is a COUNT of
+    // remaining owners, never an equality against the actor's own id: an
+    // ADMIN demoting the sole OWNER is not the owner demoting themselves, and
+    // that is exactly the case an `if (targetUserId === actorId)`
+    // implementation gets wrong while still passing every test where the
+    // owner acts on their own membership (see the test directly below, and
+    // this file's own report for the injection that proved it).
+    it('refuses to demote the last owner, whoever is asking', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+      seedMembership('org-1', ADMIN, OrgRole.ADMIN);
+
+      await expect(
+        organizations.changeMemberRole(ADMIN, 'org-1' as OrganizationId, OWNER, OrgRole.ADMIN),
+      ).rejects.toBeInstanceOf(LastOwnerError);
+
+      expect(source.byId(MembershipRecord, `membership-org-1-${OWNER}`)?.role).toBe(OrgRole.OWNER);
+    });
+
+    // The owner acting on themselves — the case a careless
+    // `target === actor` implementation happens to get right, and the reason
+    // the assertion above has to exist independently of this one.
+    it('refuses to demote the last owner acting on themselves', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+
+      await expect(
+        organizations.changeMemberRole(OWNER, 'org-1' as OrganizationId, OWNER, OrgRole.ADMIN),
+      ).rejects.toBeInstanceOf(LastOwnerError);
+    });
+
+    // The other side of the same rule: with two owners, either may go.
+    it('allows demoting an owner once another owner exists', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+      seedMembership('org-1', SECOND_OWNER, OrgRole.OWNER);
+
+      const changed = await organizations.changeMemberRole(
+        OWNER,
+        'org-1' as OrganizationId,
+        SECOND_OWNER,
+        OrgRole.ADMIN,
+      );
+      expect(changed.role).toBe(OrgRole.ADMIN);
+
+      const owners = source
+        .all(MembershipRecord)
+        .filter((row) => row.organizationId === 'org-1' && row.role === OrgRole.OWNER);
+      expect(owners).toHaveLength(1);
+      expect(owners[0].userId).toBe(OWNER);
+    });
+
+    it('does not read the owner count at all when the target is not an OWNER', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+      seedMembership('org-1', MEMBER, OrgRole.MEMBER);
+
+      // A promotion of a non-owner can never violate the invariant; asserted
+      // by absence of a throw rather than by inspecting the count query,
+      // since the fake has no query log to inspect.
+      await expect(
+        organizations.changeMemberRole(OWNER, 'org-1' as OrganizationId, MEMBER, OrgRole.VIEWER),
+      ).resolves.toBeInstanceOf(Membership);
+    });
+
+    it('records MEMBER_ROLE_CHANGED against the organization it happened in', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+      seedMembership('org-1', MEMBER, OrgRole.MEMBER);
+
+      await organizations.changeMemberRole(OWNER, 'org-1' as OrganizationId, MEMBER, OrgRole.ADMIN);
+
+      const entry = source
+        .all(AuditEntryRecord)
+        .find((row) => row.action === AuditAction.MEMBER_ROLE_CHANGED);
+      expect(entry).toBeDefined();
+      // Asserted against the world's own seeded id, per this task's brief —
+      // never against whatever the service just returned, which would let a
+      // service that recorded `null` and a test that read it back off the
+      // same variable pass together.
+      expect(entry!.organizationId).toBe('org-1');
+      expect(entry!.actorUserId).toBe(OWNER);
+    });
+  });
+
+  describe('removeMember', () => {
+    it('removes a member', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+      seedMembership('org-1', MEMBER, OrgRole.MEMBER);
+
+      await organizations.removeMember(OWNER, 'org-1' as OrganizationId, MEMBER);
+
+      expect(source.byId(MembershipRecord, `membership-org-1-${MEMBER}`)).toBeUndefined();
+    });
+
+    it('rejects a target who is not a member of the organization', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+
+      await expect(
+        organizations.removeMember(OWNER, 'org-1' as OrganizationId, ABSENT_USER),
+      ).rejects.toBeInstanceOf(MembershipNotFoundError);
+    });
+
+    // D15's other half: removing the sole OWNER is exactly as ownerless an
+    // outcome as demoting them, and "whoever is asking" is the same
+    // discriminating case — an ADMIN removing the sole OWNER is not the
+    // owner leaving.
+    it('refuses to remove the last owner, whoever is asking', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+      seedMembership('org-1', ADMIN, OrgRole.ADMIN);
+
+      await expect(
+        organizations.removeMember(ADMIN, 'org-1' as OrganizationId, OWNER),
+      ).rejects.toBeInstanceOf(LastOwnerError);
+
+      expect(source.byId(MembershipRecord, `membership-org-1-${OWNER}`)).toBeDefined();
+    });
+
+    it('refuses to remove the last owner acting on themselves', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+
+      await expect(
+        organizations.removeMember(OWNER, 'org-1' as OrganizationId, OWNER),
+      ).rejects.toBeInstanceOf(LastOwnerError);
+    });
+
+    // The other side of the same rule: with two owners, either may go.
+    it('allows an owner to leave once another owner exists', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+      seedMembership('org-1', SECOND_OWNER, OrgRole.OWNER);
+
+      await organizations.removeMember(OWNER, 'org-1' as OrganizationId, SECOND_OWNER);
+
+      const owners = source
+        .all(MembershipRecord)
+        .filter((row) => row.organizationId === 'org-1' && row.role === OrgRole.OWNER);
+      expect(owners).toHaveLength(1);
+      expect(owners[0].userId).toBe(OWNER);
+    });
+
+    it('records MEMBER_REMOVED against the organization it happened in', async () => {
+      seedOrganization('org-1', 'Acme Works', 'acme-works', OWNER);
+      seedMembership('org-1', MEMBER, OrgRole.MEMBER);
+
+      await organizations.removeMember(OWNER, 'org-1' as OrganizationId, MEMBER);
+
+      const entry = source
+        .all(AuditEntryRecord)
+        .find((row) => row.action === AuditAction.MEMBER_REMOVED);
+      expect(entry).toBeDefined();
       expect(entry!.organizationId).toBe('org-1');
       expect(entry!.actorUserId).toBe(OWNER);
     });

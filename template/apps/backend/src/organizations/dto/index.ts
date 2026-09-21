@@ -1,4 +1,7 @@
+export * from './change-member-role.dto';
 export * from './create-organization.dto';
+export * from './list-members.query.dto';
 export * from './list-organizations.query.dto';
+export * from './member-response.dto';
 export * from './organization-response.dto';
 export * from './update-organization.dto';

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditModule } from '../audit/audit.module';
+import { MembersController } from './members.controller';
 import { MembershipRecord } from './membership-record.entity';
 import { OrganizationRecord } from './organization-record.entity';
 import { OrganizationsController } from './organizations.controller';
@@ -15,10 +16,14 @@ import { OrganizationsService } from './organizations.service';
  * module's repositories inject regardless of which method reaches for it
  * first. `InvitationRecord` and `ResourceGrantRecord` join this list in Tasks
  * 12 and 13 for the same reason.
+ *
+ * `MembersController` is a second controller on the same service, for the
+ * reason its own comment gives — a distinct resource under its own path,
+ * not a second service.
  */
 @Module({
   imports: [TypeOrmModule.forFeature([OrganizationRecord, MembershipRecord]), AuditModule],
-  controllers: [OrganizationsController],
+  controllers: [OrganizationsController, MembersController],
   providers: [OrganizationsService],
   exports: [OrganizationsService],
 })

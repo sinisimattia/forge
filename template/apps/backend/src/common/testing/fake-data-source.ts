@@ -94,9 +94,16 @@ type EntityClass = { name: string };
  *    sharing an instant page deterministically here while Postgres gives no
  *    order for a tie without a tie-break key. `AuditService.query` supplies one
  *    (`id DESC`); a future query that forgets to would look correct here.
- * 9. **`delete` inside a transaction.** `FakeEntityManager` has none, so such a
- *    delete is a compile error rather than an unjournalled write. Deliberate,
- *    and the one limit on this list that fails loudly.
+ * 9. **An isolation level.** `transaction()` accepts one as an optional first
+ *    argument — real `DataSource.transaction` does, and `OrganizationsService`
+ *    passes `'SERIALIZABLE'` for the last-owner check (Task 11) — and this fake
+ *    reads it only to discard it. Nothing here can make two concurrent
+ *    transactions conflict the way Postgres does under `SERIALIZABLE`; a test
+ *    that seeds two owners and demotes both concurrently would find both
+ *    succeed on this double whatever isolation level was asked for, same
+ *    reason as (1). What this fake *can* still show, single-threaded, is that
+ *    the count is read and compared before the write commits — see
+ *    `organizations.service.spec.ts`'s `LastOwnerError` cases.
  */
 export class FakeDataSource {
   private readonly tables = new Map<string, Row[]>();
@@ -166,8 +173,24 @@ export class FakeDataSource {
    * That is the same limitation the lock modelling already has and is stated for
    * the same reason — the fake is evidence about what the implementation *asks
    * for*, never about what the database does.
+   *
+   * ## The isolation-level overload
+   *
+   * Mirrors `DataSource.transaction`'s two signatures so a caller can write
+   * `dataSource.transaction('SERIALIZABLE', work)` against this fake exactly as
+   * it would against the real one. The level is accepted and discarded — see
+   * item 9 on this class's own list of what it cannot express.
    */
-  public async transaction<T>(work: (manager: FakeEntityManager) => Promise<T>): Promise<T> {
+  public async transaction<T>(work: (manager: FakeEntityManager) => Promise<T>): Promise<T>;
+  public async transaction<T>(
+    isolationLevel: string,
+    work: (manager: FakeEntityManager) => Promise<T>,
+  ): Promise<T>;
+  public async transaction<T>(
+    isolationLevelOrWork: string | ((manager: FakeEntityManager) => Promise<T>),
+    maybeWork?: (manager: FakeEntityManager) => Promise<T>,
+  ): Promise<T> {
+    const work = typeof isolationLevelOrWork === 'function' ? isolationLevelOrWork : maybeWork!;
     const held: (() => void)[] = [];
     const journal: (() => void)[] = [];
     try {
@@ -230,9 +253,7 @@ export class FakeDataSource {
       },
       delete: async (criteria) => {
         await yieldTurn();
-        const doomed = this.match(entity, criteria);
-        this.tables.set(entity.name, this.all(entity).filter((row) => !doomed.includes(row)));
-        return { affected: doomed.length };
+        return { affected: this.delete(entity, criteria) };
       },
       create: (values) => ({ ...values }),
       save: async (values) => {
@@ -320,6 +341,29 @@ export class FakeDataSource {
   }
 
   /**
+   * Removes every row matching `criteria`; answers how many it removed.
+   *
+   * Added for Task 11's `removeMember`, whose write has to be the check-then-delete
+   * half of the last-owner invariant, inside the same transaction as the owner
+   * count — which is why this needed a journal at all: `getRepository().delete`
+   * predates it and never ran inside a transaction.
+   *
+   * @param journal - see {@link FakeDataSource.insert}. The undo re-inserts
+   *   exactly the rows this call removed, which is safe unconditionally (unlike
+   *   {@link FakeDataSource.update}'s key-level check): nothing can have written
+   *   to a row this transaction deleted, because a deleted row matches no
+   *   `criteria` a later statement in the same run of this fake could supply.
+   */
+  public delete(entity: EntityClass, criteria: Criteria, journal?: (() => void)[]): number {
+    const doomed = this.match(entity, criteria);
+    this.tables.set(entity.name, this.all(entity).filter((row) => !doomed.includes(row)));
+    journal?.push(() => {
+      this.tables.set(entity.name, [...this.all(entity), ...doomed]);
+    });
+    return doomed.length;
+  }
+
+  /**
    * Takes the lock on one row, waiting behind whoever holds it.
    *
    * The queue is a promise chain: each waiter awaits the previous tail and
@@ -401,6 +445,14 @@ export class FakeEntityManager {
   ): Promise<{ affected: number }> {
     await yieldTurn();
     return { affected: this.source.update(entity, criteria, patch, this.journal) };
+  }
+
+  public async delete(
+    entity: EntityClass,
+    criteria: Criteria,
+  ): Promise<{ affected: number }> {
+    await yieldTurn();
+    return { affected: this.source.delete(entity, criteria, this.journal) };
   }
 }
 
