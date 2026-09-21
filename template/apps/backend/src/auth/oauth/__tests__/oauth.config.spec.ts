@@ -24,8 +24,8 @@ describe('buildOAuthProviders', () => {
   it('registers each fully configured provider once', () => {
     const built = buildOAuthProviders(configOf({
       PUBLIC_API_URL: 'http://localhost:3000',
-      OAUTH_GOOGLE_CLIENT_ID: 'id', OAUTH_GOOGLE_CLIENT_SECRET: 'secret', // sanitize:allow — fixture, not a credential
-      OAUTH_GITHUB_CLIENT_ID: 'id', OAUTH_GITHUB_CLIENT_SECRET: 'secret', // sanitize:allow — fixture, not a credential
+      OAUTH_GOOGLE_CLIENT_ID: 'id', OAUTH_GOOGLE_CLIENT_SECRET: 'OAUTH_GOOGLE_CLIENT_SECRET',
+      OAUTH_GITHUB_CLIENT_ID: 'id', OAUTH_GITHUB_CLIENT_SECRET: 'OAUTH_GITHUB_CLIENT_SECRET',
     }));
     expect(built.map((p) => p.provider)).toEqual([AuthProvider.GOOGLE, AuthProvider.GITHUB]);
   });
@@ -66,7 +66,7 @@ describe('buildOAuthProviders', () => {
     // fail at start-up rather than surface as a broken link built from whatever a request
     // happened to carry.
     expect(() => buildOAuthProviders(configOf({
-      OAUTH_GOOGLE_CLIENT_ID: 'id', OAUTH_GOOGLE_CLIENT_SECRET: 'secret', // sanitize:allow — fixture, not a credential
+      OAUTH_GOOGLE_CLIENT_ID: 'id', OAUTH_GOOGLE_CLIENT_SECRET: 'OAUTH_GOOGLE_CLIENT_SECRET',
     }))).toThrow(/PUBLIC_API_URL/);
   });
 
@@ -75,7 +75,7 @@ describe('buildOAuthProviders', () => {
       PUBLIC_API_URL: 'http://localhost:3000',
       OAUTH_DEV_ENABLED: '1',
       OAUTH_OIDC_CLIENT_ID: 'id',
-      OAUTH_OIDC_CLIENT_SECRET: 'secret', // sanitize:allow — fixture, not a credential
+      OAUTH_OIDC_CLIENT_SECRET: 'OAUTH_OIDC_CLIENT_SECRET',
       OAUTH_OIDC_ISSUER_URL: 'https://issuer.example.test',
     };
 
@@ -96,7 +96,7 @@ describe('buildOAuthProviders', () => {
       const oidcOnly = {
         PUBLIC_API_URL: 'http://localhost:3000',
         OAUTH_OIDC_CLIENT_ID: 'id',
-        OAUTH_OIDC_CLIENT_SECRET: 'secret', // sanitize:allow — fixture, not a credential
+        OAUTH_OIDC_CLIENT_SECRET: 'OAUTH_OIDC_CLIENT_SECRET',
         OAUTH_OIDC_ISSUER_URL: 'https://issuer.example.test',
       };
       expect(buildOAuthProviders(configOf(oidcOnly))).toEqual([]);
