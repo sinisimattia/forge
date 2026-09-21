@@ -57,8 +57,15 @@ const NO_CLIENT: ClientContext = { address: null, label: null };
  *
  * The consequence is the reason this store is more than a box: a full page load
  * begins with nothing, so being signed in has to be re-established from the
- * renewal cookie before anything can be rendered. That is `renew`, and on the
- * server it is `plugins/auth-init.server.ts` that drives it.
+ * renewal cookie before anything can be rendered. That is `renew`, and it is
+ * driven **twice per page load, once on each side** —
+ * `plugins/auth-init.server.ts` and then `plugins/auth-init.client.ts`.
+ *
+ * Twice, because "nowhere else" now includes the SSR payload: the server's
+ * credential stays in the server's memory and the browser earns its own. What
+ * crosses is `status` and the person, which is all the no-flash behaviour ever
+ * needed — see {@link AUTH_STATUSES}. See {@link heldCredential} for the one
+ * line that decides it and the test that pins it.
  *
  * ## Why the transport is owned here and can be replaced
  *
@@ -81,28 +88,37 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * The credential presented on ordinary requests, or `null`.
    *
-   * It is part of the store's state and therefore travels to the browser in the
-   * SSR payload. That is deliberate: the alternative is that every page load
-   * renews twice — once on the server, once again on the client the moment
-   * anything asks for data — which doubles the rate at which the renewal cookie
-   * rotates and with it the chance of two tabs racing into the backend's reuse
-   * detection. The cost is that an authenticated HTML response contains a
-   * short-lived bearer credential.
+   * **Not returned from this setup function, and that is the whole of the
+   * decision.** Pinia sorts what a setup store returns: a plain `ref` becomes
+   * *state* and lands in `pinia.state.value`, a `computed` becomes a *getter* and
+   * does not. `@pinia/nuxt` then assigns `pinia.state.value` to
+   * `nuxtApp.payload.pinia` on `app:rendered`, and Nuxt serialises the payload
+   * into the HTML. So a ref here is a bearer credential in the markup for its
+   * whole 15-minute lifetime, and the only thing standing between the two is
+   * which kind of reactive object leaves this function.
    *
-   * `private, no-store` on an authenticated response (see
-   * `plugins/auth-init.server.ts`, and the assertion that fails without it) is
-   * the mitigation, and it is a partial one — said plainly, because a mitigation
-   * comment that reads as complete is its own defect. It closes shared and
-   * intermediary caches, which is the serious path. It does **not** close a
-   * response body captured by request logging or an APM agent, a page saved to
-   * disk, the browser's back-forward cache, or a DOM-capturing error reporter —
-   * exactly the artifact-persistence class "in memory, nowhere else" exists to
-   * avoid, so the payload is a deliberate partial exception to this store's own
-   * rule rather than a case it covers. It does not worsen XSS: script that can
-   * read the payload can read the hydrated store and call the renewal endpoint
-   * anyway.
+   * That is invisible to every reader and to the type system — `accessToken`
+   * below reads identically either way — so it is pinned by a test that asserts
+   * on `pinia.state.value`, the object that actually travels, rather than on the
+   * store property: `plugins/__tests__/auth-init.server.spec.ts` → *seeds status
+   * and the user but never the credential*.
+   *
+   * The credential therefore lives in memory on each side separately, and the
+   * browser gets its own by renewing once on hydration
+   * (`plugins/auth-init.client.ts`). The cost of that is a second rotation per
+   * page load, which is why {@link renew} being idempotent and that plugin
+   * running after pinia's are both load-bearing rather than tidy.
    */
-  const accessToken = ref<string | null>(null);
+  const heldCredential = ref<string | null>(null);
+
+  /**
+   * The credential, readable and not writable, and **a getter on purpose**.
+   *
+   * A `computed` rather than the ref itself, because Pinia serialises state and
+   * not getters — see {@link heldCredential}. Nothing outside this store may set
+   * it, which is also true and much less important than where it does not go.
+   */
+  const accessToken = computed<string | null>(() => heldCredential.value);
 
   /**
    * The signed-in person as the wire carries them, or `null`.
@@ -135,7 +151,7 @@ export const useAuthStore = defineStore('auth', () => {
   let transport: ApiClient = defaultTransport();
 
   /** The transport everything else goes out on: `transport`, plus renew-once-and-retry. */
-  let guarded: ApiClient = createAuthFetch({ inner: transport, presented, renew });
+  let guarded: ApiClient = createAuthFetch({ inner: transport, presented, awaitingRenewal, renew });
 
   /** The contract implementation, rebuilt whenever the transport underneath it is. */
   let service = new AuthHttpService(guarded);
@@ -158,7 +174,7 @@ export const useAuthStore = defineStore('auth', () => {
     const serverBase = import.meta.server && config.apiBaseServer !== '' ? config.apiBaseServer : '';
     return createApiClient({
       baseUrl: serverBase === '' ? config.public.apiBase : serverBase,
-      credential: () => accessToken.value,
+      credential: () => heldCredential.value,
     });
   }
 
@@ -169,18 +185,44 @@ export const useAuthStore = defineStore('auth', () => {
    */
   function adoptTransport(client: ApiClient): void {
     transport = client;
-    guarded = createAuthFetch({ inner: transport, presented, renew });
+    guarded = createAuthFetch({ inner: transport, presented, awaitingRenewal, renew });
     service = new AuthHttpService(guarded);
   }
 
   /** The credential the transport is presenting, for `createAuthFetch` to judge a 401 by. */
   function presented(): string | null {
-    return accessToken.value;
+    return heldCredential.value;
+  }
+
+  /**
+   * Whether this store believes in a session it has not yet earned a credential
+   * for — "I have not renewed yet", as opposed to "my renewal was refused".
+   *
+   * It is exactly one state, and it exists for exactly one moment: the browser
+   * has hydrated `status: 'authenticated'` out of the SSR payload, which only a
+   * successful server-side renewal puts there, and {@link heldCredential} is
+   * `null`, which is now always true on the client until
+   * `plugins/auth-init.client.ts` finishes. A request that lapses into that
+   * window presents nothing and is refused with the same bare `401` a mistyped
+   * password produces, and `createAuthFetch` needs the two apart — see its own
+   * documentation for why "presented nothing" alone stopped being enough.
+   *
+   * **A refused renewal cannot reach this**, which is what keeps the sign-out bug
+   * fixed rather than re-opened: {@link attemptRenewal} calls {@link forget} on
+   * every failure, and `forget` sets `anonymous`. So the moment a renewal is
+   * refused this answers `false` for the rest of the page's life, and a second
+   * refusal — a mistyped password at sign-in, on a store nobody has signed into —
+   * is back on the rethrow branch where it belongs. The two remaining statuses
+   * say the same thing from the other side: `unknown` is a store nobody has asked
+   * about, `anonymous` is one that asked and was told no. Neither is a session.
+   */
+  function awaitingRenewal(): boolean {
+    return status.value === 'authenticated' && heldCredential.value === null;
   }
 
   /** Takes up what a sign-in or a renewal answered with. */
   function accept(person: UserJSON, credential: string): void {
-    accessToken.value = credential;
+    heldCredential.value = credential;
     user.value = person;
     status.value = 'authenticated';
   }
@@ -210,7 +252,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   /** Forgets everything, and records that the question has now been answered. */
   function forget(): void {
-    accessToken.value = null;
+    heldCredential.value = null;
     user.value = null;
     status.value = 'anonymous';
   }
@@ -304,7 +346,7 @@ export const useAuthStore = defineStore('auth', () => {
       forget();
       throw new Error('The password was changed but no access credential was issued.');
     }
-    accessToken.value = issued.accessToken;
+    heldCredential.value = issued.accessToken;
   }
 
   /**

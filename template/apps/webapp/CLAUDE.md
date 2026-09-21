@@ -16,8 +16,13 @@ rather than jest.
 On top of those sits the machinery that makes a signed-in user a fact the whole app can
 see: `app/stores/auth.ts` (the credential in memory, the person, and a three-valued
 `status`), `useAuth()`/`useCurrentUser()`, the `auth` and `guest` route middleware, and
-`app/plugins/auth-init.server.ts`, which renews the session once per server-rendered
-request.
+`app/plugins/auth-init.server.ts` and `app/plugins/auth-init.client.ts`, which renew the
+session once per server-rendered request and once again on hydration. Twice, because the
+access credential is deliberately not part of the store's serialized state and so is not in
+the SSR payload — what crosses is `status` and the person, which is what prevents the
+signed-out flash. The client plugin `dependsOn` pinia's, and that ordering is load-bearing:
+renewing before the server render's answer has landed spends a rotation whose result is then
+discarded, and the backend's reuse detection revokes the session family.
 
 On top of *that* sits the user-facing surface: `app/components/organisms/` (`LoginForm`,
 `RegisterForm`, `AppHeader`, `SessionList`, `IdentityList`), two layouts, and the pages —
@@ -98,7 +103,7 @@ webapp/
 │   ├── stores/                 # auth.ts — the credential (in memory), the person, the status
 │   ├── composables/            # useAuth, useCurrentUser — the only layer a component calls
 │   ├── middleware/             # auth, guest — registered by FILE NAME, not by an import
-│   ├── plugins/                # auth-init.server.ts — the SSR session renewal
+│   ├── plugins/                # auth-init.{server,client}.ts — the two session renewals
 │   ├── utils/                  # authFetch (renew once, retry once), redirect (localRedirect)
 │   ├── types/
 │   │   ├── ui.ts               # the library's own closed unions (IconName)

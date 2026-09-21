@@ -638,6 +638,28 @@ password; and get the second renewal race right — SSR's `Set-Cookie` must land
 client renews, or reuse detection revokes the family. The no-flash behaviour is *not* at risk:
 the three-state `status` is what prevents the flash, not the token.
 
+### Done, 2026-09-21: Phase 3 Task 19
+
+All four landed together. The payload a signed-in visitor is served now reads
+`{auth:{user:{…},status:"authenticated"}}` and carries no credential; `private, no-store`
+stays, for the half of its job that was never about the credential — the markup still names
+a person.
+
+Two things the plan above did not say, and which the next person reading this should have:
+
+- **The discriminator is the store's `status`, not a flag.** `createAuthFetch` now renews on
+  a `401` that presented nothing *when the store believes in a session it holds no credential
+  for* — reachable only before the first client renewal, because a refused renewal sets
+  `anonymous` on its way out. So "I have not renewed yet" and "my renewal was refused" are
+  told apart by a value the store already had, and Task 16's bug cannot come back through it.
+- **"The rotation has landed" has two halves, and only one is free.** The rotated cookie is
+  in the jar because the browser commits response headers before running script. The
+  rotation's *outcome* is in the store only after `@pinia/nuxt`'s plugin copies the payload
+  in, which is why `auth-init.client.ts` carries `dependsOn: ['pinia']` **and** refuses to
+  renew unless `status === 'authenticated'`. A plugin that renewed unconditionally spends a
+  rotation pinia then overwrites, and the next renewal presents a spent credential into reuse
+  detection.
+
 ---
 
 ## 7. Documented, not fixed

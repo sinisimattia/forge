@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
+import type { Pinia } from 'pinia';
 import { createPinia, setActivePinia } from 'pinia';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId, UserJSON } from '__FORGE_SCOPE__/core/users/types';
@@ -75,6 +76,7 @@ describe('plugins/auth-init.server', () => {
   let attempts: Attempt[];
   let registered: unknown[];
   let responseHeaders: Map<string, ReturnType<typeof ref<unknown>>>;
+  let pinia: Pinia;
 
   /** Installs the globals, with `fetch` answering `reply`. */
   function install(reply: (attempt: Attempt) => Response, incoming?: string): void {
@@ -114,7 +116,8 @@ describe('plugins/auth-init.server', () => {
     attempts = [];
     registered = [];
     responseHeaders = new Map();
-    setActivePinia(createPinia());
+    pinia = createPinia();
+    setActivePinia(pinia);
   });
 
   afterEach(() => {
@@ -206,10 +209,48 @@ describe('plugins/auth-init.server', () => {
     expect(store.currentUser?.email).toBe(ACTOR.email);
   });
 
+  /**
+   * **What actually reaches the browser, asserted on the object that goes there.**
+   *
+   * `pinia.state.value` and not the store: they read the same for `status` and
+   * the person, and differently for the credential, which is the entire point.
+   * `@pinia/nuxt` assigns this object to `nuxtApp.payload.pinia` on
+   * `app:rendered` and Nuxt serialises the payload into the HTML — so a bearer
+   * credential in here is a bearer credential in the markup, for its whole
+   * lifetime, reachable by anything that persists a page: request logging, an
+   * APM agent, a page saved to disk, the back-forward cache, a DOM-capturing
+   * error reporter. `private, no-store` closes caches and none of those.
+   *
+   * It is one keystroke away at all times — `stores/auth.ts` keeps the credential
+   * out by returning a `computed` rather than the `ref`, which Pinia sorts into a
+   * getter instead of into state, and which reads identically at every call site
+   * and to the type system. Nothing but this assertion notices the difference.
+   *
+   * The keys are asserted exhaustively rather than one absence at a time: a
+   * renamed credential field would pass "has no `accessToken`" and fail this.
+   */
+  it('seeds status and the user but never the credential', async () => {
+    install(() => answer(200, { user: ACTOR, accessToken: MINTED, expiresIn: 900 },
+      [ROTATED_COOKIE]), INCOMING_COOKIE);
+
+    await run();
+
+    // Exactly what `@pinia/nuxt`'s `app:rendered` hook hands to the payload.
+    const payload = (pinia.state.value as { auth: Record<string, unknown> }).auth;
+
+    expect(Object.keys(payload).sort()).toEqual(['status', 'user']);
+    expect(payload.status).toBe('authenticated');
+    expect((payload.user as UserJSON).email).toBe(ACTOR.email);
+    // Said again over the serialised form, because that is the string the HTML
+    // carries and a key-level assertion cannot see a credential nested in one.
+    expect(JSON.stringify(payload)).not.toContain(MINTED);
+  });
+
   // The store's state travels to the browser in the SSR payload, and that state
-  // now includes a bearer credential. Saying so is what keeps a shared cache
-  // from handing one person's credential to the next visitor who asks for the
-  // same URL.
+  // names a person: their address, their display name, their platform role. The
+  // credential is no longer in it, and this header's other half never depended
+  // on the credential — this markup is one visitor's, and a shared cache must
+  // not hand it to the next person who asks for the same URL.
   it('marks an authenticated response uncacheable', async () => {
     install(() => answer(200, { user: ACTOR, accessToken: MINTED, expiresIn: 900 }, []),
       INCOMING_COOKIE);

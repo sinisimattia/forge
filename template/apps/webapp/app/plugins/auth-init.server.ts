@@ -8,11 +8,17 @@ import { useAuthStore } from '~/stores/auth';
  * **Nuxt registers this by where the file is, and nothing imports it.** Two
  * halves of that matter independently: `app/plugins/` is what makes it run at
  * all, and the `.server` in the name is what keeps it off the client, where
- * `useRequestHeaders` has nothing to read and a second renewal per page load is
- * exactly the concurrent rotation `renew` exists to prevent. Deleting or
- * renaming this file changes the running application and would be invisible to
- * any spec that imported a function out of it — which is why its spec imports
- * **this path** and drives the plugin Nuxt would have registered.
+ * `useRequestHeaders` has nothing to read and the renewal has to be sequenced
+ * against this one rather than run beside it. Deleting or renaming this file
+ * changes the running application and would be invisible to any spec that
+ * imported a function out of it — which is why its spec imports **this path**
+ * and drives the plugin Nuxt would have registered.
+ *
+ * The browser's half is `plugins/auth-init.client.ts`, and the two are not
+ * interchangeable. The credential this renewal mints stays in this process: it
+ * is not part of the store's serialized state and so is not in the payload, and
+ * the hazards below are about the *cookie*, which is the only thing that
+ * crosses. Read that file's comment for the ordering the two have to keep.
  *
  * It is `async`, and Nuxt awaits it. That is the point: the render must not
  * begin until the question "is anybody signed in" has an answer, or every
@@ -62,10 +68,13 @@ export default defineNuxtPlugin(async () => {
   await store.initialize();
 
   if (store.isAuthenticated) {
-    // This response's payload now contains a bearer credential, because the
-    // store's state travels to the browser in it — see `stores/auth.ts`. Saying
-    // so out loud is what keeps a shared cache from handing one person's
-    // credential to the next visitor who asks for the same URL.
+    // This response's payload names a person — their address, their display name,
+    // their platform role — because the store's state travels to the browser in
+    // it (see `stores/auth.ts`). It no longer carries the access credential; the
+    // browser earns its own in `plugins/auth-init.client.ts`. The header stays,
+    // and for the half of its job that never depended on the credential: this
+    // markup is one visitor's and a shared cache must not hand it to the next
+    // person who asks for the same URL.
     useResponseHeader('cache-control').value = 'private, no-store';
   }
 

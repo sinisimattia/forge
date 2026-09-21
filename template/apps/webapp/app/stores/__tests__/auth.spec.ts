@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
+import { createPinia, getActivePinia, setActivePinia } from 'pinia';
 import { AuthenticationRejectionReason, AuthenticationStatus } from '__FORGE_SCOPE__/core/auth/enums';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
@@ -193,6 +194,28 @@ describe('useAuthStore', () => {
     expect(store.isAuthenticated).toBe(false);
   });
 
+  /**
+   * The credential is not state, and nothing but an assertion on
+   * `pinia.state.value` can see that.
+   *
+   * Pinia sorts a setup store's return: a `ref` becomes state, a `computed`
+   * becomes a getter, and only state is what `@pinia/nuxt` hands to the SSR
+   * payload. `store.accessToken` reads the same either way, and so does the type
+   * system, so the one line that keeps a bearer credential out of the HTML is
+   * invisible everywhere else. `plugins/__tests__/auth-init.server.spec.ts` says
+   * the same thing about a real render; this says it about the store itself, so
+   * that a change here is red here.
+   */
+  it('keeps the credential out of the state pinia serialises', async () => {
+    await store.login(ACTOR_EMAIL, PLAINTEXT);
+
+    const state = (getActivePinia() as Pinia).state.value.auth as Record<string, unknown>;
+
+    expect(store.accessToken).not.toBeNull();
+    expect(Object.keys(state).sort()).toEqual(['status', 'user']);
+    expect(JSON.stringify(state)).not.toContain(store.accessToken);
+  });
+
   it('takes up the credential the sign-in was issued, the person, and the status', async () => {
     const outcome = await store.login(ACTOR_EMAIL, PLAINTEXT);
 
@@ -235,6 +258,49 @@ describe('useAuthStore', () => {
     expect(store.accessToken).toBeNull();
     expect(store.currentUser).toBeNull();
     expect(store.status).toBe('unknown');
+  });
+
+  /**
+   * **Task 16's regression, re-run against the discriminator that replaced it.**
+   *
+   * `createAuthFetch` used to rethrow every `401` on a request that presented
+   * nothing, which is what stopped a mistyped password renewing, failing, and
+   * signing the visitor out. Taking the credential out of the SSR payload put a
+   * browser into exactly that shape on purpose — believes in a session, presents
+   * nothing — so the rule had to be narrowed, and this is the case that says the
+   * narrowing did not give the bug back.
+   *
+   * It is driven end to end rather than by handing `createAuthFetch` a boolean:
+   * the whole question is whether the *store* can ever be in the renewing state
+   * while somebody mistypes a password, and only the store can answer that.
+   *
+   * The hydration is `@pinia/nuxt`'s own restore — `pinia.state.value` assigned
+   * before any store is built — with the payload's real keys and no credential.
+   */
+  it('does not sign out a hydrated visitor whose password was mistyped', async () => {
+    // A real session in the world, whose renewal cookie the jar now holds.
+    await store.login(ACTOR_EMAIL, PLAINTEXT);
+
+    // A new page load: the server rendered it signed-in, and the browser has not
+    // yet earned a credential of its own.
+    const hydratedPinia = createPinia();
+    (hydratedPinia.state.value as Record<string, unknown>).auth = {
+      status: 'authenticated',
+      user: ACTOR,
+    };
+    setActivePinia(hydratedPinia);
+    const hydrated = useAuthStore();
+    hydrated.adoptTransport(presenting(() => hydrated.accessToken));
+    expect(hydrated.status).toBe('authenticated');
+    expect(hydrated.accessToken).toBeNull();
+
+    const outcome = await hydrated.login(ACTOR_EMAIL, WRONG_PLAINTEXT);
+
+    expect(outcome.status).toBe(AuthenticationStatus.REJECTED);
+    // The bug, said as the person would say it: they are still signed in.
+    expect(hydrated.status).toBe('authenticated');
+    expect(hydrated.isAuthenticated).toBe(true);
+    expect(hydrated.currentUser?.email).toBe(ACTOR_EMAIL);
   });
 
   it('clears both and answers anonymous when the session is ended', async () => {
@@ -323,7 +389,8 @@ describe('useAuthStore', () => {
    * never renders.
    *
    * Every other failing-renewal test in this file runs on a store that has never
-   * signed in, where `presented()` is `null` and `createAuthFetch` rethrows before
+   * signed in, where `presented()` is `null`, `awaitingRenewal()` is `false`
+   * because the status is `unknown`, and `createAuthFetch` rethrows before
    * reaching the branch. That is why signing in first is the whole test.
    */
   it('answers, rather than waiting on itself, when a signed-in session has been ended', async () => {

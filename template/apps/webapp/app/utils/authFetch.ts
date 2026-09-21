@@ -46,8 +46,50 @@ export interface AuthFetchOptions {
    * which request it wraps. What remains true is the narrower original
    * statement: a `401` with no domain code and a non-null credential is treated
    * as a lapse, which is right for the guard and is all sign-in ever produces.
+   *
+   * It stopped being the *whole* discriminator when the access credential left
+   * the SSR payload — see {@link awaitingRenewal}.
    */
   readonly presented: () => string | null;
+  /**
+   * Whether nothing is presented because the renewal has not happened **yet**,
+   * as opposed to because it was refused.
+   *
+   * ## Why `presented() === null` stopped being enough
+   *
+   * It used to be exhaustive: on the client the credential arrived in the SSR
+   * payload, so "presented nothing" meant "nobody has signed in", and rethrowing
+   * was right. The credential is no longer in the payload — only `status` and the
+   * person are — so the browser now starts every page load believing in a session
+   * it holds no credential for, and renews once on hydration
+   * (`plugins/auth-init.client.ts`). A request issued into that window presents
+   * nothing and is refused with a bare `401` — **the same status, the same empty
+   * body, the same absent credential as a mistyped password at sign-in.** Nothing
+   * on the wire tells them apart, so something off the wire has to.
+   *
+   * ## What tells them apart, and why it cannot drift back
+   *
+   * The store's `status`, which is not an opinion this wrapper forms: it is
+   * `authenticated` only because a renewal succeeded, and a *refused* renewal
+   * sets it to `anonymous` on the way out. So "believes in a session, holds no
+   * credential" is reachable before the first client renewal and by nothing else.
+   * A mistyped password is judged on a store that is `unknown` (nobody has asked)
+   * or `anonymous` (asked, told no); in both this answers `false` and the refusal
+   * takes the rethrow branch it has taken since Task 16.
+   *
+   * ## The case this deliberately does not narrow
+   *
+   * A visitor who really is signed in, mistyping a password at sign-in inside
+   * that one-request window, gets a renewal and one retry — and the retry re-sends
+   * the wrong secret, which is the thing that matters to a lockout counter. That
+   * is **not new**: a signed-in visitor mistyping at sign-in has always presented
+   * a non-null credential and always taken this branch. The window widens it by
+   * about one request per page load and narrows again the moment the client
+   * renewal lands. Change-password, the caller where the re-send was measured, is
+   * unaffected either way — it is refused with a domain `code` and never reaches
+   * here.
+   */
+  readonly awaitingRenewal: () => boolean;
   /**
    * Renews the session, answering whether there is one afterwards.
    *
@@ -124,7 +166,15 @@ export function createAuthFetch(options: AuthFetchOptions): ApiClient {
       // *the wire vocabulary this API emits* → `no framework refusal carries a
       // domain code` and `INVALID_CREDENTIALS is the only 401 the domain names`.
       if (error.body.code !== undefined) throw error;
-      if (options.presented() === null) throw error;
+      // **A `401` on a request that presented nothing is not a lapsed credential
+      // — unless nothing was presented because the credential has not arrived
+      // yet.** That second clause is the whole of the SSR-payload change on this
+      // side: the browser hydrates believing in a session and holding nothing, so
+      // a request that overtakes `plugins/auth-init.client.ts` has to be able to
+      // recover. `awaitingRenewal` is the only thing that says so, and it cannot
+      // be true after a refusal — see its own documentation, and the pair of
+      // tests named there.
+      if (options.presented() === null && !options.awaitingRenewal()) throw error;
       if (!(await options.renew())) throw error;
       return options.inner<T>(request);
     }
