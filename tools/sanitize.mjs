@@ -195,6 +195,65 @@ function identifierAt(text, index) {
   return text.slice(start, end);
 }
 
+const isLetter = (ch) => ch !== undefined && /[A-Za-z]/.test(ch);
+
+/**
+ * Labels whose rule matches a bare term (`rsvp`, `stripe`, `organizer`, `refund`, …) that must
+ * be caught wherever it forms a whole "word" inside an identifier — including a no-separator
+ * compound, where the only thing marking the term off from its neighbour is a case change.
+ *
+ * `\b` cannot express that: it fires only at a word/non-word transition, and a letter is a
+ * "word" character regardless of its case, so `\borganizers?\b` finds `organizer-invitation`
+ * and `organizer_invitation` (the separator is a non-word character) but not
+ * `OrganizerInvitation` or `organizerInvitation` (no non-word character exists between the two
+ * words at all — see the RULES comment at their definition for the triage item this closes).
+ *
+ * `source-domain path term` (PATH_ONLY_RULES) is deliberately NOT in this set — see the
+ * comment on that rule for why widening it the same way is a false-positive risk this task
+ * must not introduce, rather than an oversight.
+ */
+const BOUNDED_TERM_LABELS = new Set(['source-domain term']);
+
+/**
+ * Whether the match of `pattern` starting at `index` in `text` sits on a real word boundary on
+ * BOTH sides — `\b`'s notion of one (start/end of string, or a non-letter neighbour) widened to
+ * also treat a lowercase-to-uppercase transition as a boundary, the same way `-` and `_` already
+ * are. This is deliberately not a bare substring match: a longer word that merely contains the
+ * term (`reinvitationless`) has a letter, of the same case run, on at least one side, so it is
+ * rejected — only a genuine word boundary, letter-case or otherwise, counts.
+ *
+ * Boundary before the match: start of string, a non-letter, or the immediately preceding
+ * character being lowercase while the match's own first character is uppercase (the
+ * compound-boundary transition, e.g. the `y`|`O` in `myOrganizer`).
+ * Boundary after the match: end of string, a non-letter, or the immediately following character
+ * being uppercase (a new word starting right where the match ends, e.g. the `r`|`I` in
+ * `OrganizerInvitation`).
+ */
+function isBoundedMatch(text, index, matched) {
+  const before = text[index - 1];
+  const after = text[index + matched.length];
+  const leadingOk = !isLetter(before) || (/[a-z]/.test(before) && /[A-Z]/.test(matched[0]));
+  const trailingOk = !isLetter(after) || /[A-Z]/.test(after);
+  return leadingOk && trailingOk;
+}
+
+/**
+ * Whether `pattern` (case-insensitive, no `\b` of its own — see BOUNDED_TERM_LABELS) finds a
+ * properly word-bounded match anywhere in `text`. Every match is walked, not just the first —
+ * a bounded hit later on the line must not be shadowed by an unbounded one earlier on it, the
+ * same principle `matchesUnacceptedIdentifier` applies for the DOM/platform accept-list.
+ */
+function matchesBoundedTerm(pattern, text) {
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  const global = new RegExp(pattern.source, flags);
+  let match;
+  while ((match = global.exec(text)) !== null) {
+    if (isBoundedMatch(text, match.index, match[0])) return true;
+    if (match[0].length === 0) global.lastIndex += 1; // never loop on a zero-width match
+  }
+  return false;
+}
+
 /**
  * Labels whose rule matches identifier-shaped substrings (`event`/`Event`/`payment`/`Payment`/
  * `ticket`/`Ticket`) that a DOM or platform identifier can share character-for-character with a
@@ -237,7 +296,15 @@ export const RULES = [
   // is unconditional and matches on the same line whatever else is on it. The qualifier
   // in front of the noun is where a domain shows itself, and no qualifier this template
   // uses is shared with the source project's.
-  ['source-domain term', /\b(rsvp|stripe|organizers?|refunds?)\b/i],
+  //
+  // No `\b` here — deliberately. This rule is routed through `matchesBoundedTerm`
+  // (BOUNDED_TERM_LABELS), which checks the same boundary `\b` would plus a
+  // lowercase-to-uppercase transition, so a no-separator compound (`OrganizerInvitation`,
+  // `organizerInvitation`) is caught the same way `organizer-invitation` and
+  // `organizer_invitation` already are. Keeping `\b` in the pattern itself would only ever
+  // narrow what `matchesBoundedTerm` is given to check, never widen it — Triage item 3 from
+  // Phase 3.
+  ['source-domain term', /(rsvp|stripe|organizers?|refunds?)/i],
   // `event`, `payment` and `ticket` DO have innocent uses ("emitted events" in Vue,
   // "issue tickets"), so flagging the bare word produces false positives. Flag them
   // only in identifier shape, which is how a leaked domain name actually looks —
@@ -279,6 +346,16 @@ export const RULES = [
 // match — they require camelCase, PascalCase, ALL_CAPS, or a dotted module suffix.
 // Verified zero false positives against every real path in `template/` and `tools/`
 // today (only an injected `events-overview.md` fixture matched).
+// NOT widened by the camelCase/PascalCase boundary fix below (see BOUNDED_TERM_LABELS), and
+// that is a considered scope decision, not an oversight. Unlike `source-domain term`, `event`/
+// `payment`/`ticket` have real DOM/platform homonyms (EventTarget, PaymentRequest, …), and the
+// content rules only get away with the bare substring because every match is re-checked against
+// `DOM_AND_PLATFORM_IDENTIFIERS` (see IDENTIFIER_SHAPE_LABELS). This path-only rule has no such
+// accept-list, and building one was not this task's job — tried locally, widening this rule's
+// boundary the same way flags a fixture path named `EventTarget.ts` (a real DOM interface name)
+// with no accept-list to exempt it, which is a false positive this task must not introduce.
+// Kebab-case is still this template's realistic leak shape for a path (see the paragraph above),
+// so the rule is left exactly as it was.
 export const PATH_ONLY_RULES = [
   ['source-domain path term', /\b(events?|payments?|tickets?)\b/i],
 ];
@@ -422,6 +499,10 @@ export function lineFindings(line, file = '') {
       if (matchesUnacceptedIdentifier(pattern, line)) labels.push(label);
       continue;
     }
+    if (BOUNDED_TERM_LABELS.has(label)) {
+      if (matchesBoundedTerm(pattern, line)) labels.push(label);
+      continue;
+    }
     if (pattern.test(line)) labels.push(label);
   }
   return labels;
@@ -439,6 +520,10 @@ export function pathFindings(file) {
   for (const [label, pattern] of [...RULES, ...PATH_ONLY_RULES]) {
     if (IDENTIFIER_SHAPE_LABELS.has(label)) {
       if (matchesUnacceptedIdentifier(pattern, file)) labels.push(label);
+      continue;
+    }
+    if (BOUNDED_TERM_LABELS.has(label)) {
+      if (matchesBoundedTerm(pattern, file)) labels.push(label);
       continue;
     }
     if (pattern.test(file)) labels.push(label);

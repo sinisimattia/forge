@@ -419,9 +419,18 @@ test('UIEvent surviving is now a deliberate accept-list entry, not an accident o
 // that merely shares a prefix with an accepted DOM identifier must still trip. `EventCard`
 // contains the same "Event" the accept-list's `EventTarget` does; `RefundPayment` contains the
 // same "Payment" `PaymentRequest` does. Only an exact, whole-identifier match is exempt.
+//
+// `RefundPayment` now also trips `source-domain term` alongside `source-domain identifier` —
+// a second, independent true positive this task's camelCase/PascalCase boundary fix surfaces,
+// not a regression: "Refund" is a real `source-domain term` entry (no innocent generic use,
+// unlike "event"/"payment"/"ticket") and `RefundPayment` is exactly the no-separator compound
+// shape that rule was blind to before this task.
 test('a domain leak sharing a prefix with an accepted DOM identifier still trips', () => {
   assert.equal(labels('export class EventCard {}', TS), 'source-domain type name');
-  assert.equal(labels('export class RefundPayment {}', TS), 'source-domain identifier');
+  assert.equal(
+    labels('export class RefundPayment {}', TS),
+    'source-domain term,source-domain identifier',
+  );
   assert.equal(labels('export interface TicketTier {}', TS), 'source-domain type name');
 });
 
@@ -443,7 +452,12 @@ test('every identifier this fix must not let through is still flagged', () => {
   assert.equal(labels('const ticketId = ticket.id;', TS), 'source-domain identifier');
   assert.equal(labels('export interface TicketTier {}', TS), 'source-domain type name');
   assert.equal(labels('const paymentIntent = createIntent();', TS), 'source-domain identifier');
-  assert.equal(labels('export class RefundPayment {}', TS), 'source-domain identifier');
+  // See the comment on the previous test: `RefundPayment` now also trips `source-domain
+  // term`, a genuine second catch this task's fix surfaces, not a regression.
+  assert.equal(
+    labels('export class RefundPayment {}', TS),
+    'source-domain term,source-domain identifier',
+  );
 });
 
 // The rules this task does not touch at all — a bare "event"/"Event"/"payment"/"ticket" in
@@ -512,4 +526,45 @@ test('the template\'s own invitation vocabulary is admitted', () => {
 // wherever it appears, including on a line that also says "invitation".
 test('a source-project trace on an invitation line is still flagged', () => {
   assert.equal(labels('// see voku for the original invitation flow', TS), 'source-project trace');
+});
+
+// Triage item 3 from Phase 3: the bare-word `source-domain term` rule used plain `\b` on
+// both sides, and `\b` in JS is a word/non-word transition only — letters are "word"
+// characters regardless of case, so it is blind to the one separator a no-space compound
+// identifier actually uses: a lowercase-to-uppercase transition. `organizer`/`rsvp`/
+// `stripe`/`refund` slipped every PascalCase or camelCase compound they appeared inside
+// (`OrganizerInvitation`, `organizerInvitation`) even though the kebab- and snake-case
+// spellings of the same compound (`organizer-invitation`, `organizer_invitation`) were
+// already caught, because `-`/`_` are non-word characters `\b` already fires on.
+//
+// NOTE: the brief for this task illustrated the shape with `OrganizationInvitation` —
+// but neither "organization" nor "invitation" is a banned term (invitation is this
+// template's own vocabulary, deliberately removed from RULES; see above), so that exact
+// string does not trip any rule before or after this fix and would be a check that can
+// never fail. Restated here with `organizer` (a real `source-domain term` entry) so the
+// case is one this fix is actually observed to flip from failing to passing.
+test('a banned term is caught inside a PascalCase identifier', () => {
+  // The exact shape that slipped: no separator, capital boundary.
+  assert.equal(labels('export class OrganizerInvitation {}', TS), 'source-domain term');
+});
+
+test('a banned term is caught inside a camelCase identifier', () => {
+  assert.equal(labels('const organizerInvitation = 1;', TS), 'source-domain term');
+});
+
+// The boundary is symmetric: the transition matters on the way INTO the term too, not just
+// on the way out of it (the two cases above both happen to test the trailing side, since
+// the term there is the first word in the identifier). `myOrganizerId` puts "Organizer"
+// mid-compound, so only the lowercase-to-uppercase transition on its leading side — not a
+// non-letter or start-of-string — can supply the boundary.
+test('a banned term is caught when it starts mid-compound, not just when it leads', () => {
+  assert.equal(labels('const myOrganizerId = 1;', TS), 'source-domain term');
+});
+
+test('a word that merely contains the term as a substring is not a violation', () => {
+  // The rule must not fire on a longer word that happens to contain the letters with no
+  // case transition on either side — otherwise the next person turns it off rather than
+  // narrowing it. Neither side of "organizer" here is a boundary: "re" before it and
+  // "less" after it are both plain lowercase continuations.
+  assert.equal(flagged('const reorganizerless = 1;', TS), false);
 });
