@@ -18,6 +18,9 @@ import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/ty
 import {
   AlreadyAMemberError,
   InvalidOrganizationSlugError,
+  InvitationAddressMismatchError,
+  InvitationNoLongerOpenError,
+  InvitationNotFoundError,
   LastOwnerError,
   MembershipNotFoundError,
   OrganizationNameRequiredError,
@@ -175,6 +178,45 @@ const DOMAIN_ERRORS: {
   // "no such member" and "you may not see whether they are one" stay one
   // answer in the body as well as the status.
   { type: MembershipNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.http.not_found', code: 'MEMBERSHIP_NOT_FOUND' },
+  // The same shared 404 key, one level down again: a token that redeems
+  // nothing is answered exactly as an id nobody ever issued would be, in
+  // status and in body. Deliberately NOT merged with `InvitationNoLongerOpenError`
+  // below — core's own TSDoc on that error explains why: the enumeration-oracle
+  // argument that justifies collapsing "you may not see it" into "it does not
+  // exist" elsewhere on this table depends on the identifier being guessable,
+  // and a 32-byte CSPRNG token from `generateOpaqueToken` is not. Nobody can
+  // present a token that was real once without having held it, so telling
+  // "never issued" apart from "issued and now closed" here reveals nothing to
+  // a guesser — it only tells somebody managing invitations whether there is
+  // anything left to withdraw.
+  { type: InvitationNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.http.not_found', code: 'INVITATION_NOT_FOUND' },
+  // 410 Gone, not 409 and not 404. Only somebody who once held a real,
+  // single-use token can reach this branch at all — the row above already
+  // catches everyone else — so the status tells a caller nothing they did not
+  // already know by holding it: that it is real, and that it no longer works.
+  // `errors.http.gone` is a new shared key rather than three domain-specific
+  // ones, because this is already the collapse of three domain reasons —
+  // revoked, already accepted, expired — into ONE error in core
+  // (`InvitationNoLongerOpenError`'s own TSDoc, spec §9.4): giving the three a
+  // single message here is completing the same collapse the domain already
+  // made, not inventing a new one. 409 was considered and rejected: unlike
+  // `LastOwnerError` or `AlreadyAMemberError`, which fail again on an
+  // unmodified resend until something else about the membership set changes,
+  // this refusal is permanent — resubmitting the identical request never
+  // succeeds, which is exactly what 410 means and 409 does not.
+  { type: InvitationNoLongerOpenError, status: HttpStatus.GONE, messageKey: 'errors.http.gone', code: 'INVITATION_NO_LONGER_OPEN' },
+  // 403, and the shared `errors.http.forbidden` key — not a new one, and not
+  // the same status as either invitation row above. Reaching this branch
+  // already requires holding a real, currently open invitation:
+  // `OrganizationsService.acceptInvitation` judges openness first, precisely
+  // so this check is never reached by a token that is merely closed (see that
+  // method's own TSDoc for why the order is load-bearing). So a caller here
+  // learns only what holding the token already told them — that it is real
+  // and open — and that redemption is refused because of WHO is asking, not
+  // WHAT was presented. That is what 403 means and what 404 or 410 would
+  // misstate: this is not a hidden or a spent resource, it is a real one this
+  // account may not act on.
+  { type: InvitationAddressMismatchError, status: HttpStatus.FORBIDDEN, messageKey: 'errors.http.forbidden', code: 'INVITATION_ADDRESS_MISMATCH' },
   { type: OrganizationNameRequiredError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.http.unprocessable', code: 'ORGANIZATION_NAME_REQUIRED' },
   { type: InvalidOrganizationSlugError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.http.unprocessable', code: 'INVALID_ORGANIZATION_SLUG' },
   // 409, the same status `LastIdentityRemovalError` gets and for the same

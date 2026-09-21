@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import type { DataSource, ObjectLiteral, Repository } from 'typeorm';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import { Membership, Organization } from '__FORGE_SCOPE__/core/organizations/entities';
@@ -14,10 +15,17 @@ import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { AuditEntryRecord } from '../../audit/audit-entry-record.entity';
 import { AuditService } from '../../audit/audit.service';
 import { FakeDataSource, FakeEntityManager } from '../../common/testing';
+import type { IMailer } from '../../mail';
 import { UserRecord } from '../../users/user-record.entity';
+import { InvitationRecord } from '../invitation-record.entity';
 import { MembershipRecord } from '../membership-record.entity';
 import { OrganizationRecord } from '../organization-record.entity';
 import { OrganizationsService } from '../organizations.service';
+
+/** This suite exercises none of Task 12's mail; a stub that records nothing suffices. */
+const NOOP_MAILER: IMailer = { send: async () => undefined };
+
+const WEBAPP_URL = 'https://app.example.test';
 
 /**
  * The two things this class exists to get right and nothing outside it can
@@ -62,8 +70,12 @@ describe('OrganizationsService', () => {
     organizations = new OrganizationsService(
       repo<OrganizationRecord>(OrganizationRecord),
       repo<MembershipRecord>(MembershipRecord),
+      repo<InvitationRecord>(InvitationRecord),
+      repo<UserRecord>(UserRecord),
       source as unknown as DataSource,
       audit,
+      NOOP_MAILER,
+      new ConfigService({ PUBLIC_WEBAPP_URL: WEBAPP_URL }),
     );
   });
 

@@ -14,6 +14,11 @@ import { join } from 'node:path';
 import { DEFAULT_PASSWORD_POLICY } from '__FORGE_SCOPE__/core/identities/policies';
 import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/types';
 import { WeakPasswordError } from '__FORGE_SCOPE__/core/identities/errors';
+import {
+  InvitationAddressMismatchError,
+  InvitationNoLongerOpenError,
+  InvitationNotFoundError,
+} from '__FORGE_SCOPE__/core/organizations/errors';
 import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
 import { InvalidCredentialsError } from '__FORGE_SCOPE__/core/auth/errors';
 import {
@@ -211,6 +216,47 @@ describe('HttpExceptionFilter', () => {
       expect(consumed.code).not.toBe(expired.code);
     });
 
+    // Task 12's own three: an invitation never issued, one that has closed
+    // (whichever of revoked/accepted/expired that means), and one presented by
+    // an account that does not hold its address.
+    it('maps a token that redeems nothing to 404, the shared not-found key', () => {
+      filter.catch(new InvitationNotFoundError('t'), host);
+
+      expect(statusMock).toHaveBeenCalledWith(HttpStatus.NOT_FOUND);
+      expect(body()).toEqual({
+        error: 'Not Found',
+        message: 't:errors.http.not_found',
+        code: 'INVITATION_NOT_FOUND',
+      });
+    });
+
+    it('maps a closed invitation to 410, whichever of revoked/accepted/expired it was', () => {
+      filter.catch(new InvitationNoLongerOpenError('invitation-1'), host);
+
+      expect(statusMock).toHaveBeenCalledWith(HttpStatus.GONE);
+      expect(body()).toEqual({
+        error: 'Gone',
+        message: 't:errors.http.gone',
+        code: 'INVITATION_NO_LONGER_OPEN',
+      });
+    });
+
+    // Distinct from both invitation rows above, on purpose: only somebody
+    // already holding a real, open invitation reaches this branch, so a third
+    // status here leaks nothing a guesser did not already have. It answers
+    // "who is asking", not "what does this identifier resolve to" — 403, not
+    // 404 or 410.
+    it('maps an address that does not match the invitation to 403', () => {
+      filter.catch(new InvitationAddressMismatchError('invitation-1'), host);
+
+      expect(statusMock).toHaveBeenCalledWith(HttpStatus.FORBIDDEN);
+      expect(body()).toEqual({
+        error: 'Forbidden',
+        message: 't:errors.http.forbidden',
+        code: 'INVITATION_ADDRESS_MISMATCH',
+      });
+    });
+
     it('maps a secret that breaks the policy to 422', () => {
       filter.catch(new WeakPasswordError(['TOO_SHORT']), host);
 
@@ -358,6 +404,9 @@ describe('HttpExceptionFilter', () => {
         'IDENTITY_NOT_FOUND',
         'INVALID_CREDENTIALS',
         'INVALID_ORGANIZATION_SLUG',
+        'INVITATION_ADDRESS_MISMATCH',
+        'INVITATION_NO_LONGER_OPEN',
+        'INVITATION_NOT_FOUND',
         'LAST_IDENTITY_REMOVAL',
         'LAST_OWNER',
         'MEMBERSHIP_NOT_FOUND',

@@ -1,16 +1,25 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, FindOptionsWhere, In, IsNull, Repository } from 'typeorm';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
-import { Membership, Organization } from '__FORGE_SCOPE__/core/organizations/entities';
-import { OrgRole } from '__FORGE_SCOPE__/core/organizations/enums';
+import type { IOrganizationService } from '__FORGE_SCOPE__/core/organizations/contracts';
+import { Invitation, Membership, Organization } from '__FORGE_SCOPE__/core/organizations/entities';
+import { InvitationStatus, OrgRole } from '__FORGE_SCOPE__/core/organizations/enums';
 import {
+  AlreadyAMemberError,
+  InvitationAddressMismatchError,
+  InvitationNoLongerOpenError,
+  InvitationNotFoundError,
   LastOwnerError,
   MembershipNotFoundError,
   OrganizationNotFoundError,
 } from '__FORGE_SCOPE__/core/organizations/errors';
 import type {
   CreateOrganizationInput,
+  InvitationId,
+  InvitationQuery,
+  InviteMemberInput,
   MemberQuery,
   OrganizationId,
   OrganizationQuery,
@@ -19,15 +28,35 @@ import type {
 import type { PaginatedResult } from '__FORGE_SCOPE__/core/shared/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { AuditService } from '../audit/audit.service';
+import { generateOpaqueToken, hashOpaqueToken } from '../common/crypto';
+import { MAILER, buildOrganizationInvitationMessage, type IMailer } from '../mail';
+import { UserRecord } from '../users/user-record.entity';
+import { InvitationRecord } from './invitation-record.entity';
 import { MembershipRecord } from './membership-record.entity';
 import { OrganizationRecord } from './organization-record.entity';
+import { toInvitationEntity } from './to-invitation';
 import { toMembershipEntity } from './to-membership';
 import { toOrganizationEntity } from './to-organization';
 
 /**
+ * How long an invitation stands, in seconds, before it lapses whether or not
+ * anybody acts on it. A week — long enough for somebody to notice a mail
+ * that landed while they were away, short enough that an offer nobody has
+ * touched in that time is more likely stale than merely unread.
+ */
+export const INVITATION_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * The placeholder identifier `acceptInvitation` reports when no invitation
+ * answers to the presented token. See `RefreshTokenService`'s own `NO_SESSION`
+ * for why: the real value is a live credential right up until this call
+ * decided it was not, and this error's message is written to logs.
+ */
+const NO_INVITATION = '(none)';
+
+/**
  * The organization half of {@link IOrganizationService}, over the
- * `organizations` and `memberships` tables. Tasks 11 and 12 add members and
- * invitations to this same class.
+ * `organizations`, `memberships` and `organization_invitations` tables.
  *
  * Every entitlement question this phase can ask so far is "is the actor a
  * member of this organization at all", answered by a row in `memberships` —
@@ -36,15 +65,29 @@ import { toOrganizationEntity } from './to-organization';
  * `PermissionsGuard` in Task 13.
  */
 @Injectable()
-export class OrganizationsService {
+export class OrganizationsService implements IOrganizationService {
+  private readonly webappUrl: string;
+
   public constructor(
     @InjectRepository(OrganizationRecord)
     private readonly organizations: Repository<OrganizationRecord>,
     @InjectRepository(MembershipRecord)
     private readonly memberships: Repository<MembershipRecord>,
+    @InjectRepository(InvitationRecord)
+    private readonly invitations: Repository<InvitationRecord>,
+    @InjectRepository(UserRecord)
+    private readonly users: Repository<UserRecord>,
     private readonly dataSource: DataSource,
     private readonly audit: AuditService,
-  ) {}
+    @Inject(MAILER) private readonly mailer: IMailer,
+    config: ConfigService,
+  ) {
+    // Read once, at construction, with no default — the same discipline
+    // `AuthService` follows and for the same reason: a deployment that has not
+    // configured this origin fails to boot, loudly, rather than mailing its
+    // first invitation a link to nowhere.
+    this.webappUrl = config.getOrThrow<string>('PUBLIC_WEBAPP_URL');
+  }
 
   /**
    * Creates an organization and makes the creator its first and only OWNER.
@@ -473,6 +516,306 @@ export class OrganizationsService {
     });
   }
 
+  /**
+   * Offers somebody a role in an organization, addressed to an email.
+   *
+   * The address is checked against the organization's *members*, not against
+   * whether an account with it exists at all — core's own contract says the
+   * address "need not belong to an existing account", and a check that
+   * refused an unregistered address would make it impossible to invite
+   * anybody who has not signed up yet, which is the ordinary case this whole
+   * mechanism exists for.
+   *
+   * The row and its audit entry are written in ONE transaction, the same
+   * atomicity `createOrganization` gives the organization and its owner
+   * membership, and for the same reason: an invitation that survived a
+   * rollback of its own audit entry would be a real, redeemable credential
+   * with no record of who issued it.
+   *
+   * The mail is sent only once that transaction has committed. A message
+   * that went out before the row existed could be delivered, then followed by
+   * a rollback that leaves the link pointing at nothing — a worse failure
+   * than a committed invitation whose mail never arrives, which a resend can
+   * still repair.
+   *
+   * @param actorId - the user on whose behalf the call is made
+   * @param organizationId - the organization membership is offered in
+   * @param input - the address to invite and the role offered
+   * @returns the new invitation
+   * @throws OrganizationNotFoundError when the actor cannot see the organization
+   * @throws AlreadyAMemberError when the address is that of an existing member
+   */
+  public async inviteMember(
+    actorId: UserId,
+    organizationId: OrganizationId,
+    input: InviteMemberInput,
+  ): Promise<Invitation> {
+    const organizationRow = await this.requireMember(actorId, organizationId);
+    const now = new Date();
+
+    // Validated before anything is written, the same discipline
+    // `createOrganization` follows: constructing the domain entity runs
+    // every invariant `Invitation` enforces (a blank address), so a bad one
+    // touches no row. The id and every other throwaway field are discarded
+    // the moment validation passes.
+    const validated = new Invitation({
+      id: 'validation-only' as InvitationId,
+      organizationId,
+      email: input.email,
+      role: input.role,
+      status: InvitationStatus.PENDING,
+      invitedByUserId: actorId,
+      expiresAt: new Date(now.getTime() + INVITATION_TTL_SECONDS * 1000),
+      createdAt: now,
+      acceptedAt: null,
+      acceptedByUserId: null,
+    });
+
+    const existingUser = await this.users.findOne({ where: { email: validated.email } });
+    if (existingUser !== null) {
+      const membership = await this.memberships.findOne({
+        where: { organizationId, userId: existingUser.id },
+      });
+      if (membership !== null) {
+        throw new AlreadyAMemberError(organizationId, existingUser.id as UserId);
+      }
+    }
+
+    const generated = generateOpaqueToken();
+    const invitationId = await this.dataSource.transaction(async (manager) => {
+      const inserted = await manager.insert(InvitationRecord, {
+        organizationId,
+        email: validated.email,
+        role: validated.role,
+        status: InvitationStatus.PENDING,
+        tokenHash: generated.hash,
+        invitedByUserId: actorId,
+        expiresAt: validated.expiresAt,
+        createdAt: now,
+        acceptedAt: null,
+        acceptedByUserId: null,
+      });
+      const id = inserted.identifiers[0].id as string;
+
+      await this.audit.recordIn(manager, {
+        organizationId,
+        actorId,
+        action: AuditAction.MEMBER_INVITED,
+        resourceType: 'invitation',
+        resourceId: id,
+        metadata: { email: validated.email, role: validated.role },
+        clientAddress: null,
+        clientLabel: null,
+        occurredAt: now,
+      });
+
+      return id;
+    });
+
+    await this.mailer.send(
+      buildOrganizationInvitationMessage({
+        to: validated.email,
+        token: generated.token,
+        organizationName: organizationRow.name,
+        webappUrl: this.webappUrl,
+      }),
+    );
+
+    // The later read is the point, the same reason `updateOrganization` gives:
+    // it is what catches an implementation that builds an invitation and
+    // returns it without ever having stored it.
+    return toInvitationEntity(
+      await this.requireInvitation(organizationId, invitationId as InvitationId),
+    );
+  }
+
+  /**
+   * The invitations of one organization.
+   *
+   * @param actorId - the user on whose behalf the call is made
+   * @param organizationId - the organization whose invitations are wanted
+   * @param query - which page is wanted, and an optional status filter
+   * @returns one page of invitations, with the totals a caller needs
+   * @throws OrganizationNotFoundError when the actor cannot see the organization
+   */
+  public async listInvitations(
+    actorId: UserId,
+    organizationId: OrganizationId,
+    query: InvitationQuery,
+  ): Promise<PaginatedResult<Invitation>> {
+    await this.requireMember(actorId, organizationId);
+
+    const page = Math.max(1, Math.trunc(query.page));
+    const limit = Math.max(1, Math.trunc(query.limit));
+
+    const where: FindOptionsWhere<InvitationRecord> = { organizationId };
+    if (query.status !== undefined) where.status = query.status;
+
+    const [rows, total] = await this.invitations.findAndCount({
+      where,
+      // The same total-order reason `listMembers` gives: two invitations
+      // issued in the same millisecond would otherwise return a different
+      // page 2 every time.
+      order: { createdAt: 'DESC', id: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      data: rows.map((row) => toInvitationEntity(row)),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  /**
+   * Withdraws an invitation that has not been accepted.
+   *
+   * The predicate on the closing `UPDATE` (`status: PENDING`) is the
+   * discriminating half of this method, the same shape as `verifyEmail`'s own
+   * spend in `AuthService`: reading the row as open and then writing
+   * unconditionally would let a revoke racing an accept — or two revokes
+   * racing each other — both believe they were the one that closed it. Only
+   * one `UPDATE` can match a row still `PENDING`; the other reads `affected:
+   * 0` and answers truthfully that there was nothing left to withdraw.
+   *
+   * @param actorId - the user on whose behalf the call is made
+   * @param organizationId - the organization the invitation was issued in
+   * @param invitationId - the invitation to withdraw
+   * @returns the invitation in its REVOKED state
+   * @throws OrganizationNotFoundError when the actor cannot see the organization
+   * @throws InvitationNotFoundError when no invitation in it answers to the id
+   * @throws InvitationNoLongerOpenError when the invitation is already closed
+   */
+  public async revokeInvitation(
+    actorId: UserId,
+    organizationId: OrganizationId,
+    invitationId: InvitationId,
+  ): Promise<Invitation> {
+    await this.requireMember(actorId, organizationId);
+    const now = new Date();
+
+    const row = await this.requireInvitation(organizationId, invitationId);
+    const invitation = toInvitationEntity(row);
+    if (!invitation.isOpenAt(now)) throw new InvitationNoLongerOpenError(invitationId);
+
+    const revoked = await this.invitations.update(
+      { id: invitationId, status: InvitationStatus.PENDING },
+      { status: InvitationStatus.REVOKED },
+    );
+    if (revoked.affected !== 1) throw new InvitationNoLongerOpenError(invitationId);
+
+    await this.audit.record({
+      organizationId,
+      actorId,
+      action: AuditAction.INVITATION_REVOKED,
+      resourceType: 'invitation',
+      resourceId: invitationId,
+      metadata: {},
+      clientAddress: null,
+      clientLabel: null,
+      occurredAt: now,
+    });
+
+    // The later read is the point, the same reason every other mutation in
+    // this class gives: it is what catches an implementation that flips the
+    // status in memory and returns it without the write having landed.
+    return toInvitationEntity(await this.requireInvitation(organizationId, invitationId));
+  }
+
+  /**
+   * Redeems an invitation, creating the membership it offered.
+   *
+   * **Looked up by a hash of the token, never by scanning and comparing** —
+   * the same discipline `RefreshTokenService.rotate` follows for the same
+   * reason: a scan is both slow and a timing oracle over which prefixes of a
+   * presented value matched something real.
+   *
+   * The row is read **with a write lock** (`SELECT ... FOR UPDATE`), inside
+   * the transaction that also inserts the membership and closes the
+   * invitation — the same shape `RefreshTokenService.rotate` and
+   * `AuthService.verifyEmail` use for their own single-use credentials, over
+   * `SERIALIZABLE`: this method touches one row that is only ever read and
+   * written by the holder of *that* token, never a set two concurrent actors
+   * could each read a stale count of, so there is no multi-row invariant here
+   * that isolation level exists to protect. The closing `UPDATE`'s own
+   * `status: PENDING` predicate is the backstop if that lock is ever removed,
+   * exactly as `verifyEmail`'s `consumedAt: IsNull()` is for its token.
+   *
+   * **Openness is judged before the address is checked.** Core's own
+   * contract requires it: a second presentation of a spent token must be
+   * answered the same way whoever presents it, and checking the address
+   * first would tell the wrong holder "wrong address" while the right holder
+   * was told "already used" — two different facts leaking through the one
+   * channel the closed-state collapse exists to shut.
+   *
+   * @param actorId - the user on whose behalf the call is made
+   * @param token - the opaque value the recipient was given
+   * @returns the new membership
+   * @throws InvitationNotFoundError when the token redeems nothing
+   * @throws InvitationNoLongerOpenError when the invitation was revoked, has
+   * already been accepted, or has expired — the three are indistinguishable on
+   * purpose
+   * @throws InvitationAddressMismatchError when the account redeeming it does
+   * not hold the address it was sent to
+   */
+  public async acceptInvitation(actorId: UserId, token: string): Promise<Membership> {
+    const presentedHash = hashOpaqueToken(token);
+    const now = new Date();
+
+    const created = await this.dataSource.transaction(async (manager) => {
+      const row = await manager.findOne(InvitationRecord, {
+        where: { tokenHash: presentedHash },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (row === null) throw new InvitationNotFoundError(NO_INVITATION);
+
+      const invitation = toInvitationEntity(row);
+      if (!invitation.isOpenAt(now)) throw new InvitationNoLongerOpenError(invitation.id);
+
+      const user = await manager.findOne(UserRecord, { where: { id: actorId } });
+      if (user === null || user.email !== invitation.email) {
+        throw new InvitationAddressMismatchError(invitation.id);
+      }
+
+      const inserted = await manager.insert(MembershipRecord, {
+        organizationId: invitation.organizationId,
+        userId: actorId,
+        role: invitation.role,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const membershipId = inserted.identifiers[0].id as string;
+
+      // The same discriminating predicate `revokeInvitation` uses, and the
+      // backstop the lock above is primary defense against: only one writer
+      // can close a row still `PENDING`.
+      const closed = await manager.update(
+        InvitationRecord,
+        { id: row.id, status: InvitationStatus.PENDING },
+        { status: InvitationStatus.ACCEPTED, acceptedAt: now, acceptedByUserId: actorId },
+      );
+      if (closed.affected !== 1) throw new InvitationNoLongerOpenError(invitation.id);
+
+      await this.audit.recordIn(manager, {
+        organizationId: invitation.organizationId,
+        actorId,
+        action: AuditAction.INVITATION_ACCEPTED,
+        resourceType: 'invitation',
+        resourceId: invitation.id,
+        metadata: { userId: actorId },
+        clientAddress: null,
+        clientLabel: null,
+        occurredAt: now,
+      });
+
+      return { membershipId, organizationId: invitation.organizationId };
+    });
+
+    // The later read is the point, the same reason every other mutation in
+    // this class gives.
+    return toMembershipEntity(await this.requireMembership(created.organizationId, actorId));
+  }
+
   // -------------------------------------------------------------------- private
 
   /**
@@ -519,6 +862,21 @@ export class OrganizationsService {
   ): Promise<MembershipRecord> {
     const row = await this.memberships.findOne({ where: { organizationId, userId } });
     if (row === null) throw new MembershipNotFoundError(userId);
+    return row;
+  }
+
+  /**
+   * The invitation `invitationId` names, scoped to `organizationId` — an
+   * invitation issued by a different organization answers exactly as one
+   * that does not exist, the same collapse `requireMembership` draws one
+   * level down from `requireMember`.
+   */
+  private async requireInvitation(
+    organizationId: OrganizationId,
+    invitationId: InvitationId,
+  ): Promise<InvitationRecord> {
+    const row = await this.invitations.findOne({ where: { organizationId, id: invitationId } });
+    if (row === null) throw new InvitationNotFoundError(invitationId);
     return row;
   }
 }

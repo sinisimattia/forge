@@ -9,6 +9,7 @@
     "unauthorized": "Authentication is required",
     "forbidden": "You do not have permission to perform this action",
     "not_found": "The requested resource was not found",
+    "gone": "This is no longer valid",
     "conflict": "The request conflicts with the current state of the resource",
     "conflict_retryable": "This request conflicted with another one happening at the same time. Retry it",
     "unprocessable": "The request could not be processed",

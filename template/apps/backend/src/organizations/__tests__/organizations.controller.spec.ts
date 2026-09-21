@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { MODULE_METADATA } from '@nestjs/common/constants';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { Test } from '@nestjs/testing';
@@ -17,12 +17,19 @@ import { AuditEntryRecord } from '../../audit/audit-entry-record.entity';
 import { AuditService } from '../../audit/audit.service';
 import { FakeDataSource } from '../../common/testing';
 import { JwtStrategy } from '../../auth/strategies';
+import type { IMailer } from '../../mail';
 import { UserRecord } from '../../users/user-record.entity';
+import { InvitationRecord } from '../invitation-record.entity';
 import { MembershipRecord } from '../membership-record.entity';
 import { OrganizationRecord } from '../organization-record.entity';
 import { OrganizationsController } from '../organizations.controller';
 import { OrganizationsModule } from '../organizations.module';
 import { OrganizationsService } from '../organizations.service';
+
+/** This suite exercises none of Task 12's mail; a stub that records nothing suffices. */
+const NOOP_MAILER: IMailer = { send: async () => undefined };
+
+const WEBAPP_URL = 'https://app.example.test';
 
 /**
  * The transport half of organization CRUD.
@@ -75,8 +82,12 @@ describe('OrganizationsController', () => {
     const organizations = new OrganizationsService(
       repo<OrganizationRecord>(OrganizationRecord),
       repo<MembershipRecord>(MembershipRecord),
+      repo<InvitationRecord>(InvitationRecord),
+      repo<UserRecord>(UserRecord),
       source as unknown as DataSource,
       audit,
+      NOOP_MAILER,
+      new ConfigService({ PUBLIC_WEBAPP_URL: WEBAPP_URL }),
     );
 
     const moduleRef = await Test.createTestingModule({
