@@ -1,9 +1,28 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
+import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
+import { AuthenticationRejectionReason } from '__FORGE_SCOPE__/core/auth/enums';
+import type { ClientContext } from '__FORGE_SCOPE__/core/auth/types';
+import type { AuthIdentity } from '__FORGE_SCOPE__/core/identities/entities';
+import { AuthProvider, FederatedLinkOutcome, FederatedSignInOutcome } from '__FORGE_SCOPE__/core/identities/enums';
+import { decideFederatedLink, decideFederatedSignIn } from '__FORGE_SCOPE__/core/identities/policies';
+import type {
+  AuthIdentityId,
+  FederatedAccount,
+  FederatedLinkInput,
+  FederatedSignInInput,
+} from '__FORGE_SCOPE__/core/identities/types';
+import { assertNever, normalizeEmail } from '__FORGE_SCOPE__/core/shared/policies';
+import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
-import { generateOpaqueToken } from '../../common/crypto';
+import { AuditService } from '../../audit/audit.service';
+import { generateOpaqueToken, hashOpaqueToken } from '../../common/crypto';
+import { IdentitiesService } from '../../identities/identities.service';
+import { UserRecord } from '../../users/user-record.entity';
+import { AuthService } from '../auth.service';
+import { IssuedCredentials, SessionService } from '../session/session.service';
 import { OAuthAuthorizationRequestRecord } from './oauth-authorization-request.entity';
 import { OAuthProviderRegistry } from './oauth-provider.registry';
 import { createPkcePair } from './pkce';
@@ -48,6 +67,67 @@ export type OAuthAuthorizationPurpose
 export const OAUTH_AUTHORIZATION_TTL_MS = 10 * 60 * 1000;
 
 /**
+ * The opaque codes {@link OAuthService.complete} may put in a redirect.
+ *
+ * **This repository owns every one of them.** None is a provider's own error
+ * text, and none is a database or driver message: `complete`'s own TSDoc
+ * states why — a provider's error string is attacker-influenced text this
+ * application would otherwise be rendering in its own UI, and a rejection
+ * reason is server-side knowledge the caller was never entitled to in the
+ * first place (`AuthenticationRejectionReason`'s own doc makes the same
+ * argument for a password sign-in; this is the federated side of the same
+ * rule).
+ */
+export type FederatedRefusalCode
+  = | 'AUTHORIZATION_EXPIRED'
+    | 'AUTHORIZATION_UNKNOWN'
+    | 'PROVIDER_UNAVAILABLE'
+    | 'EMAIL_UNVERIFIED'
+    | 'EMAIL_ALREADY_REGISTERED'
+    | 'IDENTITY_ALREADY_LINKED'
+    | 'ACCOUNT_UNAVAILABLE';
+
+/**
+ * What {@link OAuthService.complete} decided. One member per ending, each
+ * carrying only what that ending needs — `redirectTo` on every member because
+ * every ending has somewhere to send the browser, even a refusal: it is the
+ * authorization row's own `redirectTo`, echoed back once the row is known
+ * (`null` when no row was ever found, because there is nothing to echo).
+ */
+export type CompletedAuthorization
+  = | {
+    readonly status: 'SIGNED_IN';
+    readonly credentials: IssuedCredentials;
+    readonly redirectTo: string | null;
+  }
+  | { readonly status: 'LINKED'; readonly redirectTo: string | null }
+  | { readonly status: 'REFUSED'; readonly code: FederatedRefusalCode; readonly redirectTo: string | null };
+
+/**
+ * Thrown, and only ever caught, inside {@link OAuthService.complete}: the
+ * control-flow device that lets the authorization row's own validity checks
+ * — read inside one transaction, under a write lock — refuse from deep
+ * inside that transaction without the transaction's own return type having
+ * to carry a refusal alongside a row. Never thrown across a public method
+ * boundary and never a class anything outside this file has a reason to
+ * name.
+ *
+ * Carries `redirectTo` because most of the checks it stands for find the row
+ * before refusing it — expired, already consumed, or issued for a different
+ * provider all read a real row first — and that row's own `redirectTo` is
+ * still the right one to echo. Only "no row answers to this state at all"
+ * has nothing to carry, and passes `null`.
+ */
+class AuthorizationRowRefusal extends Error {
+  public constructor(
+    public readonly code: FederatedRefusalCode,
+    public readonly redirectTo: string | null,
+  ) {
+    super(`oauth authorization row refused: ${code}`);
+  }
+}
+
+/**
  * Beginning a federated authorization — for signing in and for linking.
  *
  * Both entry points below do the same four things, in the same order: resolve
@@ -73,7 +153,13 @@ export class OAuthService {
   public constructor(
     @InjectRepository(OAuthAuthorizationRequestRecord)
     private readonly requests: Repository<OAuthAuthorizationRequestRecord>,
+    @InjectRepository(UserRecord)
+    private readonly users: Repository<UserRecord>,
     private readonly registry: OAuthProviderRegistry,
+    private readonly identities: IdentitiesService,
+    private readonly sessions: SessionService,
+    private readonly audit: AuditService,
+    private readonly dataSource: DataSource,
     config: ConfigService,
   ) {
     // Read once, at construction, with no default — the reasoning
@@ -119,6 +205,461 @@ export class OAuthService {
    */
   public async beginLink(actorId: UserId, providerName: string): Promise<string> {
     return this.start(providerName, null, OAuthAuthorizationPurpose.LINK, actorId);
+  }
+
+  /**
+   * Completes a federated authorization — the callback's whole job, and the
+   * only place a provider's assertion becomes a session or an identity.
+   *
+   * ## The ordering, and why each step comes where it does
+   *
+   * 1. The provider is resolved through the registry first, before the
+   *    authorization row is ever read — an unregistered provider is refused
+   *    with nothing about this state value looked at.
+   * 2. The row is read **inside a transaction, under a write lock**, exactly
+   *    as `AuthService.verifyEmail` reads its own single-use row (see
+   *    {@link OAuthService.consumeAuthorizationRow}): two simultaneous
+   *    presentations of one state must not both succeed, and without the
+   *    lock both would read `consumed_at IS NULL` and both proceed.
+   * 3. Every refusal the row itself can produce — no row, already consumed,
+   *    expired, or issued for a different provider than this callback
+   *    arrived at — is decided and the row is marked consumed, all inside
+   *    that one transaction, before this method calls anything that can
+   *    fail or be slow. A code minted by one provider and presented at
+   *    another's callback is refused **on the row**, never on the code,
+   *    which this application cannot read.
+   * 4. Only once the row is safely consumed, and the transaction holding its
+   *    lock has committed, does the exchange happen: `fetchAccount`, a
+   *    network call to the provider, deliberately outside the transaction.
+   *    A provider that is slow, or an exchange that throws, must not leave
+   *    the authorization presentable a second time — marking it consumed
+   *    first, rather than after, is the ordering that survives both.
+   * 5. `fetchAccount` throwing becomes `PROVIDER_UNAVAILABLE` and nothing
+   *    else. Never the provider's own error text: it is attacker-influenced
+   *    text this application would otherwise be rendering in its own UI.
+   * 6. What happens with a fetched account depends on the row's own
+   *    `purpose`, never on anything else — {@link OAuthService.completeSignIn}
+   *    or {@link OAuthService.completeLink}, the same discipline `start`
+   *    holds itself to when it fixes `purpose` at the beginning rather than
+   *    trusting a value a caller could supply later.
+   *
+   * @param providerName - the raw route parameter naming the provider this
+   *   callback arrived at
+   * @param code - the authorization code the provider's redirect carried
+   * @param state - the state value the provider's redirect carried
+   * @param client - what could be told about where the callback arrived from
+   * @returns what happened, and where the browser should go next
+   */
+  public async complete(
+    providerName: string,
+    code: string,
+    state: string,
+    client: ClientContext,
+  ): Promise<CompletedAuthorization> {
+    const provider = this.registry.find(providerName);
+    if (provider === null) {
+      return { status: 'REFUSED', code: 'PROVIDER_UNAVAILABLE', redirectTo: null };
+    }
+
+    const now = new Date();
+    const stateHash = hashOpaqueToken(state);
+
+    let row: OAuthAuthorizationRequestRecord;
+    try {
+      row = await this.dataSource.transaction((manager) =>
+        OAuthService.consumeAuthorizationRow(manager, stateHash, provider.provider, now));
+    } catch (error) {
+      if (error instanceof AuthorizationRowRefusal) {
+        return { status: 'REFUSED', code: error.code, redirectTo: error.redirectTo };
+      }
+      throw error;
+    }
+
+    let account: FederatedAccount;
+    try {
+      account = await provider.fetchAccount({
+        code,
+        codeVerifier: row.codeVerifier,
+        redirectUri: `${this.publicApiUrl}/auth/oauth/${providerName}/callback`,
+      });
+    } catch {
+      return { status: 'REFUSED', code: 'PROVIDER_UNAVAILABLE', redirectTo: row.redirectTo };
+    }
+
+    const linkedRow = await this.identities.findByProviderAccount(
+      provider.provider,
+      account.subject,
+    );
+    const linkedIdentity = linkedRow === null ? null : IdentitiesService.toEntity(linkedRow);
+
+    return row.purpose === OAuthAuthorizationPurpose.LINK
+      ? this.completeLink(row, linkedIdentity, provider.provider, account.subject, now, client)
+      : this.completeSignIn(row, account, linkedIdentity, now, client);
+  }
+
+  /**
+   * Reads the authorization row under a write lock and marks it consumed —
+   * points 2 and 3 of {@link OAuthService.complete}'s own TSDoc, pulled out
+   * as their own `static` so the transaction boundary is visible at the call
+   * site instead of folded into a much longer method.
+   *
+   * @throws AuthorizationRowRefusal `AUTHORIZATION_UNKNOWN` for no row, an
+   *   already-consumed row, or a row issued for a different provider;
+   *   `AUTHORIZATION_EXPIRED` for one whose time has run out
+   */
+  private static async consumeAuthorizationRow(
+    manager: EntityManager,
+    stateHash: string,
+    provider: AuthProvider,
+    now: Date,
+  ): Promise<OAuthAuthorizationRequestRecord> {
+    const found = await manager.findOne(OAuthAuthorizationRequestRecord, {
+      where: { stateHash },
+      lock: { mode: 'pessimistic_write' },
+    });
+
+    if (found === null) throw new AuthorizationRowRefusal('AUTHORIZATION_UNKNOWN', null);
+    if (found.consumedAt !== null) {
+      throw new AuthorizationRowRefusal('AUTHORIZATION_UNKNOWN', found.redirectTo);
+    }
+    if (found.expiresAt.getTime() <= now.getTime()) {
+      throw new AuthorizationRowRefusal('AUTHORIZATION_EXPIRED', found.redirectTo);
+    }
+    // Refused on the row, never on the code — this application cannot read
+    // the code, so a code minted by one provider and presented at another's
+    // callback is indistinguishable, from here, from a state presented at
+    // the right callback but naming the wrong one. Both are
+    // AUTHORIZATION_UNKNOWN.
+    if (found.provider !== provider) {
+      throw new AuthorizationRowRefusal('AUTHORIZATION_UNKNOWN', found.redirectTo);
+    }
+
+    // The `affected` count is read for the reason `AuthService.verifyEmail`
+    // reads its own: redundant while the lock above is held, and the only
+    // thing standing between a double-spend and a reported success if that
+    // lock were ever removed.
+    const consumed = await manager.update(
+      OAuthAuthorizationRequestRecord,
+      { id: found.id, consumedAt: IsNull() },
+      { consumedAt: now },
+    );
+    if (consumed.affected !== 1) {
+      throw new AuthorizationRowRefusal('AUTHORIZATION_UNKNOWN', found.redirectTo);
+    }
+
+    return { ...found, consumedAt: now };
+  }
+
+  /**
+   * The sign-in half of {@link OAuthService.complete}: applies
+   * `decideFederatedSignIn` — discriminating test D11's own rule — and, for
+   * the one outcome that signs somebody in, the account-state rule a
+   * password sign-in is subject to, in the same order. `AuthService.rejectionFor`
+   * is called below rather than restated: a second implementation of that
+   * ordering is a second place for the two to disagree about which reason is
+   * most permanent.
+   */
+  private async completeSignIn(
+    row: OAuthAuthorizationRequestRecord,
+    account: FederatedAccount,
+    linkedIdentity: AuthIdentity | null,
+    now: Date,
+    client: ClientContext,
+  ): Promise<CompletedAuthorization> {
+    const matchingUserRow = account.email === null
+      ? null
+      : await this.users.findOne({ where: { email: normalizeEmail(account.email) } });
+
+    const input: FederatedSignInInput = {
+      account,
+      linkedIdentity,
+      userWithMatchingEmail: matchingUserRow === null ? null : { id: matchingUserRow.id as UserId },
+    };
+    const decision = decideFederatedSignIn(input);
+
+    switch (decision.outcome) {
+      case FederatedSignInOutcome.SIGN_IN_EXISTING:
+        return this.signInExisting(
+          decision.userId,
+          decision.identityId,
+          row.redirectTo,
+          now,
+          client,
+        );
+
+      case FederatedSignInOutcome.PROVISION_NEW:
+        return this.provisionAndSignIn(
+          decision.email,
+          decision.displayName,
+          account.provider,
+          account.subject,
+          row.redirectTo,
+          now,
+          client,
+        );
+
+      case FederatedSignInOutcome.REFUSE_EMAIL_BELONGS_TO_ANOTHER_ACCOUNT:
+        // D11, at the service level: refused, and NOT linked. The actor
+        // recorded is the account that already existed — nothing has been
+        // established about whoever presented this assertion, which is the
+        // point — and `decision.existingUserId` exists on this decision for
+        // exactly this entry; it is never returned to the caller below.
+        await this.record(
+          AuditAction.FEDERATED_LINK_REFUSED,
+          decision.existingUserId,
+          { provider: account.provider },
+          now,
+        );
+        return { status: 'REFUSED', code: 'EMAIL_ALREADY_REGISTERED', redirectTo: row.redirectTo };
+
+      case FederatedSignInOutcome.REFUSE_UNVERIFIED_EMAIL:
+        // No account is established on this branch — the provider's own
+        // assertion is what was refused — so there is nobody to record it
+        // against.
+        return { status: 'REFUSED', code: 'EMAIL_UNVERIFIED', redirectTo: row.redirectTo };
+
+      default:
+        return assertNever(decision);
+    }
+  }
+
+  /**
+   * Signs in the account a federated subject is already linked to.
+   *
+   * @param userId - whose account this is, per `decideFederatedSignIn`
+   * @param identityId - the identity that proved it, marked used
+   * @param redirectTo - the authorization row's own destination, echoed back
+   * @param now - the instant this authorization completed
+   * @param client - what could be told about where the callback arrived from
+   */
+  private async signInExisting(
+    userId: UserId,
+    identityId: AuthIdentityId,
+    redirectTo: string | null,
+    now: Date,
+    client: ClientContext,
+  ): Promise<CompletedAuthorization> {
+    const row = await this.users.findOne({ where: { id: userId } });
+    if (row === null) {
+      // Unreachable through this application — `auth_identities.user_id`
+      // cascades on delete, so a linked identity naming a user with no row
+      // cannot exist — and answered rather than thrown regardless, the same
+      // discipline `AuthService.signIn` holds itself to for the identical
+      // shape of gap.
+      await this.record(
+        AuditAction.LOGIN_FAILED,
+        null,
+        { reason: AuthenticationRejectionReason.UNKNOWN_ACCOUNT },
+        now,
+        client,
+      );
+      return { status: 'REFUSED', code: 'ACCOUNT_UNAVAILABLE', redirectTo };
+    }
+
+    const user = AuthService.toUser(row);
+    if (!user.canAuthenticate()) {
+      // Checked AFTER the subject was proven, exactly where
+      // `AuthService.signIn` checks it relative to the secret: an account
+      // that is suspended, deleted or unverified must be exactly as
+      // unreachable through a provider as it is through a password. The
+      // reason is recorded and never returned — `ACCOUNT_UNAVAILABLE` is the
+      // one outward code for all three, the same collapse
+      // `AuthenticationRejectionReason`'s own doc describes for a rejected
+      // password attempt.
+      await this.record(
+        AuditAction.LOGIN_FAILED,
+        user.id,
+        { reason: AuthService.rejectionFor(user) },
+        now,
+        client,
+      );
+      return { status: 'REFUSED', code: 'ACCOUNT_UNAVAILABLE', redirectTo };
+    }
+
+    await this.identities.markUsed(identityId, now);
+    const credentials = await this.sessions.begin(user.id, client);
+    await this.record(
+      AuditAction.LOGIN_SUCCEEDED,
+      user.id,
+      { sessionId: credentials.session.id },
+      now,
+      client,
+    );
+    return { status: 'SIGNED_IN', credentials, redirectTo };
+  }
+
+  /**
+   * Provisions a new account for a verified address nobody holds, and signs
+   * it in — `decideFederatedSignIn`'s fourth ending, reached only once the
+   * other three have refused it. The user row, its new federated identity,
+   * and the session it signs in with are one transaction: both or neither,
+   * the same argument `AuthService.changePasswordAndReissue` makes for
+   * pairing a password change with the session it reissues. A window between
+   * "the account exists" and "the session exists" would leave somebody who
+   * just proved a brand-new address with no way to use the account it was
+   * proven for.
+   */
+  private async provisionAndSignIn(
+    email: string,
+    displayName: string | null,
+    provider: AuthProvider,
+    subject: string,
+    redirectTo: string | null,
+    now: Date,
+    client: ClientContext,
+  ): Promise<CompletedAuthorization> {
+    const resolvedDisplayName = OAuthService.resolveDisplayName(displayName, email);
+
+    const { userId, credentials } = await this.dataSource.transaction(async (manager) => {
+      const inserted = await manager.insert(UserRecord, {
+        email,
+        displayName: resolvedDisplayName,
+        status: UserStatus.ACTIVE,
+        platformRole: PlatformRole.PLATFORM_USER,
+        // The provider proved this address. Sending a verification mail to
+        // an address a provider just proved would be asking the person to
+        // prove it twice — the same reasoning `AuthController`'s Task 11
+        // brief gives, and the reason this differs from `AuthService.register`,
+        // which never has a provider's own proof to lean on.
+        emailVerifiedAt: now,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      });
+      const id = inserted.identifiers[0].id as UserId;
+      await this.identities.createFederatedIdentityIn(manager, id, provider, subject, now);
+      const issued = await this.sessions.beginIn(manager, id, client);
+      return { userId: id, credentials: issued };
+    });
+
+    await this.record(AuditAction.USER_REGISTERED, userId, {}, now);
+    await this.record(
+      AuditAction.LOGIN_SUCCEEDED,
+      userId,
+      { sessionId: credentials.session.id },
+      now,
+      client,
+    );
+    return { status: 'SIGNED_IN', credentials, redirectTo };
+  }
+
+  /**
+   * What to call a newly provisioned account when the provider disclosed no
+   * name (`FederatedAccount.displayName` is `string | null` for exactly this
+   * reason). The mailbox's own local part — the substring before `@` —
+   * rather than a placeholder such as "New User": `User`'s constructor
+   * refuses an empty display name, so *something* has to be stored, and the
+   * local part is at least a value the account's own owner chose, unlike an
+   * invented placeholder every provisioned-with-no-name account would
+   * otherwise share.
+   */
+  private static resolveDisplayName(displayName: string | null, email: string): string {
+    const trimmed = displayName?.trim() ?? '';
+    if (trimmed !== '') return trimmed;
+    return email.split('@')[0];
+  }
+
+  /**
+   * The link half of {@link OAuthService.complete}: applies
+   * `decideFederatedLink`, called and never restated — see that function's
+   * own TSDoc for why no address plays any part in this decision, and why
+   * linking is unconditional on the address a provider happens to assert.
+   */
+  private async completeLink(
+    row: OAuthAuthorizationRequestRecord,
+    linkedIdentity: AuthIdentity | null,
+    provider: AuthProvider,
+    subject: string,
+    now: Date,
+    client: ClientContext,
+  ): Promise<CompletedAuthorization> {
+    // Set unconditionally by `beginLink`, and by nothing else: a LINK row
+    // always carries the actor it was opened for. See that method's own doc.
+    const actorId = row.userId as UserId;
+
+    const input: FederatedLinkInput = { actorUserId: actorId, linkedIdentity };
+    const decision = decideFederatedLink(input);
+
+    switch (decision.outcome) {
+      case FederatedLinkOutcome.LINK: {
+        const identity = await this.dataSource.transaction((manager) =>
+          this.identities.createFederatedIdentityIn(manager, actorId, provider, subject, now));
+        await this.audit.record({
+          organizationId: null,
+          actorId,
+          action: AuditAction.IDENTITY_LINKED,
+          resourceType: 'auth_identity',
+          resourceId: identity.id,
+          metadata: { provider },
+          clientAddress: client.address,
+          clientLabel: client.label,
+          occurredAt: now,
+        });
+        return { status: 'LINKED', redirectTo: row.redirectTo };
+      }
+
+      case FederatedLinkOutcome.ALREADY_LINKED_TO_ACTOR:
+        // Idempotent, not an error — see that outcome's own TSDoc. Nothing
+        // changed, so nothing new is written: an IDENTITY_LINKED entry here
+        // would record a link that did not happen, a second time.
+        return { status: 'LINKED', redirectTo: row.redirectTo };
+
+      case FederatedLinkOutcome.LINKED_TO_ANOTHER_ACCOUNT: {
+        // Refused without saying whose account it is — `decision` itself
+        // carries no id, for exactly that reason (see
+        // `FederatedLinkDecision`'s own TSDoc), and neither `code` nor
+        // `redirectTo` below can leak one either.
+        //
+        // The audit entry is different: it is never returned to the actor,
+        // so it is written against the account that already held the
+        // subject — the incumbent, never whoever attempted the link — the
+        // same actor convention this action's other call site (D11, above)
+        // uses. Here, unlike there, the attempt itself DOES have a known
+        // actor (an authenticated session made it); it is deliberately not
+        // what this entry's `actorId` names, so that a reader of this table
+        // can read `actorId` on any `FEDERATED_LINK_REFUSED` entry as "who
+        // already held it" without first having to know which call site
+        // wrote it.
+        if (linkedIdentity === null) {
+          // Unreachable: `decideFederatedLink` reaches this outcome only
+          // when `input.linkedIdentity` is not null. Narrowed explicitly
+          // rather than cast, so a change that ever broke that correlation
+          // fails loudly here instead of silently trusting a cast.
+          throw new Error('OAuthService: LINKED_TO_ANOTHER_ACCOUNT with no linked identity');
+        }
+        await this.record(
+          AuditAction.FEDERATED_LINK_REFUSED,
+          linkedIdentity.userId,
+          { provider },
+          now,
+        );
+        return { status: 'REFUSED', code: 'IDENTITY_ALREADY_LINKED', redirectTo: row.redirectTo };
+      }
+
+      default:
+        return assertNever(decision);
+    }
+  }
+
+  /** One audit write, with this phase's fixed `organizationId` of `null` and `resourceType` of `'user'`. */
+  private record(
+    action: AuditAction,
+    actorId: UserId | null,
+    metadata: Record<string, unknown>,
+    occurredAt: Date,
+    client: ClientContext = { address: null, label: null },
+  ): Promise<void> {
+    return this.audit.record({
+      organizationId: null,
+      actorId,
+      action,
+      resourceType: 'user',
+      resourceId: actorId,
+      metadata,
+      clientAddress: client.address,
+      clientLabel: client.label,
+      occurredAt,
+    });
   }
 
   /** The whole of beginning an authorization. See this class's own TSDoc. */

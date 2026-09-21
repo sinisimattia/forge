@@ -106,6 +106,15 @@ export class DevOAuthProvider implements IOAuthProvider {
     const query = new URLSearchParams({
       state: params.state,
       code_challenge: params.codeChallenge,
+      // RFC 7636: an authorization request carrying `code_challenge` with no
+      // `code_challenge_method` defaults to `plain` — a challenge equal to its
+      // own verifier, the one method this phase forbids offering (see the
+      // three real adapters, which all assert `'S256'`). This adapter ignores
+      // PKCE entirely (see the class's own doc), so the omission was
+      // functionally inert; it is fixed anyway because this URL is what a
+      // generated project uses to rehearse the real flow, and it must not
+      // model the forbidden method.
+      code_challenge_method: 'S256',
       redirect_uri: params.redirectUri,
     });
     return `${this.publicApiUrl}/auth/oauth/dev/authorize?${query.toString()}`;

@@ -1,17 +1,31 @@
 import { NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { ObjectLiteral, Repository } from 'typeorm';
+import { JwtService } from '@nestjs/jwt';
+import type { DataSource, ObjectLiteral, Repository } from 'typeorm';
 import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
 import type { FederatedAccount } from '__FORGE_SCOPE__/core/identities/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
+import { AuditEntryRecord } from '../../../audit/audit-entry-record.entity';
+import { AuditService } from '../../../audit/audit.service';
 import { hashOpaqueToken } from '../../../common/crypto';
 import { FakeDataSource } from '../../../common/testing';
+import { AuthIdentityRecord } from '../../../identities/auth-identity-record.entity';
+import { Argon2PasswordHasher } from '../../../identities/hashing';
+import { IdentitiesService } from '../../../identities/identities.service';
+import { MembershipRecord } from '../../../organizations/membership-record.entity';
+import { UserRecord } from '../../../users/user-record.entity';
+import { RefreshTokenRecord } from '../../entities/refresh-token-record.entity';
+import { SessionRecord } from '../../entities/session-record.entity';
+import { SessionService } from '../../session/session.service';
 import type { AuthorizationUrlParams, IOAuthProvider } from '../IOAuthProvider';
 import { OAuthAuthorizationRequestRecord } from '../oauth-authorization-request.entity';
 import { OAuthProviderRegistry } from '../oauth-provider.registry';
 import { OAuthAuthorizationPurpose, OAuthService } from '../oauth.service';
 
 const ACTOR_ID = '11111111-1111-4111-8111-111111111111' as UserId;
+
+/** This harness's signing key. Not a credential: it signs nothing outside this spec. */
+const SIGNING_KEY = 'begin-spec-signing-key';
 
 /**
  * An adapter carrying only what `begin`/`beginLink` touch: it builds a URL
@@ -64,11 +78,40 @@ describe('OAuthService.begin / beginLink', () => {
     const repo = <T extends ObjectLiteral>(entity: { name: string }): Repository<T> =>
       source.getRepository(entity) as unknown as Repository<T>;
     requests = repo<OAuthAuthorizationRequestRecord>(OAuthAuthorizationRequestRecord);
+    const users = repo<UserRecord>(UserRecord);
+
+    // `begin`/`beginLink` touch none of these — Task 11's `complete` is what
+    // uses them — but the constructor takes them all, so this suite wires the
+    // same real services the completion suite does rather than typing a
+    // second, narrower fake of `OAuthService`'s dependencies.
+    const audit = new AuditService(
+      repo<AuditEntryRecord>(AuditEntryRecord),
+      users,
+      repo<MembershipRecord>(MembershipRecord),
+    );
+    const identities = new IdentitiesService(
+      repo<AuthIdentityRecord>(AuthIdentityRecord),
+      new Argon2PasswordHasher(),
+      audit,
+    );
+    const sessions = new SessionService(
+      repo<SessionRecord>(SessionRecord),
+      repo<RefreshTokenRecord>(RefreshTokenRecord),
+      new JwtService({ secret: SIGNING_KEY, signOptions: { expiresIn: '5m' } }),
+      source as unknown as DataSource,
+    );
 
     const registry = new OAuthProviderRegistry([fakeProvider(AuthProvider.GOOGLE)]);
-    service = new OAuthService(requests, registry, new ConfigService({
-      PUBLIC_API_URL,
-    }));
+    service = new OAuthService(
+      requests,
+      users,
+      registry,
+      identities,
+      sessions,
+      audit,
+      source as unknown as DataSource,
+      new ConfigService({ PUBLIC_API_URL }),
+    );
   });
 
   it('refuses a provider this deployment did not configure', async () => {

@@ -6,6 +6,24 @@ const REDIRECT_URI = 'http://localhost:3000/auth/oauth/callback';
 const ADDRESS = 'ada@example.test';
 
 describe('DevOAuthProvider', () => {
+  it('asserts S256, never the RFC 7636 default of plain', async () => {
+    // No `code_challenge_method` at all defaults to `plain` under RFC 7636 —
+    // a challenge equal to its own verifier, the one method this phase
+    // forbids offering. This adapter ignores PKCE (see the class's own doc),
+    // so the omission cost nothing in practice; the URL it builds is still
+    // what a generated project uses to rehearse the real flow, and it must
+    // not declare the forbidden method.
+    const adapter = new DevOAuthProvider(PUBLIC_API_URL);
+
+    const url = new URL(await adapter.authorizationUrl({
+      state: 'state-value',
+      codeChallenge: 'challenge-value',
+      redirectUri: REDIRECT_URI,
+    }));
+
+    expect(url.searchParams.get('code_challenge_method')).toBe('S256');
+  });
+
   it('asserts the address the code was minted for, as verified', async () => {
     const adapter = new DevOAuthProvider(PUBLIC_API_URL);
     const code = adapter.mintAuthorizationCode(ADDRESS);

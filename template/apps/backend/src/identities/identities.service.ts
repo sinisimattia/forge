@@ -115,6 +115,89 @@ export class IdentitiesService implements IIdentityService {
   }
 
   /**
+   * The identity linked to a federated subject, or `null`.
+   *
+   * The federated counterpart of {@link IdentitiesService.findPasswordIdentity}:
+   * looked up by `(provider, providerAccountId)`, the pair
+   * `uq_auth_identities_provider_account` makes unique, rather than by owner —
+   * `OAuthService.complete` has a provider's assertion and not yet an actor,
+   * for a sign-in, and must not assume one to ask this question.
+   *
+   * @param provider - which federated provider
+   * @param providerAccountId - the provider's own subject identifier, exactly
+   *   as the provider disclosed it — stabilized the same way
+   *   {@link AuthIdentity}'s constructor stabilizes it, so a caller that never
+   *   trimmed cannot miss a row this service itself stored trimmed
+   * @returns the row, or `null` when nothing is linked to that subject yet
+   */
+  public findByProviderAccount(
+    provider: AuthProvider,
+    providerAccountId: string,
+  ): Promise<AuthIdentityRecord | null> {
+    return this.identities.findOne({
+      where: { provider, providerAccountId: providerAccountId.trim() },
+    });
+  }
+
+  /**
+   * Creates a federated identity — the record of one more way a person can
+   * prove who they are, carrying no secret material because the proof is held
+   * by the provider itself, not by this application (see this class's own
+   * TSDoc on the three columns a password identity occupies and a federated
+   * one never does).
+   *
+   * Takes a manager, never an instance repository, because every caller needs
+   * this identity's existence to commit atomically with something else: a
+   * freshly provisioned account and the session it signs in with (both or
+   * neither, the same argument `AuthService.changePasswordAndReissue` makes),
+   * or an existing account and the link just proven.
+   *
+   * `lastUsedAt` is `now`, not `null` — the opposite of
+   * {@link IdentitiesService.createPasswordIdentity}, deliberately: a password
+   * identity is created empty, before it has ever proved anything, while a
+   * federated one is created at the exact moment the provider's assertion
+   * just proved it. Recording anything else here would be a first use that
+   * did not happen, or a real one gone missing.
+   *
+   * @param manager - the caller's transaction
+   * @param userId - the account this identity proves
+   * @param provider - which federated provider
+   * @param providerAccountId - the provider's own subject identifier
+   * @param now - when the subject was proven
+   * @returns the row just written
+   */
+  public async createFederatedIdentityIn(
+    manager: EntityManager,
+    userId: UserId,
+    provider: AuthProvider,
+    providerAccountId: string,
+    now: Date,
+  ): Promise<AuthIdentityRecord> {
+    const stabilized = providerAccountId.trim();
+    const inserted = await manager.insert(AuthIdentityRecord, {
+      userId,
+      provider,
+      providerAccountId: stabilized,
+      createdAt: now,
+      lastUsedAt: now,
+      secretHash: null,
+      secretAlgorithm: null,
+      secretParams: null,
+    });
+    return {
+      id: inserted.identifiers[0].id as string,
+      userId,
+      provider,
+      providerAccountId: stabilized,
+      createdAt: now,
+      lastUsedAt: now,
+      secretHash: null,
+      secretAlgorithm: null,
+      secretParams: null,
+    };
+  }
+
+  /**
    * The password identity belonging to a user, or `null`.
    *
    * Looked up by owner rather than by address, for the callers that have already
@@ -319,8 +402,14 @@ export class IdentitiesService implements IIdentityService {
    * here — structurally, not by omission: `AuthIdentityProps` has no field they
    * could go in (ADR-0005), so a serialized identity cannot carry a derivation
    * however carelessly this mapper is edited.
+   *
+   * `public` for the same reason `AuthService.toUser` is: `OAuthService.complete`
+   * needs the row {@link IdentitiesService.findByProviderAccount} returns as
+   * the core `AuthIdentity` entity `decideFederatedSignIn` and
+   * `decideFederatedLink` are typed to take, and a second mapper written there
+   * is a second place for the two to disagree about what a row means.
    */
-  private static toEntity(row: AuthIdentityRecord): AuthIdentity {
+  public static toEntity(row: AuthIdentityRecord): AuthIdentity {
     return new AuthIdentity({
       id: row.id as AuthIdentityId,
       userId: row.userId as UserId,

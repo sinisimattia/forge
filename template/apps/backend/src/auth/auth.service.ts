@@ -806,8 +806,14 @@ export class AuthService implements IAuthService {
    * others were fixed. Recording `EMAIL_NOT_VERIFIED` against a suspended
    * account tells whoever reads that entry later to verify the address and get
    * in, which is false, and they act on it.
+   *
+   * `public` so `OAuthService.complete` can apply the identical ordering to a
+   * federated sign-in rather than restating it: "the same account-state rules
+   * a password sign-in is subject to, in the same order" is the requirement,
+   * and a second implementation of this switch is a second place for the two
+   * to disagree about which reason is most permanent.
    */
-  private static rejectionFor(user: User): AuthenticationRejectionReason {
+  public static rejectionFor(user: User): AuthenticationRejectionReason {
     if (user.isDeleted) return AuthenticationRejectionReason.ACCOUNT_DELETED;
     if (user.status === UserStatus.SUSPENDED) {
       return AuthenticationRejectionReason.ACCOUNT_SUSPENDED;
