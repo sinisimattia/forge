@@ -10,8 +10,44 @@ import { OAuthProviderRegistry } from './oauth-provider.registry';
 import type { FederatedRefusalCode } from './oauth.service';
 import { OAuthService } from './oauth.service';
 
-/** Where a redirect lands when nothing more specific was ever recorded. */
-const DEFAULT_LANDING_PATH = '/';
+/**
+ * The one page on the webapp every completed authorization lands on, success
+ * or refusal alike.
+ *
+ * **This literal has to agree with a route this repository does not compile
+ * against** — `apps/webapp/app/pages/oauth/callback.vue`, a separate
+ * application this one shares no package with (ADR-0008). Nuxt's file-based
+ * routing turns that file into exactly this path; there is nothing on this
+ * side that would fail to build if the two drifted, only a browser landing on
+ * a 404 mid sign-in. `oauth.controller.spec.ts` pins this constant's value
+ * against the literal string, which is the only cross-check two apps that
+ * share no package can have (the same trade `FEDERATED_REFUSAL_CODES`'s own
+ * TSDoc, on the webapp side, makes for the seven codes carried through it).
+ *
+ * ## Why every path — not only a refusal — routes through here now
+ *
+ * It did not always. A first version of this callback sent a *successful*
+ * authorization straight to its own `redirectTo` — `/organizations`, say —
+ * and appended `?error=` to *that* URL for a refusal that had found the same
+ * row. That put a refusal on whatever page the person happened to be
+ * heading to, most of which render no `error` query parameter at all: the
+ * message this application built specifically to carry D11's remedy —
+ * `EMAIL_ALREADY_REGISTERED`, "sign in the way you already can, then link the
+ * provider from account settings" — was minted correctly and shown to nobody,
+ * silently. That is exactly the "a refusal with no route forward" failure
+ * this flow exists to avoid, arriving through the wiring rather than the
+ * wording.
+ *
+ * So every ending — `SIGNED_IN`, `LINKED`, and every `REFUSED` — now lands
+ * here, and the authorization's own destination travels as `redirectTo`
+ * rather than as the URL's own path. `pages/oauth/callback.vue` is the one
+ * place a person's browser can be on this origin holding a session that was
+ * *just* renewed and a refusal that has somewhere specific to show it. On
+ * success it renews through the store (never through a credential in this
+ * URL — see this file's own R5 note) and forwards to `redirectTo`; on a
+ * refusal it renders the named message and goes nowhere on its own.
+ */
+const OAUTH_CALLBACK_PATH = '/oauth/callback';
 
 /**
  * The federated flow on the wire — signing in and completing a sign-in.
@@ -166,16 +202,33 @@ export class OAuthController {
   }
 
   /**
-   * Builds the webapp URL this callback ends every path at.
+   * Builds the URL this callback ends every path at: always
+   * {@link OAUTH_CALLBACK_PATH}, carrying the authorization's own destination
+   * as `redirectTo` and a refusal, if there was one, as `error`.
    *
-   * `path` is either `null` or a value `OAuthService.validateRedirectTo`
-   * already accepted at `begin` time — a single leading `/`, never `//` or
-   * `/\` — so resolving it against `this.webappUrl` with `URL` is exactly the
-   * relative-path resolution that validation exists to make safe, and never
-   * an origin a caller supplied.
+   * **Two independent checks on `path`, not one.** It is either `null` or a
+   * value `OAuthService.validateRedirectTo` already accepted at `begin`
+   * time — a single leading `/`, never `//` or `/\` — before it was ever
+   * persisted on the authorization row this method is echoing back. That
+   * alone would be enough to resolve it safely here. It is carried as a query
+   * *value* rather than resolved into this URL's own path so that
+   * `pages/oauth/callback.vue` can put it through `localRedirect` a second
+   * time before it ever reaches `navigateTo` — the same judgement, applied
+   * again, by the side that actually performs the navigation. Neither check
+   * alone is load-bearing on its own account; both exist because a value that
+   * crosses a redirect this repository does not compile against (ADR-0008)
+   * gets no compiler-checked guarantee that the first one still holds by the
+   * time the second one runs.
+   *
+   * `redirectTo` is omitted, not sent empty, when `path` is `null` —
+   * `pages/oauth/callback.vue` reads its absence the same way `login.vue`
+   * reads an absent `redirect`: as "nowhere was recorded", which resolves to
+   * that page's own default rather than to an empty string a browser would
+   * try to navigate to.
    */
   private landingUrl(path: string | null, error: FederatedRefusalCode | null): string {
-    const target = new URL(path ?? DEFAULT_LANDING_PATH, this.webappUrl);
+    const target = new URL(OAUTH_CALLBACK_PATH, this.webappUrl);
+    if (path !== null) target.searchParams.set('redirectTo', path);
     if (error !== null) target.searchParams.set('error', error);
     return target.toString();
   }

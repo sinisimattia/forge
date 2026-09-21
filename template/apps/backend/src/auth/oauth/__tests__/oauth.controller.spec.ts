@@ -16,6 +16,17 @@ import { OAuthService } from '../oauth.service';
 
 const PUBLIC_WEBAPP_URL = 'https://app.example.test';
 
+/**
+ * The literal this suite pins `OAuthController`'s own (unexported) constant
+ * against — written out here rather than imported, the same discipline
+ * `DOMAIN_ERROR_CODES`'s own webapp-side snapshot test uses: comparing the
+ * controller's value to itself would pass no matter what that value was.
+ * This is the route Nuxt's file-based routing turns
+ * `apps/webapp/app/pages/oauth/callback.vue` into; the two apps share no
+ * package (ADR-0008), so this literal is the whole of the cross-check.
+ */
+const OAUTH_CALLBACK_PATH = '/oauth/callback';
+
 /** A fake adapter carrying nothing but the one field the registry reads. */
 function fakeProvider(provider: AuthProvider): IOAuthProvider {
   return {
@@ -132,7 +143,7 @@ describe('OAuthController', () => {
   });
 
   describe('callback', () => {
-    it('sets the renewal cookie and redirects to the webapp on a successful sign-in', async () => {
+    it('sets the renewal cookie and redirects to the callback page, carrying the destination as redirectTo', async () => {
       const controller = build([AuthProvider.GOOGLE]);
       const credentials = {
         session: {
@@ -159,27 +170,39 @@ describe('OAuthController', () => {
       expect(response.cookie).toHaveBeenCalledWith(
         REFRESH_COOKIE.name, REFRESH_TOKEN, expect.anything(),
       );
-      const location = redirectedTo(response);
-      expect(location).toBe(`${PUBLIC_WEBAPP_URL}/dashboard`);
-      expect(location).not.toContain(credentials.accessToken);
-      expect(location).not.toContain(credentials.refreshToken);
+      const location = new URL(redirectedTo(response));
+      // NOT `${PUBLIC_WEBAPP_URL}/dashboard` — a successful authorization no
+      // longer lands directly on its own destination. It lands on the one
+      // page that can actually renew a session and show a refusal, carrying
+      // the destination as a query value. See `landingUrl`'s own TSDoc for
+      // why: a refusal that found the same row used to land wherever THIS
+      // authorization was headed, on a page that renders no `error` at all.
+      expect(location.origin + location.pathname).toBe(`${PUBLIC_WEBAPP_URL}${OAUTH_CALLBACK_PATH}`);
+      expect(location.searchParams.get('redirectTo')).toBe('/dashboard');
+      expect(location.searchParams.get('error')).toBeNull();
+      expect(location.toString()).not.toContain(credentials.accessToken);
+      expect(location.toString()).not.toContain(credentials.refreshToken);
     });
 
-    it('lands on the default path when the authorization carried none', async () => {
+    it('lands on the callback page with no redirectTo when the authorization carried none', async () => {
       const controller = build([AuthProvider.GOOGLE]);
       oauth.complete.mockResolvedValue({ status: 'LINKED', redirectTo: null });
       const response = fakeResponse();
 
       await controller.callback('GOOGLE', 'code', 'state', CLIENT_REQUEST, response as unknown as Response);
 
-      expect(redirectedTo(response)).toBe(`${PUBLIC_WEBAPP_URL}/`);
+      const location = new URL(redirectedTo(response));
+      expect(location.origin + location.pathname).toBe(`${PUBLIC_WEBAPP_URL}${OAUTH_CALLBACK_PATH}`);
+      // Omitted, not sent empty — the callback page reads its absence as
+      // "nowhere was recorded" and falls back to its own default.
+      expect(location.searchParams.has('redirectTo')).toBe(false);
       // Completing a LINK must never issue a session — the actor already had
       // one, proven by reaching this authenticated flow in the first place.
       // Only SIGNED_IN sets the renewal cookie.
       expect(response.cookie).not.toHaveBeenCalled();
     });
 
-    it('redirects, rather than answering a status code, on every refusal', async () => {
+    it('redirects to the callback page on every refusal, carrying the destination it would otherwise have hidden the message on', async () => {
       const controller = build([AuthProvider.GOOGLE]);
       oauth.complete.mockResolvedValue({
         status: 'REFUSED', code: 'EMAIL_ALREADY_REGISTERED', redirectTo: '/sign-in',
@@ -191,9 +214,15 @@ describe('OAuthController', () => {
       // The caller is a browser that followed a redirect here. A JSON 400
       // would show a person a raw error document on an origin they did not
       // choose to visit.
-      expect(response.redirect).toHaveBeenCalledWith(
-        HttpStatus.FOUND, expect.stringContaining('error=EMAIL_ALREADY_REGISTERED'),
-      );
+      const location = new URL(redirectedTo(response));
+      // **The regression this suite exists to catch.** A `redirectTo` this
+      // authorization carried must land the browser on the callback page —
+      // which actually renders `error` — never directly on `/sign-in`, which
+      // does not: that was the defect ("a refusal with no route forward")
+      // this whole flow was rebuilt to close.
+      expect(location.origin + location.pathname).toBe(`${PUBLIC_WEBAPP_URL}${OAUTH_CALLBACK_PATH}`);
+      expect(location.searchParams.get('redirectTo')).toBe('/sign-in');
+      expect(location.searchParams.get('error')).toBe('EMAIL_ALREADY_REGISTERED');
       expect(response.cookie).not.toHaveBeenCalled();
     });
 

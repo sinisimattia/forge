@@ -71,16 +71,28 @@ import { localRedirect, SIGNED_IN_HOME } from '~/utils/redirect';
  * so that message says what to do — sign in the way already possible, then
  * link the provider from account settings — rather than only what went wrong.
  *
- * ## `redirectTo`, read from this page's own query
+ * ## `redirectTo`, read from this page's own query — always, now
  *
- * Not `route.query.redirect`, the name `login.vue` reads: that page's `?redirect=`
- * is judged once and handed to the backend as the `redirectTo` this backend
- * echoes back once an authorization completes, and it can come back as part of
- * *this* page's own URL rather than as the literal final destination,
- * depending on what a caller asked the backend to remember. Either way it is
- * attacker-reachable the same way `login.vue`'s own `redirect` is — it arrived
- * on a query string a link could set — so it goes through the same
- * `localRedirect` judgement before anything navigates to it, and a value that
+ * Not `route.query.redirect`, the name `login.vue` reads. `OAuthController.landingUrl`
+ * sends **every** completed authorization here — success and refusal alike —
+ * carrying the authorization's own destination as `?redirectTo=` on *this*
+ * page's own URL, never as the URL's own path. That backend method's own
+ * TSDoc explains why every ending routes through here now: a first version
+ * sent a successful authorization straight to its destination and appended
+ * `?error=` only to a refusal's URL, which meant a refusal that had already
+ * chosen a destination — `EMAIL_ALREADY_REGISTERED` among them — rendered on
+ * whatever page it landed on, none of which read an `error` query parameter
+ * at all. The remedy this file carries for that one code was minted and shown
+ * to nobody.
+ *
+ * `redirectTo` is still attacker-reachable — it arrived on a query string a
+ * link could set, same as `login.vue`'s own `redirect` — so it goes through
+ * `localRedirect` a **second** time here before anything navigates to it,
+ * even though `OAuthService.validateRedirectTo` already judged it once before
+ * it was ever persisted on the authorization row this value came from. Two
+ * independent checks on a value that crosses a redirect this application does
+ * not compile against (ADR-0008): neither side gets a compiler-checked
+ * guarantee that the other one's judgement survived the trip. A value that
  * does not pass becomes {@link SIGNED_IN_HOME} rather than an open redirect.
  */
 definePageMeta({
