@@ -9,8 +9,8 @@ app depends on it and implements its service contracts, so they provably speak t
 
 The domain shape (what an entity is, what a given operation does) tends to live once per
 consumer — duplicated and free to drift. `__FORGE_SCOPE__/core` makes the domain the **single,
-executable source of truth**: one set of entities, one `I*Service` interface per domain, and one
-runner-agnostic conformance suite. Each consumer implements the same contract for its own
+executable source of truth**: one set of entities, `I*Service` interfaces, and
+runner-agnostic conformance suites. Each consumer implements the same contract for its own
 runtime — one against real persistence, another over a remote transport — and every implementation
 is held to that _same_ behavioral suite. The TypeScript compiler (`implements IArticleService`) and
 the shared tests — not convention or code review — keep them identical. See
@@ -29,18 +29,29 @@ a way for an attempt to end is a compile error at every consumer rather than a s
 fall-through, and the `audit/` domain, whose contract offers `record` and `query` and nothing
 else — an interface that cannot express a change is one no caller can be talked into making,
 and the other half of that guarantee is a privilege on the table rather than anything in
-TypeScript. Its entry carries an explicit, nullable `organizationId` before any organization
-exists, because this is the one table the application is not permitted to backfill
-([ADR-0007](../../docs/adrs/0007-tenancy-is-explicit-never-ambient.md)), and the
-`authorization/` domain, which is one pure function — `can(principal, permission, resource?)`
-([ADR-0006](../../docs/adrs/0006-authorization-is-a-pure-function-in-core.md)). It is a domain
-of its own rather than a member of `shared/` because it needs `PlatformRole` and `UserId`, and
-a `shared/` folder that depends on a domain inverts the direction every other domain relies
-on — and because the webapp imports this one by name to decide what to render, so the subpath
-is part of its interface. Each domain gets its own
-folder under `src/` with up to seven subfolders — `entities/`, `contracts/`, `enums/`, `errors/`,
-`types/`, `testing/`, `policies/` — one file per exported symbol, named exactly after the symbol.
-A domain that has no rule needing a standalone function simply has no `policies/` folder.
+TypeScript. Its entry carries an explicit, nullable `organizationId`, which is stated rather
+than inferred because this is the one table the application is not permitted to backfill
+([ADR-0007](../../docs/adrs/0007-tenancy-is-explicit-never-ambient.md)) — it was nullable and
+empty before there were organizations to name, and it is the same field now that there are.
+
+It also ships the `organizations/` domain — an `Organization`, a `Membership` that says which
+role a person holds *in* one, and an `Invitation`, the one credential whose holder is by
+construction not yet a member of the thing it admits them to
+([ADR-0010](../../docs/adrs/0010-organization-invitations.md)) — and the `authorization/`
+domain, which is `can(principal, permission, resource?)` plus the per-record grants its third
+layer reads ([ADR-0006](../../docs/adrs/0006-authorization-is-a-pure-function-in-core.md)).
+`authorization/` is a domain of its own rather than a member of `shared/` because it needs
+`PlatformRole`, `UserId` and `OrgRole`, and a `shared/` folder that depends on a domain inverts
+the direction every other domain relies on — and because a client imports this one by name to
+decide what to render, so the subpath is part of its interface.
+
+Each domain gets its own folder under `src/` with up to seven subfolders — `entities/`,
+`contracts/`, `enums/`, `errors/`, `types/`, `testing/`, `policies/` — one file per exported
+symbol, named exactly after the symbol. **A domain has only the subfolders it needs**, and the
+shipped tree is the proof: `organizations/` has no `policies/` (no rule of its own needs a
+standalone function), and `authorization/` has neither `entities/` nor `enums/` (its
+`Permission` is a string union in `types/`, and what it reasons about belongs to other domains).
+An empty folder is a shape a later reader is obliged to keep; there are none.
 
 - **`__FORGE_SCOPE__/core/shared/errors`** — the base `DomainError` class every domain error
   extends. Callers catch broadly (`instanceof DomainError`) or narrowly (a specific subclass); it
@@ -49,7 +60,13 @@ A domain that has no rule needing a standalone function simply has no `policies/
   `ConformanceExpect` (the assertion surface a suite is driven through) and `ConformanceRunner`
   (the `describe`/`it`/`expect` primitives a suite needs from its host runner).
 - **`__FORGE_SCOPE__/core/shared/types`** — cross-domain pure types, e.g. `Brand<T, B>` for nominal
-  typing of primitives.
+  typing of primitives, and `PaginatedResult<T>`, the one page shape every listing contract returns.
+- **`__FORGE_SCOPE__/core/shared/policies`** — pure functions with **no domain dependency at all**:
+  `assertNever` (the exhaustiveness forcing function every `switch` over a domain union ends with)
+  and `normalizeEmail`. That absence of a domain dependency is the whole membership rule, and it is
+  load-bearing in the other direction too: `can()` needs `PlatformRole` and `UserId`, so it lives in
+  `authorization/policies`, **not** here — a `shared/` folder that depends on a domain inverts the
+  direction every domain relies on.
 
 Each domain adds:
 
@@ -88,7 +105,24 @@ code under test via its public `__FORGE_SCOPE__/core/*` subpath.
 
 ## Conformance tests, by example
 
-Each contract ships with a **conformance suite** — a runner-agnostic function (e.g.
+### The default shape, and the three the shipped tree actually holds
+
+The default is one `I*Service` per domain and one suite per contract, and it is what a new domain
+should start as. It is **not** an invariant — read the tree, not this sentence. Three departures
+ship, each for a stated reason, and each is a precedent a new domain may follow:
+
+| Departure | Where | Why |
+|---|---|---|
+| **A domain holds two contracts** | `identities/` — `IIdentityService` and `IBreachedPasswordRegistry` | The second is a *port* to an external capability the domain has to name (ADR-0008), not a second service over the same data. |
+| **A contract has no suite** | `IBreachedPasswordRegistry` | The shipped implementation answers `false` unconditionally, so there is nothing an assertion could distinguish. A suite here would be a test that exists to pass, which this package treats as worse than no suite. It is owed one the moment a real registry is bound. |
+| **A contract has two suites — one shared, one server-only** | `IAuthService` and `IOrganizationService`, each with a `run*Contract` and a `run*SecurityContract` | Some assertions only an implementation that *owns the store* can honestly satisfy. Tenant isolation is the clearest: an implementation reaching its data over the wire could satisfy a cross-tenant assertion only by refusing on its own account, which proves that it refuses and nothing else. Those assertions live in the security suite, driven by the owning implementation and by nothing else. **If a cross-tenant assertion looks like it belongs in the shared suite, it belongs in the security one.** |
+
+A fourth shape is worth naming because it is not a departure and reads like one: `authorization/`
+ships `can(principal, permission, resource?)` as a pure function under `policies/`, pinned by
+ordinary unit tests rather than by a conformance suite. A suite is for a *contract with more than
+one implementation*. A pure function has exactly one, everywhere, which is the point of it.
+
+Each contract that has one ships its **conformance suite** as a runner-agnostic function (e.g.
 `runIArticleServiceContract`, exported from `__FORGE_SCOPE__/core/articles/testing`) that encodes
 the behavior every implementation of that contract must exhibit. The suite takes your test
 runner's `describe`/`it`/`expect` plus a `makeService` factory and calls them itself. It imports
@@ -151,7 +185,8 @@ An implementation that crosses a serialization boundary receives its data as pla
 ## How to add a domain
 
 1. Create `src/<domain>/{entities,contracts,enums,errors,types,testing}/` (plus `policies/` if the
-   domain needs one), one file per symbol
+   domain needs one) — **and only the ones the domain actually needs**; see "What's inside" for
+   two shipped domains that have fewer — one file per symbol
    (filename = symbol name, e.g. `Article.ts`, `IArticleService.ts`, `Visibility.ts`,
    `ArticleTitleRequiredError.ts`, `CreateArticleInput.ts`, `runIArticleServiceContract.ts`), plus
    an `index.ts` barrel per folder.
@@ -160,7 +195,10 @@ An implementation that crosses a serialization boundary receives its data as pla
    `fromJSON` static reviver.
 3. Add the `I<Name>Service` contract under `contracts/`, speaking in entities, narrowing inputs
    with `Omit`/`Pick`, plus any create-input/result types under `types/`.
-4. Add a `run<IName>Contract` suite + fixtures under `testing/`.
+4. Add a `run<IName>Contract` suite + fixtures under `testing/`. If any assertion can be honestly
+   satisfied only by the implementation that owns the store — tenant isolation is the standing
+   example — put it in a second, server-only `run<IName>SecurityContract` rather than in the shared
+   suite; see "The default shape" above for why that split exists and what it is worth.
 5. Declare the new subpaths (`./<domain>/entities`, `/contracts`, `/enums`, `/errors`, `/types`,
    `/testing`, and `/policies` if present) in `libs/core/package.json` `exports` — and
    **nowhere else**. Every other resolution point (`libs/core/tsconfig.json` `paths`,

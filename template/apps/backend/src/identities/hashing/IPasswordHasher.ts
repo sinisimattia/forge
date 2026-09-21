@@ -51,7 +51,8 @@ export type StoredSecret = {
  * secret at all — `AuthIdentity` has no field for one and never will (ADR-0005)
  * — so a hashing port in core would have nothing to hash, and would drag cost
  * parameters, which are a deployment's business, into a package that must stay
- * free of runtime concerns.
+ * free of runtime concerns. That placement is ADR-0008's rule, not an exception
+ * to it — see "Where a port lives, and the test for deciding".
  */
 export interface IPasswordHasher {
   /**

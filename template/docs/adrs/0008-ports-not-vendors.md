@@ -1,6 +1,7 @@
 # ADR-0008: Ports, Not Vendors
 
-- **Status:** Accepted
+- **Status:** Accepted — amended 2026-09-21 with "Where a port lives, and the test for
+  deciding", which corrects a clause the shipped code had never satisfied
 - **Date:** 2026-09-18
 - **Relates to:** [ADR-0005](0005-identity-is-separate-from-user.md)
 
@@ -27,11 +28,12 @@ something different.
 
 ## Decision
 
-**Every external capability is a port — an interface in `__FORGE_SCOPE__/core` — and the
-template ships a development adapter behind it, never a vendor binding.**
+**Every external capability is a port — an interface, never a vendor binding — and the
+template ships a development adapter behind it.**
 
-- The domain depends on the *capability* ("deliver this message to this address"), stated
-  as an `I*Service` contract in core. It never depends on a provider, and never names one.
+- Whatever depends on the capability depends on the *capability* ("deliver this message to
+  this address"), stated as an interface. It never depends on a provider, and never names
+  one.
 - Each port ships with a development adapter that satisfies the contract with no external
   account: the shipped mail adapter writes the message to disk instead of sending it.
 - **The template binds no third-party account and carries no keys.** Every credential in a
@@ -41,6 +43,36 @@ template ships a development adapter behind it, never a vendor binding.**
   someone presses it.
 - Binding a real provider is writing one adapter against the existing port and configuring
   it. No domain code changes, because no domain code named the provider.
+
+### Where a port lives, and the test for deciding
+
+**A port belongs to the layer whose vocabulary the capability is stated in.**
+
+- **In `__FORGE_SCOPE__/core`, when the domain itself has to name the capability.**
+  `IBreachedPasswordRegistry` is the shipped example: "is this password already public?" is
+  a question the domain asks on its own behalf — `PasswordPolicyViolation.BREACHED` is a
+  domain outcome — so the contract is stated in core and every consumer is held to it.
+- **In the app that needs it, when only that app has the vocabulary.** `IMailer`
+  (`apps/backend/src/mail/`) and `IPasswordHasher`
+  (`apps/backend/src/identities/hashing/`) are the shipped examples, and both are
+  deliberate. Core has no notion of a message, an address or a delivery mechanism, and no
+  notion of a derivation algorithm or its cost parameters; stating either contract in core
+  would mean writing a deployment's transport and storage concerns into the one package
+  whose value is that it carries none. Core's purity rule (`libs/core/STANDARDS.md`, and
+  the `purity` gate that enforces it) is not a style preference that a port may be excused
+  from — it is the reason a contract in core means anything.
+
+The test is **whose question is it?** If a domain rule, a domain entity or a domain error
+would have to name the capability to be stated at all, the port goes in core. If only the
+app's own plumbing names it, the port goes in the app, beside the adapter and the DI token
+that binds it. Everything else in this ADR — no vendor in the contract, a development
+adapter behind every port, no shipped credential — applies identically in both places.
+
+*This clause was written after the fact.* The original decision said every port is an
+interface in core, `IMailer` and `IPasswordHasher` were built in the backend anyway for
+the reason above, and `IMailer`'s own TSDoc argued against the ADR that governed it. The
+sentence was corrected rather than the code, because moving those two contracts into core
+would import transport vocabulary into core to satisfy a sentence — the wrong direction.
 
 ## Consequences
 

@@ -4,10 +4,12 @@
 
 This package is the **backend**: a NestJS REST API with TypeORM and PostgreSQL. It ships as
 a skeleton with no business domain of its own. What it does ship is the identity
-foundation: registration, sign-in, the session lifecycle, and a global guard that closes
-every route not marked `@Public()`. Feature domains (e.g. `articles`, `comments`, `tags`)
-land here once `libs/core` defines their entities and `I*Service` contracts (see
-`libs/core/CLAUDE.md`).
+foundation — registration, sign-in, the session lifecycle, and a global guard that closes
+every route not marked `@Public()` — and, on top of it, **organizations and authorization**:
+organizations, memberships, invitations, per-record grants, and `PermissionsGuard`, which
+answers every organization-scoped route through core's `can()`. Feature domains (e.g.
+`articles`, `comments`, `tags`) land here once `libs/core` defines their entities and
+`I*Service` contracts (see `libs/core/CLAUDE.md`).
 
 - **Framework:** NestJS (Node.js + TypeScript)
 - **ORM:** TypeORM
@@ -51,7 +53,9 @@ All design docs live in the top-level `docs/` folder (paths relative to the repo
 roster), 0003 (architecture docs describe boundaries), 0004 (API reference lives with
 implementation). Platform: 0005 (identity is separate from user), 0006 (authorization is a
 pure function in core), 0007 (tenancy is explicit, never ambient), 0008 (ports, not
-vendors), 0009 (two database roles).
+vendors — including **where a port lives**, which is why `IMailer` and `IPasswordHasher` are
+in this package and not in core), 0009 (two database roles), 0010 (organization invitations
+are single-use, expiring, hashed and address-checked).
 
 ## Module structure
 
@@ -72,11 +76,29 @@ src/<module>/
 `/auth` endpoints including recovery, the global `JwtAuthGuard`, `PlatformAdminGuard`,
 `@Public()`/`@CurrentUser()`, the session and rotation services, and the one
 `REFRESH_COOKIE` constant); `identities/` (the password identity, the argon2id hasher, the
-breached-password port, and `/users/me/identities`); `users/` (`/users/me` and the four
-platform-admin endpoints); `audit/` (`GET /audit`); and the persistence
-record classes under `users/`, `identities/`, `auth/entities/` and `audit/`. Those are
-named `<Thing>Record` because `__FORGE_SCOPE__/core` already exports `User`,
-`AuthIdentity`, `Session` and `AuditEntry`, and a repository imports both in one file.
+breached-password port, and `/users/me/identities`); `users/` (`/users/me`, the four
+platform-admin endpoints, and `GET /users/me/principal`); `mail/` (the `IMailer` port, the
+file-writing development adapter, and the message templates); `organizations/`
+(`/organizations`, `/organizations/:id/members`, the four invitation routes including the
+unscoped `POST /invitations/:token/accept`); `authorization/` (`PermissionsGuard`,
+`@RequirePermission`, `PrincipalService` — the one hydrator of a `Principal` — and
+`/organizations/:id/grants`); `audit/` (`GET /audit` and `GET /organizations/:id/audit`);
+and the persistence record classes under `users/`, `identities/`, `auth/entities/`,
+`audit/`, `organizations/` and `authorization/`. Those are named `<Thing>Record` because
+`__FORGE_SCOPE__/core` already exports `User`, `AuthIdentity`, `Session`, `AuditEntry`,
+`Organization`, `Membership`, `Invitation` and `ResourceGrant`, and a repository imports
+both in one file.
+
+> **`AuthorizationModule` is imported by `OrganizationsModule`, `AuditModule` and
+> `UsersModule`, not by `AppModule`** — for `PermissionsGuard` and, in `UsersModule`'s
+> case, for `PrincipalService`. A guard is instantiated in the module context of the
+> controller that names it, so **every module hosting a guarded controller must register
+> every repository that guard injects**. That is not a type error and not a lint error: it
+> is an `UnknownDependenciesException` at start-up, and for one commit in this phase the
+> generated application did not boot at all while every fast tier stayed green.
+> `__tests__/guard-wiring.spec.ts` is what turns red — it *discovers* guards from
+> `@UseGuards` metadata rather than reading a list, so a new guard on a new controller is
+> covered without anyone remembering to add it.
 
 **Shared utilities:** `src/common/` — filters, interceptors, pipes, types, i18n plumbing.
 
@@ -90,8 +112,9 @@ named `<Thing>Record` because `__FORGE_SCOPE__/core` already exports `User`,
 ## What's wired up
 
 - `AppModule` — `ConfigModule` (global, `.env`), `TypeOrmModule.forRootAsync` reading
-  `DATABASE_URL`, the seven persistence record classes, `I18nModule`, `HealthModule`,
-  `MailModule`, `AuditModule`, `IdentitiesModule`, `AuthModule`, `UsersModule`, and
+  `DATABASE_URL`, the eleven persistence record classes, `I18nModule`, `HealthModule`,
+  `MailModule`, `AuditModule`, `IdentitiesModule`, `AuthModule`, `UsersModule`,
+  `OrganizationsModule`, and
   `GLOBAL_PROVIDERS` — the `APP_GUARD`, `APP_PIPE`, `APP_FILTER` and `APP_INTERCEPTOR`
   described above. Everything that can be module metadata IS, because module metadata is
   assertable without starting anything; `__tests__/composition-root.spec.ts` reads this list
@@ -108,7 +131,7 @@ named `<Thing>Record` because `__FORGE_SCOPE__/core` already exports `User`,
   `service_healthy` ever starts.
 - **Configuration this package refuses to boot without:** `DATABASE_URL`, `JWT_SECRET`
   (the key access credentials are signed with) and `PUBLIC_WEBAPP_URL` (the origin every
-  mail link is built from). All three are `getOrThrow` with no default, deliberately —
+  mail link is built from — verification, password reset **and** invitation). All three are `getOrThrow` with no default, deliberately —
   see `.env.example`.
 - `nest-cli.json` carries `"entryFile": "apps/backend/src/main"` **and**
   `"outDir": "dist/apps/backend/src"` on its `assets` entry, and both are load-bearing.
@@ -188,6 +211,7 @@ comment for what it cost when they lived in `bootstrap()`. There are two
 | `I18nValidationPipe`    | `nestjs-i18n`                 | `APP_PIPE` | Localized class-validator integration, with `whitelist` + `forbidNonWhitelisted` |
 | `JwtAuthGuard`          | `src/auth/guards/`            | `APP_GUARD` | Closes every route not marked `@Public()` |
 | `PlatformAdminGuard`    | `src/auth/guards/`            | per-route `@UseGuards` | Closes a route to all but a platform administrator, and records every pass |
+| `PermissionsGuard`      | `src/authorization/`          | per-controller `@UseGuards` + `@RequirePermission` | Hydrates the actor's `Principal` and answers the route's declared permission through core's `can()`. Refuses with a **bare** `NotFoundException` at every site, so "you may not" and "there is no such thing" are byte-identical (D9). Deleting it from a controller is caught by that controller's own authorization cases, never by a type. |
 | `ParseUuidParamPipe`    | `src/common/pipes/`           | per-param | Localized UUID param validation                            |
 | `PaginationQueryDto`    | `src/common/types/`           | — | `page`/`limit` query DTO + paginated response shape. Endpoints that add filters (`AuditQueryDto`, `ListUsersQueryDto`) declare their own rather than extending it, so every field an endpoint accepts is visible in one place — `forbidNonWhitelisted` makes an undeclared one a 400. |
 

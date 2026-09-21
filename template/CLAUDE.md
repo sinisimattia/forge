@@ -11,13 +11,33 @@ rules (see ADR-0001 on single-source docs).
 | -------------- | ----------------------------------------------------------------------- | ------------------------------------------------------ |
 | `apps/backend` | NestJS REST API + TypeORM (PostgreSQL)                                  | `apps/backend/CLAUDE.md` → `apps/backend/STANDARDS.md` |
 | `apps/webapp`  | Nuxt 4 / Vue 3 frontend                                                 | `apps/webapp/CLAUDE.md` → `apps/webapp/STANDARDS.md`   |
-| `libs/core`    | Framework-agnostic domain: entities, `I*Service` contracts, conformance suites | `libs/core/CLAUDE.md` → `libs/core/STANDARDS.md` |
+| `libs/core`    | Framework-agnostic domain: entities, `I*Service` contracts, conformance suites, and `can()` | `libs/core/CLAUDE.md` → `libs/core/STANDARDS.md` |
 | `docs`         | ADRs, RFCs, architecture, shared standards                              | `docs/standards/` is authoritative                     |
+
+## What ships
+
+Identity (users, auth identities, sessions with rotating refresh tokens, email verification,
+password reset, the append-only audit log) **and** organizations and authorization
+(organizations, memberships, invitations, organization roles, per-record grants, and
+`PermissionsGuard` over core's `can()`). No business domain of its own — that is what a
+generated project adds.
+
+**Three decisions here bind everything built on top**, and each has an ADR because getting it
+wrong later is a migration rather than an edit: authorization is a pure function in core
+([ADR-0006](docs/adrs/0006-authorization-is-a-pure-function-in-core.md)), tenancy is explicit
+and never ambient ([ADR-0007](docs/adrs/0007-tenancy-is-explicit-never-ambient.md)), and the
+application connects as a role with no `UPDATE`/`DELETE` on `audit_entries`
+([ADR-0009](docs/adrs/0009-two-database-roles.md) — read it before touching that schema; a
+foreign key to that table voids the guarantee while leaving it looking correct).
 
 ## Canonical truth
 
 - `libs/core` is the **executable contract** for the domain (entities + interfaces). Docs
   describe boundaries and link to it; they never restate its shapes (ADR-0003, ADR-0004).
+- **Authorization is answered in one place.** `can(principal, permission, resource?)` lives in
+  `libs/core/src/authorization/policies/`; the backend reaches it through `PermissionsGuard`
+  and the webapp through `useCan`. Neither re-implements a rule, and a client's answer is
+  never what a route relies on.
 - Shared, cross-package rules live once in `docs/standards/*` and
   `docs/standards/agent-playbook.md`. **Docs win on conflict** with any
   `CLAUDE.md`/`STANDARDS.md`/agent prompt.

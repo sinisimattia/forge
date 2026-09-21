@@ -22,9 +22,13 @@ export type OutboundMessage = {
  * `IPasswordHasher` does (see `identities/hashing/IPasswordHasher.ts`): core has
  * no notion of a message, an address or a delivery mechanism, and giving it one
  * would drag a deployment's own transport concerns into a package that must stay
- * free of them. ADR-0008 ("Ports, Not Vendors") describes the shape this
- * capability takes generally, in `core`, for the case where the domain itself
- * needs to name the capability; a mailer is not that case.
+ * free of them. That is ADR-0008's own rule — "Where a port lives, and the test
+ * for deciding": a port belongs to the layer whose vocabulary the capability is
+ * stated in, which is `core` when a domain rule has to name the capability
+ * (`IBreachedPasswordRegistry` is that case) and the app when only the app's
+ * plumbing does. A mailer is the second case. Everything else the ADR requires —
+ * no vendor in the contract, a development adapter behind it, no shipped
+ * credential — applies here unchanged.
  *
  * The one adapter this template ships, {@link FileMailer}, binds no account and
  * sends nothing anywhere — see its own comment and ADR-0008's consequences.

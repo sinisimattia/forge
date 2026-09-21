@@ -1,6 +1,6 @@
 # Forge — Phase Roadmap
 
-Phases 1 and 2 are built. This records how the remaining work is decomposed and, more
+Phases 1, 2 and 3 are built. This records how the remaining work is decomposed and, more
 importantly, **the ordering decisions that exist to avoid rework**. They are easy to get wrong
 and expensive to undo.
 
@@ -11,7 +11,7 @@ identity platform as one thing. It is not one plan. It is four.
 |---|---|---|
 | **1. Generator + template skeleton** | `npm run create` produces a bootable, agent-ready NX monorepo. No auth. | **BUILT** |
 | **2. Identity foundation** | Users, auth identities (password provider), sessions with rotating refresh tokens, email verification, password reset, the append-only audit log — and the whole client half: services over the wire, the auth store, route middleware, and the pages a person actually uses. | **BUILT** |
-| **3. Organizations + authorization** | Orgs, memberships, invitations, `can()` as pure core logic, roles, per-resource grants, guards. | specified, not written |
+| **3. Organizations + authorization** | Orgs, memberships, invitations, `can()` as pure core logic, roles, per-resource grants, guards — and the whole client half: services, `useCan`, the permission middleware, the pages. | **BUILT** |
 | **4. OAuth + account linking** | Google/GitHub/OIDC adapters behind one port. | specified, not written |
 | **5. MFA** | TOTP + WebAuthn, two-phase login, recovery codes. | specified, not written |
 
@@ -30,8 +30,11 @@ reshapes the entire login flow and every caller.
 records its own events as it builds them. Bolting a cross-cutting audit log on at the end means
 revisiting every handler.
 
-**3. Phase 2's own discoveries, which Phase 3 must not get wrong.** Each of these cost a
-fix round to find; see `phase-2-decision-log.md` for the evidence behind them.
+**3. Phase 2's own discoveries, which Phase 3 had to not get wrong.** Each cost a fix round
+to find; see `phase-2-decision-log.md` for the evidence. **All eight were discharged** —
+`phase-3-decision-log.md` records how, and two of them (the SSR credential, and splitting new
+conformance assertions by who can honestly satisfy them) turned out to be the load-bearing
+ones.
 
 - **Never add a foreign key to `audit_entries`.** Phase 3 gives audit entries an
   `organizationId` that finally carries a value, and the natural next move is a foreign key
@@ -57,14 +60,17 @@ fix round to find; see `phase-2-decision-log.md` for the evidence behind them.
 - **Any wiring Phase 3 adds owes an assertion that fails when it is deleted**, plus the
   evidence of having watched it fail. Fifteen of sixteen deletions of shipped wiring once
   left the whole backend suite green.
-- **Widen the sanitize gate's `invitations?` rule before Phase 3 starts, not during.** Spec
+- **DONE (Phase 3, Task 1).** *Widen the sanitize gate's `invitations?` rule before Phase 3
+  starts, not during.* Spec
   §9.4 makes organization invitations a first-class concept and the gate bans the bare noun.
   The right shape is the one `event`, `payment` and `ticket` already have: ban the source
   project's compounds, not the word. Change the gate in its own commit, never inside a
   feature task.
-- **ADR-0006's actual rule is cited by no review dimension in any package.** Phase 3 ships
-  `can()` behind a guard and owes it a row.
-- **Take the access credential out of the SSR payload.** Ruled on 2026-09-20 after Mattia read
+- **DONE (Phase 3).** *ADR-0006's actual rule was cited by no review dimension in any
+  package.* It now has one in each: **backend B11** and **webapp W9**, both blocking, both
+  "read and judge" with a grep to surface candidates — a role comparison that decides what an
+  actor may *do*, rather than what label to render, is a second statement of the rule.
+- **DONE (Phase 3, Task 19).** *Take the access credential out of the SSR payload.* Ruled on 2026-09-20 after Mattia read
   the trade: Phase 2 ships with the exposure documented, Phase 3 removes it, because Phase 3
   reopens the renewal path for tenancy anyway and the change lands beside work rather than on
   top of working code. Four things are owed, and none of them needs re-deriving —
@@ -75,66 +81,152 @@ fix round to find; see `phase-2-decision-log.md` for the evidence behind them.
   second renewal race right, or reuse detection revokes the family. The no-flash behaviour is
   not at risk — the three-state `status` is what prevents the flash, not the token.
 
-## What the final whole-branch review left for Phase 3
+## Phase 2's final review: all eight findings closed in Phase 3
 
-Phase 2's final review returned **MERGE, no blockers**, and six findings that are real but do
-not make any shipped behaviour wrong. Each was measured; none needs re-deriving. Four of the
-six are the phase's own theme — *a check that passes because it never ran* — which is why they
-are listed first rather than filed as chores.
+Phase 2's final review returned **MERGE, no blockers**, and six findings plus two carried
+smaller ones. Every one is now closed; each is recorded here with the task that closed it so
+nobody re-opens the investigation.
 
-- **`AuthenticationOutcome`'s forcing function does not reach the webapp.** Core's TSDoc says
-  every consumer ends its `switch` with `assertNever`. Injecting a third status member fails
-  `core` and `backend` typecheck (TS2345 `'never'`) and **`webapp` passes**: its three consumers
-  (`stores/auth.ts:229`, `LoginForm.vue:63`, `useAuth.ts`) use `if`. A new member would render
-  as a sign-in refusal, silently. Phase 5 adds `MFA_REQUIRED`, so this is the branch the whole
-  design exists to make loud.
-- **A third masked assertion, and the first two were fixed.** `runIAuditServiceContract.ts:439-473`
-  checks ten wire fields, but the backend driver seeds `organizationId`, `clientAddress` and
-  `clientLabel` as `null`, so three are null-symmetric. Measured: dropping `organizationId`
-  from `AuditService.toEntity` leaves **499/499 green**; dropping the client columns fails a
-  *different* test while the wire-shape test stays green. Core's own driver seeds non-nulls with
-  a comment saying why. **Phase 3 is tenancy — `organizationId` is exactly the field that stops
-  being null.**
-- **`libs/core`'s 100% coverage thresholds run in no CI at all** — not `ci.yml`, not
-  `project.json`, not the integration gate. The coverage is real and was verified; nothing
-  enforces it. The plan said Task 18 owned closing this and Task 18 did not.
-- **The layer checker has no test that injects a layering violation**, and with `app/pages` and
-  `app/layouts` moved aside it prints `clean (44 component(s) and 0 page(s)/layout(s) checked)`
-  and exits 0. Its vacuous-pass guard covers the mirror case only — the axis added when Task 17
-  extended it to pages is unguarded.
-- **ADR-0008 says "every external capability is a port — an interface in core", and that is
-  false.** `IMailer` and `IPasswordHasher` live in the backend, deliberately, and
-  `IMailer.ts:21-27` argues against the ADR that governs it. Fix the ADR or move the ports;
-  do not leave them contradicting each other.
-- **`libs/core/README.md` claims one contract per domain and one suite per contract.** Identities
-  has two contracts, auth has two suites, and `IBreachedPasswordRegistry` has none. Its `shared/`
-  inventory also omits `shared/policies`, which is load-bearing.
+| Finding | Closed by |
+|---|---|
+| `AuthenticationOutcome`'s forcing function did not reach the webapp — its three consumers used `if` | Task 2. The injection that *demonstrates* it also had to be corrected: a bare enum member adds no variant to a discriminated union, so the valid form adds a member **and** a matching variant |
+| A third masked assertion — `organizationId`, `clientAddress`, `clientLabel` all `null === null` in the audit wire-shape comparison | Task 8, and measured both ways: **499/499 green** before, **2 of 502 red** after |
+| `libs/core`'s 100% coverage thresholds ran in no CI at all | Task 2. A `coverage` target already existed; the gap was that nothing invoked it |
+| The layer checker had no test injecting a layering violation | Task 2, fix round 1 — `check-atomic-layers.spec.ts`, three cases driving the **shipped** script via `execFile` against `mkdtemp` fixtures |
+| ADR-0008 contradicted the code on where a port lives | Task 22b. **The ADR was corrected, not the code** — see `phase-3-decision-log.md` §5 |
+| `libs/core/README.md` claimed one contract per domain and one suite per contract | Task 22b. It now names the three departures that actually ship, and its `shared/` inventory includes `shared/policies` |
+| A direct push to `main` ran only the `unit` tier | Task 20 — `generated-project` and `docker` now run on push, and **that is what caught a generated application that did not boot** |
+| The gate list existed twice with nothing pinning the copies together | Task 20. The new pinning test **failed on its first run, on real drift**: `coverage` was in `ci.yml` and in neither of the other two lists |
 
-Also carried, smaller: **a direct push to `main` runs only the `unit` tier** — `generated-project`,
-`storybook` and `docker` are all `if: pull_request`, so the gate this phase spent a task building
-does not run on the branch it protects. The gate list exists twice (root `affected` and `ci.yml`)
-with nothing pinning them together. Two tautological assertions remain
-(`auth.controller.spec.ts:419`, whose own comment argues against it, and
-`composition-root.spec.ts:289`). `users.controller.spec.ts:197` sweeps for a secret in a world that
-has none. Nine more stale doc claims across D4–D13. And spec §12 step 5, run fresh, leaves one
-un-triaged residue: `https://placehold.co` in `AppImage.stories.ts:4`.
+Still open from that review, unchanged and not worked on this phase: two tautological
+assertions (`auth.controller.spec.ts:419`, whose own comment argues against it, and
+`composition-root.spec.ts:289`); `users.controller.spec.ts:197`, which sweeps for a secret in
+a world that has none; nine stale doc claims across D4–D13; and spec §12 step 5's one
+un-triaged residue, `https://placehold.co` in `AppImage.stories.ts:4`.
 
-**Not verified anywhere in Phase 2:** the template on the Node it declares. This machine has only
-`v26.5.0` and no version manager, so every run — including the final review's — was on Node 26
-while `template/package.json` says `>=22 <23` and both Dockerfiles pin 22. The gate's new mismatch
-warning fired correctly every time, which is the guard working and the coverage still missing.
+## What Phase 4 must not get wrong
 
-## What Phase 3 inherits, already built
+Phase 3's own discoveries. Each cost at least a fix round; the evidence is in
+`phase-3-decision-log.md`, and **its opening five are the ones to read before touching
+authorization or the migration guards.**
+
+- **A green fast tier says nothing about whether the application boots.** Phase 3's own
+  instance: a guard is instantiated in the module context of the controller that names it, so
+  a module hosting a guarded controller must register every repository that guard injects.
+  Missing that registration is not a type error and not a lint error — it is an
+  `UnknownDependenciesException` at start-up, and it survived every fast tier for an entire
+  phase. `apps/backend/src/__tests__/guard-wiring.spec.ts` catches the class in 1.3 s, and it
+  **discovers** guards from `@UseGuards` metadata rather than reading a list. **Phase 4 adds
+  OAuth guards and strategies; add them to controllers, then let discovery find them — do not
+  convert that spec back into a list.**
+- **Prose is not covered by any gate, and this phase produced five false comments.** Four were
+  believed by a later reader before somebody checked. When a comment is found to be false, the
+  better fix is usually to make it **true** — add the assertion it claims exists — rather than
+  to soften the sentence: an incorrect pointer to coverage stops the next person looking.
+- **Do not enumerate the bad inputs. Refuse what you do not model.** Five fix rounds of
+  per-spelling patching in `migration-sql.spec.ts` each closed one variant and each was
+  followed by another. What held is a fail-closed whitelist plus an allow-list of one
+  permitted method. The general rule, from the round that stated it: *"enumerating the
+  dangerous members is the move that failed five times."*
+- **A guard's failure message is part of its design.** Phase 3 shipped, briefly, a guard whose
+  error pointed an author at the one-character change that would reopen the hole it existed to
+  close. If a refusal has an obvious remedy that is catastrophic, the message must give the
+  author a way to get unstuck without reaching for it.
+- **Check whether a fault is fail-closed before writing a test against it.** D9's natural
+  fault — resolving the actor from the route parameter — refuses everything rather than
+  leaking, and the test only discriminated because of a contrived id-collision fixture. The
+  fault that can actually leak is *guard passes for the named tenant, service resolves the
+  target row by id alone*. Show a fault is fail-closed by measuring it: **14 red, every one a
+  control, zero refusal assertions.**
+- **`can()`'s layer three fires on no route, and D12 is a labelled partial with a tripwire.**
+  Grants are hydrated, expiry-filtered, served on `GET /users/me/principal` and consumed by
+  nothing, because naming the organization itself as the record would make an admin's
+  `grant:create` a route to `organization:delete`. **The first `can()` call site that passes a
+  `resourceType`/`resourceId` trips the tripwire and owes D12 a real test** — and it also makes
+  the currently-inert case-sensitivity of the `platform:administer` refusal real.
+- **Nothing in the webapp enumerates `Permission`, and that is load-bearing.** `useCan` and the
+  permission middleware forward it to `can()` as an opaque value, so the forcing function is
+  core's and reaches the webapp by construction (the webapp cannot compile against a core that
+  does not build). **A hardcoded list of permissions in a page, a menu or route meta silently
+  breaks this** — the check is a grep, and it is manual.
+- **Split any new conformance assertion by who can honestly satisfy it (DEC-1).** Phase 3
+  produced its evidence, and the injection that produces it is not the obvious one: the planned
+  injection reached the same line from both suites and could not have demonstrated a split.
+  Also measured, and the reason the comparisons assert **bodies**: a `404` carrying a different
+  `code` for a cross-tenant record reds the body comparison while all five status-comparing
+  rows stay green.
+- **`FakeDataSource` enforces no unique constraints and has no foreign keys.** Every uniqueness
+  invariant and every `ON DELETE SET NULL` path is invisible to the fast tier. A defect that
+  needs a real constraint to appear will appear in the real-database tier or nowhere.
+- **Never add a foreign key to `audit_entries`** — carried unchanged from Phase 2, and Phase 3
+  demonstrated a second way to void the guarantee that no foreign key rule catches:
+  `ALTER TABLE audit_entries OWNER TO <app role>`, since the owner is not subject to the
+  `REVOKE` and can re-grant itself.
+
+## Two things Phase 3 knowingly did not close
+
+**1. The template is still unverified on the Node it declares.** `template/package.json` says
+`>=22 <23` and both Dockerfiles pin 22. Phase 2 recorded that this machine had only Node 26 and
+no version manager; Phase 3 found the mechanism behind it — **there is no real Node 22 here at
+all: every `node@20`…`node@26` opt-symlink aliases the same Node 26.5.0 keg**, so installing
+Node 22 by the obvious route does not give you Node 22. The Docker walk is therefore the only
+place in this phase where anything ran on the declared Node, and it ran inside the images
+rather than on the host. The gate's mismatch warning fired correctly every time, which is the
+guard working and the coverage still missing.
+
+**2. Storybook's build failure is still un-root-caused, and the job stays PR-only on
+purpose.** `✓ 0 modules transformed`, then `[vite:build-html] Missing field 'moduleType'`,
+reproduced again on 2026-09-20 against a freshly generated project installed with `npm ci`
+against the lockfile that pins the combination once believed to be the fix. It did **not**
+move to push with `generated-project` and `docker`, and the reasoning is the reverse of the one
+that moved them: those moved because a gate that does not run on `main` protects nothing, while
+this one protects nothing either way — it is `continue-on-error: true` and it fails every time.
+Running it on every push would buy zero protection and train people to read a yellow CI page as
+normal, at which point the next failure in a job that *does* block is one more yellow mark among
+the yellow marks. **The exit condition is recorded in `.github/workflows/ci.yml` beside the job,
+not in anyone's memory: when the `moduleType` failure is root-caused, it flips twice in one
+commit — `continue-on-error` comes off and `if:` becomes `github.event_name != 'schedule'`.**
+
+## Triage: thirteen minors deferred from Phase 3
+
+Ledgered rather than looped, per the standing rule. The full evidence for each is in
+`phase-3-decision-log.md` §8; this is the actionable list, ordered by what the final review
+should weigh first.
+
+| | Item | Cost to close |
+|---|---|---|
+| 1 | **`auth-init.client.ts` awaits `store.renew()`**, and Nuxt holds the mount for an async plugin — so every full page load for a signed-in visitor inserts a backend round trip before hydration completes, and a hung renewal blocks interactivity indefinitely (`createApiClient` has no timeout). `status` is already seeded, so not awaiting may be strictly better. **Every generated project inherits this.** | One decision plus a test; possibly one line |
+| 2 | **The webapp/backend error-code lists disagree on sort order.** The backend uses `.localeCompare()`, the webapp's check used bare `sort()` (code-unit order); they differ on exactly one pair, `INVITATION_NOT_FOUND` vs `INVITATION_NO_LONGER_OPEN`. **The verification passed because it used the wrong comparator**, defeating the "compare them by eye" property that is the whole defence of the snapshot route | One line |
+| 3 | **`tools/sanitize.mjs` misses no-separator compounds** — `OrganizationInvitation` slips every rule, because the bare-word term rule has no camelCase/PascalCase boundary handling the way the `event`/`payment`/`ticket` rules do. Live now: the template ships `mail/templates/organization-invitation.ts` | One rule, in its own commit — never inside a feature task |
+| 4 | **`dependsOn` is inert-if-renamed, silently.** Nuxt filters on `p._name`; if `@pinia/nuxt` renames its plugin the belt becomes a no-op with no warning. Harmless today only because the `if`-guard is what actually holds | One sentence in the comment |
+| 5 | **`migration-sql.spec.ts` holds two matching styles** — the normalizer for security guards, raw source text for schema-shape assertions. Defensible, but it should be a **stated** split rather than an accident | A paragraph in the file's TSDoc |
+| 6 | **The `platform:administer` refusal is a case-sensitive literal comparison.** Inert while layer three is consumed by nothing; becomes real the moment a consumer wires it | Pair with D12's tripwire |
+| 7 | **`audit.service.ts` still hand-builds a `Principal` literal** rather than using `PrincipalService` — a second place the principal's shape is stated | Small refactor |
+| 8 | **`createOrganization`'s audit test compares against the service's own return value**, unlike its update/delete siblings | Read the value back from the store |
+| 9 | **`useInvitations.load` hardcodes the `PENDING` filter**, foreclosing an invitations-history view without a fetcher bypass | A parameter defaulting to `PENDING` |
+| 10 | **`api-error-code.spec.ts`'s comment still claims "the same eleven names"**; there are 14 | One line |
+| 11 | **No `LoginForm.spec.ts` case for the exhaustive switch** (the typecheck is self-protecting) | ~4 lines |
+| 12–13 | **Two near-tautological `fromJSON` round-trip comparisons** in `Organization.spec.ts` and `Membership.spec.ts` — `expect(revived.toJSON()).toEqual(original.toJSON())` restating the `toJSON` tests. The rule that stopped the pattern spreading landed at Task 5; these are the residue | Delete the trailing comparison |
+
+Also recorded and deliberately not actioned: the `migration-sql` lint **exemption pin keys on
+file + rule name only**, so moving an exemption *within* a file passes silently.
+
+## What Phase 4 inherits, already built
 
 | | Where |
 |---|---|
-| `can(principal, permission, resource?)`, layer one and ownership | `libs/core/src/authorization/policies/` — **not** `shared/policies/`, which is for primitives with no domain dependency |
-| `Permission` (three members) and `Principal` | `libs/core/src/authorization/types/` |
-| `PlatformRole`, the first of ADR-0006's three authorization layers | `libs/core/src/users/enums/` |
-| a nullable `organizationId` on `AuditEntry`, its column, and `AuditQuery.organizationId` — deliberately unpinned by any assertion, because no world can hold two tenants yet | `libs/core/src/audit/`, `audit_entries` |
+| `can(principal, permission, resource?)` — all three layers, with `platform:administer` excluded from layer three at both ends | `libs/core/src/authorization/policies/` — **not** `shared/policies/`, which is for primitives with no domain dependency |
+| `Permission` (15 members), `Principal` (with `memberships` and `grants` both **required**), `ResourceGrant`, `ROLE_PERMISSIONS`, `isGrantLive` | `libs/core/src/authorization/` |
+| `Organization`, `Membership`, `Invitation`, `OrgRole`, `InvitationStatus`, and the nine domain errors | `libs/core/src/organizations/` |
+| `PlatformRole` and `OrgRole`, ADR-0006's first two authorization layers | `libs/core/src/users/enums/`, `libs/core/src/organizations/enums/` |
+| an `organizationId` on `AuditEntry` that **carries a value** and is pinned by the wire-shape comparison and a filter test | `libs/core/src/audit/`, `audit_entries` |
+| `PermissionsGuard` + `@RequirePermission`, `PrincipalService` (the one hydrator, where expiry runs) and `GET /users/me/principal` | `apps/backend/src/authorization/`, `apps/backend/src/users/` |
 | `PlatformAdminGuard` + the interceptor that records every pass **after** the handler | `apps/backend/src/auth/guards/` |
-| the conformance split, and a vitest and a jest adapter for it | `libs/core/src/*/testing/`, `apps/backend/src/common/testing/`, `apps/webapp/app/services/__tests__/` |
-| the two database roles and the start-up privilege guard | `apps/backend/src/db/` |
+| `guard-wiring.spec.ts` — guards discovered from `@UseGuards` metadata, so a new guard is covered without anyone adding it to a list | `apps/backend/src/__tests__/` |
+| the conformance split — shared suites plus **two** server-only security suites (`IAuthService`, `IOrganizationService`) — and a vitest and a jest adapter | `libs/core/src/*/testing/`, `apps/backend/src/common/testing/`, `apps/webapp/app/services/__tests__/` |
+| `useCan`, the permission route middleware, and pages that declare it | `apps/webapp/app/composables/`, `apps/webapp/app/middleware/`, `apps/webapp/app/pages/` |
+| the two database roles, the start-up privilege guard, and a fail-closed static guard over every migration's SQL | `apps/backend/src/db/`, `apps/backend/src/db/__tests__/migration-sql.spec.ts` |
+| an SSR payload that carries **no** access credential, with the store's `status` as the discriminator | `apps/webapp/app/plugins/` |
 
 ## What "done" means for each phase
 
@@ -153,6 +245,17 @@ Phase 2 added two clauses to that bar, both because a green suite was found to m
   subject does not exist in the tree it scans, and to a build command that exits 0 without
   running.
 
-The rulings behind both, and everything else decided along the way, are in
-`phase-1-decision-log.md` and `phase-2-decision-log.md`. Read the second one's opening five
-before touching the identity foundation.
+Phase 3 added two more, for the same reason and one level up:
+
+- **A gate that runs only on the path somebody can choose not to take is not a gate.** The
+  generated application did not boot for part of Phase 3 while every fast tier was green,
+  because the only tiers that run it were pull-request-only on a branch being pushed to.
+  `generated-project` and `docker` now run on push.
+- **Prose is part of the artifact and no gate reads it.** A comment that asserts something the
+  code does not do reads as authoritative and is not — five of them shipped clean through every
+  gate this project owns. When one is found false, prefer making it true.
+
+The rulings behind all four, and everything else decided along the way, are in
+`phase-1-decision-log.md`, `phase-2-decision-log.md` and `phase-3-decision-log.md`. Read the
+second one's opening five before touching the identity foundation, and the third's before
+touching authorization, tenancy or the migration guards.
