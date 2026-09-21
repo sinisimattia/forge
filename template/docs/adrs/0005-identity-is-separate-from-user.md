@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-18
-- **Relates to:** [ADR-0006](0006-authorization-is-a-pure-function-in-core.md), [ADR-0008](0008-ports-not-vendors.md)
+- **Relates to:** [ADR-0006](0006-authorization-is-a-pure-function-in-core.md), [ADR-0008](0008-ports-not-vendors.md), [ADR-0011](0011-federated-identity-never-auto-links.md)
 
 ## Context
 

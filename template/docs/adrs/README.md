@@ -34,7 +34,8 @@ __FORGE_TITLE__, along with their context and consequences.
 | [0008](0008-ports-not-vendors.md) | Ports, Not Vendors | Accepted |
 | [0009](0009-two-database-roles.md) | Two Database Roles | Accepted |
 | [0010](0010-organization-invitations.md) | Organization Invitations Are Single-Use, Expiring, Hashed and Address-Checked | Accepted |
+| [0011](0011-federated-identity-never-auto-links.md) | A Federated Address Links Nothing | Accepted |
 
-ADRs 0001–0010 are Forge template defaults — inherited from the template, not decisions
+ADRs 0001–0011 are Forge template defaults — inherited from the template, not decisions
 this project made for itself. Supersede any of them with a new, higher-numbered ADR if
 this project needs something different; do not edit them in place.

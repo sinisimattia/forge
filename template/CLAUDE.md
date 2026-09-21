@@ -17,18 +17,22 @@ rules (see ADR-0001 on single-source docs).
 ## What ships
 
 Identity (users, auth identities, sessions with rotating refresh tokens, email verification,
-password reset, the append-only audit log) **and** organizations and authorization
-(organizations, memberships, invitations, organization roles, per-record grants, and
-`PermissionsGuard` over core's `can()`). No business domain of its own — that is what a
-generated project adds.
+password reset, federated sign-in against Google, GitHub or a generic OIDC provider with
+deliberate account linking, the append-only audit log) **and** organizations and
+authorization (organizations, memberships, invitations, organization roles, per-record
+grants, and `PermissionsGuard` over core's `can()`). No business domain of its own — that is
+what a generated project adds.
 
-**Three decisions here bind everything built on top**, and each has an ADR because getting it
+**Four decisions here bind everything built on top**, and each has an ADR because getting it
 wrong later is a migration rather than an edit: authorization is a pure function in core
 ([ADR-0006](docs/adrs/0006-authorization-is-a-pure-function-in-core.md)), tenancy is explicit
-and never ambient ([ADR-0007](docs/adrs/0007-tenancy-is-explicit-never-ambient.md)), and the
+and never ambient ([ADR-0007](docs/adrs/0007-tenancy-is-explicit-never-ambient.md)), the
 application connects as a role with no `UPDATE`/`DELETE` on `audit_entries`
 ([ADR-0009](docs/adrs/0009-two-database-roles.md) — read it before touching that schema; a
-foreign key to that table voids the guarantee while leaving it looking correct).
+foreign key to that table voids the guarantee while leaving it looking correct), and a
+federated provider's assertion about an address never links to an existing account —
+linking requires an authenticated session
+([ADR-0011](docs/adrs/0011-federated-identity-never-auto-links.md)).
 
 ## Canonical truth
 

@@ -53,14 +53,20 @@ template ships a development adapter behind it.**
   a question the domain asks on its own behalf — `PasswordPolicyViolation.BREACHED` is a
   domain outcome — so the contract is stated in core and every consumer is held to it.
 - **In the app that needs it, when only that app has the vocabulary.** `IMailer`
-  (`apps/backend/src/mail/`) and `IPasswordHasher`
-  (`apps/backend/src/identities/hashing/`) are the shipped examples, and both are
-  deliberate. Core has no notion of a message, an address or a delivery mechanism, and no
-  notion of a derivation algorithm or its cost parameters; stating either contract in core
-  would mean writing a deployment's transport and storage concerns into the one package
-  whose value is that it carries none. Core's purity rule (`libs/core/STANDARDS.md`, and
-  the `purity` gate that enforces it) is not a style preference that a port may be excused
-  from — it is the reason a contract in core means anything.
+  (`apps/backend/src/mail/`), `IPasswordHasher`
+  (`apps/backend/src/identities/hashing/`) and `IOAuthProvider`
+  (`apps/backend/src/auth/oauth/IOAuthProvider.ts`) are the shipped examples, and all three
+  are deliberate. Core has no notion of a message, an address or a delivery mechanism, no
+  notion of a derivation algorithm or its cost parameters, and no notion of an authorization
+  endpoint, a token exchange or a redirect URI; stating any of the three in core would mean
+  writing a deployment's transport concerns into the one package whose value is that it
+  carries none. `IOAuthProvider` is stated as "which provider this is, and what it asserts
+  about the account behind an exchanged code" — the domain-level questions
+  `decideFederatedSignIn` and `decideFederatedLink` (see ADR-0011) actually ask are stated in
+  core, over a `FederatedAccount` value the port hands back, not over the port itself. Core's
+  purity rule (`libs/core/STANDARDS.md`, and the `purity` gate that enforces it) is not a
+  style preference that a port may be excused from — it is the reason a contract in core
+  means anything.
 
 The test is **whose question is it?** If a domain rule, a domain entity or a domain error
 would have to name the capability to be stated at all, the port goes in core. If only the
