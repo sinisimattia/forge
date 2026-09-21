@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditModule } from '../audit/audit.module';
+import { AuthorizationModule } from '../authorization';
 import { MailModule } from '../mail';
 import { UserRecord } from '../users/user-record.entity';
 import { InvitationRecord } from './invitation-record.entity';
@@ -42,6 +43,11 @@ import { OrganizationsService } from './organizations.service';
     AuditModule,
     MailModule,
     ConfigModule,
+    // Without it, `@UseGuards(PermissionsGuard)` on the controllers below
+    // resolves nothing and this module fails to start — a guard named in
+    // `@UseGuards` is instantiated from the module context of the controller
+    // that names it.
+    AuthorizationModule,
   ],
   controllers: [OrganizationsController, MembersController, InvitationsController],
   providers: [OrganizationsService],

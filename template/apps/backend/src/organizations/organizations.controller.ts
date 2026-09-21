@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import type { OrganizationId } from '__FORGE_SCOPE__/core/organizations/types';
 import { CurrentUser } from '../auth/decorators';
+import { PermissionsGuard, RequirePermission } from '../authorization';
 import type { AuthenticatedActor } from '../auth/strategies';
 import type { PaginatedResponse } from '../common/types';
 import { ParseUuidParamPipe } from '../common/pipes';
@@ -17,10 +18,19 @@ import { OrganizationsService } from './organizations.service';
  *
  * **Nothing here is `@Public()`.** The global guard closes every route by
  * default and every one of these is about a particular organization, so
- * there is nothing to open. **Nothing here is guarded by `PermissionsGuard`
- * either** — every route is authenticated but not yet authorized. That is
- * Task 13's own pass over every route Tasks 10–12 add, made once rather than
- * bolted on route by route as each module lands.
+ * there is nothing to open.
+ *
+ * ## Which routes carry `@RequirePermission`, and which do not
+ *
+ * The three that name an organization do; `POST /organizations` and `GET
+ * /organizations` do not, and their absence is a decision rather than an
+ * omission. Neither is about an existing organization: the first creates one
+ * and makes the caller its OWNER, so there is no tenant to judge it against
+ * and no principal that could hold a role in a thing that does not exist yet;
+ * the second is already confined to the caller's own memberships by
+ * `OrganizationsService.listOrganizations`, which is tenant scoping done by
+ * the read rather than by a refusal. Both remain closed to an unauthenticated
+ * caller by the global `JwtAuthGuard`.
  *
  * ## Route order
  *
@@ -62,6 +72,8 @@ export class OrganizationsController {
 
   /** One organization the caller belongs to. */
   @Get(':id')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('organization:read')
   public async byId(
     @CurrentUser() actor: AuthenticatedActor,
     @Param('id', ParseUuidParamPipe) id: string,
@@ -75,6 +87,8 @@ export class OrganizationsController {
 
   /** Changes an organization's name, its slug, or both. */
   @Patch(':id')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('organization:update')
   public async update(
     @CurrentUser() actor: AuthenticatedActor,
     @Param('id', ParseUuidParamPipe) id: string,
@@ -97,6 +111,8 @@ export class OrganizationsController {
 
   /** Soft-deletes an organization. */
   @Delete(':id')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('organization:delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   public async remove(
     @CurrentUser() actor: AuthenticatedActor,

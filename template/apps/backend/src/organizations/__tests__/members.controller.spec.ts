@@ -9,12 +9,15 @@ import type { DataSource, ObjectLiteral, Repository } from 'typeorm';
 import request from 'supertest';
 import type { Response } from 'supertest';
 import { OrgRole } from '__FORGE_SCOPE__/core/organizations/enums';
+import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import type { SessionId } from '__FORGE_SCOPE__/core/auth/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
 import { AuditEntryRecord } from '../../audit/audit-entry-record.entity';
 import { AuditService } from '../../audit/audit.service';
 import { FakeDataSource } from '../../common/testing';
+import { PermissionsGuard, PrincipalService } from '../../authorization';
+import { ResourceGrantRecord } from '../../authorization/resource-grant-record.entity';
 import { JwtStrategy } from '../../auth/strategies';
 import type { IMailer } from '../../mail';
 import { UserRecord } from '../../users/user-record.entity';
@@ -41,6 +44,12 @@ const WEBAPP_URL = 'https://app.example.test';
  * `LastOwnerError` the service throws reaches the wire as the status this
  * backend chose for it (409), and that the non-member/never-issued collapse
  * `OrganizationsController` observes holds on this controller too.
+ *
+ * Task 13 added `@UseGuards(PermissionsGuard)` to all three routes. The last
+ * describe block is what can tell a guarded route from an unguarded one here:
+ * a MEMBER may see who else belongs and may change nobody's role, and the
+ * service — which asks only whether the actor holds a membership — cannot tell
+ * those two apart.
  */
 
 const OWNER = '11111111-1111-4111-8111-111111111111' as UserId;
@@ -66,6 +75,7 @@ describe('MembersController', () => {
 
   beforeEach(async () => {
     source = new FakeDataSource();
+    for (const account of [OWNER, ADMIN, MEMBER, OUTSIDER]) seedAccount(account);
 
     const audit = new AuditService(
       repo<AuditEntryRecord>(AuditEntryRecord),
@@ -105,6 +115,15 @@ describe('MembersController', () => {
           provide: getRepositoryToken(MembershipRecord),
           useValue: repo<MembershipRecord>(MembershipRecord),
         },
+        // Constructed by the framework, exactly as the application constructs
+        // them — the guard the routes name and the hydrator it asks.
+        PermissionsGuard,
+        PrincipalService,
+        { provide: getRepositoryToken(UserRecord), useValue: repo<UserRecord>(UserRecord) },
+        {
+          provide: getRepositoryToken(ResourceGrantRecord),
+          useValue: repo<ResourceGrantRecord>(ResourceGrantRecord),
+        },
       ],
     }).compile();
 
@@ -118,6 +137,29 @@ describe('MembersController', () => {
   });
 
   const bearer = (userId: UserId): string => `Bearer ${jwt.sign({ sub: userId, sid: SESSION })}`;
+
+  /**
+   * Seeds a real account.
+   *
+   * Every actor below needs one now: `PrincipalService` reads the platform role
+   * off the row rather than out of the credential, so a credential whose subject
+   * has no row is refused — which is the property, not an inconvenience.
+   */
+  const seedAccount = (id: string): void => {
+    source.seed(UserRecord, [
+      {
+        id,
+        email: `${id}@example.test`,
+        displayName: 'Somebody',
+        status: UserStatus.ACTIVE,
+        platformRole: PlatformRole.PLATFORM_USER,
+        emailVerifiedAt: EPOCH,
+        createdAt: EPOCH,
+        updatedAt: EPOCH,
+        deletedAt: null,
+      },
+    ]);
+  };
 
   /** Seeds `org` with `owner` as its sole OWNER. */
   const seedOrganization = (id: string, owner: string): void => {
@@ -331,6 +373,65 @@ describe('MembersController', () => {
         .delete(`/organizations/${ORG_1}/members/${ADMIN}`)
         .set('Authorization', bearer(OWNER))
         .expect(204);
+    });
+  });
+
+  /**
+   * Authorization, asserted by the one actor whose answer differs.
+   *
+   * | Deleted from shipped code | Caught by |
+   * |---|---|
+   * | `members.controller.ts`: the guard or the permission on `PATCH /organizations/:id/members/:userId` | `refuses a MEMBER changing somebody else's role` |
+   * | `members.controller.ts`: the guard or the permission on `DELETE /organizations/:id/members/:userId` | `refuses a MEMBER removing somebody` |
+   */
+  describe('authorization: what a role does and does not carry', () => {
+    beforeEach(() => {
+      seedOrganization(ORG_1, OWNER);
+      seedMembership(ORG_1, MEMBER, OrgRole.MEMBER);
+    });
+
+    it('lets a MEMBER see who else belongs, which `member:read` is', async () => {
+      await request(app.getHttpServer())
+        .get(`/organizations/${ORG_1}/members`)
+        .set('Authorization', bearer(MEMBER))
+        .expect(200);
+    });
+
+    it('refuses a MEMBER changing somebody else\'s role', async () => {
+      seedMembership(ORG_1, ADMIN, OrgRole.ADMIN);
+
+      const response = await request(app.getHttpServer())
+        .patch(`/organizations/${ORG_1}/members/${ADMIN}`)
+        .set('Authorization', bearer(MEMBER))
+        .send({ role: 'VIEWER' });
+
+      expect(response.status).toBe(404);
+      expect(source.byId(MembershipRecord, `membership-${ORG_1}-${ADMIN}`)?.role).toBe(
+        OrgRole.ADMIN,
+      );
+    });
+
+    it('refuses a MEMBER removing somebody', async () => {
+      seedMembership(ORG_1, ADMIN, OrgRole.ADMIN);
+
+      const response = await request(app.getHttpServer())
+        .delete(`/organizations/${ORG_1}/members/${ADMIN}`)
+        .set('Authorization', bearer(MEMBER));
+
+      expect(response.status).toBe(404);
+      expect(source.byId(MembershipRecord, `membership-${ORG_1}-${ADMIN}`)).toBeDefined();
+    });
+
+    it('refuses a VIEWER even the member list', async () => {
+      // `ROLE_PERMISSIONS[VIEWER]` is `organization:read` alone, so a VIEWER
+      // belongs to the organization and may not see who else does. Without the
+      // guard the service shows them the whole list.
+      seedMembership(ORG_1, OUTSIDER, OrgRole.VIEWER);
+
+      await request(app.getHttpServer())
+        .get(`/organizations/${ORG_1}/members`)
+        .set('Authorization', bearer(OUTSIDER))
+        .expect(404);
     });
   });
 

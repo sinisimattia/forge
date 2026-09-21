@@ -18,6 +18,8 @@ import { AuditEntryRecord } from '../../audit/audit-entry-record.entity';
 import { AuditService } from '../../audit/audit.service';
 import { hashOpaqueToken, generateOpaqueToken } from '../../common/crypto';
 import { FakeDataSource } from '../../common/testing';
+import { PermissionsGuard, PrincipalService } from '../../authorization';
+import { ResourceGrantRecord } from '../../authorization/resource-grant-record.entity';
 import { JwtStrategy } from '../../auth/strategies';
 import type { IMailer, OutboundMessage } from '../../mail';
 import { MAILER } from '../../mail';
@@ -140,6 +142,15 @@ describe('InvitationsController', () => {
           provide: getRepositoryToken(UserRecord),
           useValue: repo<UserRecord>(UserRecord),
         },
+        // Constructed by the framework, exactly as the application constructs
+        // them — the guard the three organization-scoped routes name, and the
+        // hydrator it asks.
+        PermissionsGuard,
+        PrincipalService,
+        {
+          provide: getRepositoryToken(ResourceGrantRecord),
+          useValue: repo<ResourceGrantRecord>(ResourceGrantRecord),
+        },
       ],
     }).compile();
 
@@ -154,8 +165,9 @@ describe('InvitationsController', () => {
 
   const bearer = (userId: UserId): string => `Bearer ${jwt.sign({ sub: userId, sid: SESSION })}`;
 
-  /** Seeds `org` with `owner` as its sole OWNER. */
+  /** Seeds `org` with `owner` as its sole OWNER, and the owner's own account. */
   const seedOrganization = (id: string, owner: string): void => {
+    seedUser(owner, `${owner}@example.test`);
     source.seed(OrganizationRecord, [
       { id, name: 'Acme Works', slug: 'acme-works', createdAt: EPOCH, updatedAt: EPOCH, deletedAt: null },
     ]);
@@ -171,8 +183,19 @@ describe('InvitationsController', () => {
     ]);
   };
 
-  /** Seeds a real account, the way `acceptInvitation`'s address check needs one. */
+  /**
+   * Seeds a real account, the way `acceptInvitation`'s address check needs one
+   * — and the way every actor now needs one, because `PrincipalService` reads
+   * the platform role off the row rather than out of the credential.
+   *
+   * Idempotent: `seedOrganization` seeds the owner's account so that a spec does
+   * not have to remember to, and several tests seed the same person again with
+   * the address the invitation was sent to. `FakeDataSource` enforces no unique
+   * constraint, so a second row would be stored and the first one answered —
+   * which is a way to have a test pass against a row it did not write.
+   */
   const seedUser = (id: string, email: string): void => {
+    if (source.byId(UserRecord, id) !== undefined) return;
     source.seed(UserRecord, [
       {
         id,

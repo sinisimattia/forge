@@ -16,6 +16,11 @@ import type { PaginatedResponse } from '../common/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { CurrentUser } from '../auth/decorators';
 import { PlatformAdminGuard } from '../auth/guards';
+import {
+  PrincipalService,
+  toPrincipalResponse,
+  type PrincipalResponseDto,
+} from '../authorization';
 import { REFRESH_COOKIE } from '../auth/refresh-cookie';
 import type { AuthenticatedActor } from '../auth/strategies';
 import { ParseUuidParamPipe } from '../common/pipes';
@@ -46,13 +51,46 @@ import { UsersService } from './users.service';
  */
 @Controller('users')
 export class UsersController {
-  public constructor(private readonly users: UsersService) {}
+  public constructor(
+    private readonly users: UsersService,
+    private readonly principals: PrincipalService,
+  ) {}
 
   /** The actor's own profile. */
   @Get('me')
   public async me(@CurrentUser() actor: AuthenticatedActor): Promise<UserResponseDto> {
     const user = await this.users.getProfile(actor.userId, actor.userId);
     return user.toJSON();
+  }
+
+  /**
+   * The actor's own principal: what `can` is evaluated against on their behalf.
+   *
+   * It exists so a client can evaluate the same rule the server does and hide
+   * an action rather than offer one that will be refused (ADR-0006). Nothing
+   * else can tell it: the access credential carries two claims on purpose
+   * (design ruling R4), so memberships and grants have no other route to a
+   * webapp.
+   *
+   * **It carries no `@RequirePermission`**, because it is about the actor
+   * themselves — there is no organization to judge it against, and what it
+   * discloses is what the caller already is. It is not `@Public()` either: a
+   * principal with no proven subject is not a question with an answer.
+   *
+   * The grants it carries are live as of this request and no longer — the
+   * hydrator applies `isGrantLive` (design ruling R2), and a client holding
+   * this payload past a grant's expiry is holding a stale answer, exactly as it
+   * would be past a revocation. **A client-side `true` is never a permission**;
+   * the server re-derives every answer from its own principal on every request.
+   *
+   * Declared with the other `me` routes and above `:id`, for the reason this
+   * class's own comment gives about declaration order.
+   */
+  @Get('me/principal')
+  public async myPrincipal(
+    @CurrentUser() actor: AuthenticatedActor,
+  ): Promise<PrincipalResponseDto> {
+    return toPrincipalResponse(await this.principals.hydrate(actor.userId, new Date()));
   }
 
   /** Changes the actor's own profile. There is no path to another person's. */

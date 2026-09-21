@@ -12,6 +12,7 @@ import type { Response } from 'supertest';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import type { SessionId } from '__FORGE_SCOPE__/core/auth/types';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
+import { OrgRole } from '__FORGE_SCOPE__/core/organizations/enums';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
@@ -21,6 +22,9 @@ import { FakeDataSource } from '../../common/testing';
 import { RefreshTokenRecord } from '../../auth/entities/refresh-token-record.entity';
 import { SessionRecord } from '../../auth/entities/session-record.entity';
 import { PlatformAdminGuard } from '../../auth/guards';
+import { PrincipalService } from '../../authorization';
+import { ResourceGrantRecord } from '../../authorization/resource-grant-record.entity';
+import { MembershipRecord } from '../../organizations/membership-record.entity';
 import { REFRESH_COOKIE } from '../../auth/refresh-cookie';
 import { SessionService } from '../../auth/session/session.service';
 import { JwtStrategy } from '../../auth/strategies';
@@ -116,7 +120,19 @@ describe('UsersController', () => {
         { provide: AuditService, useValue: audit },
         // Constructed by the framework, exactly as the application constructs it.
         PlatformAdminGuard,
+        // Constructed by the framework too, for `GET /users/me/principal`. It
+        // reads three tables and is the only source of a principal a client can
+        // evaluate `can` against.
+        PrincipalService,
         { provide: getRepositoryToken(UserRecord), useValue: repo<UserRecord>(UserRecord) },
+        {
+          provide: getRepositoryToken(MembershipRecord),
+          useValue: repo<MembershipRecord>(MembershipRecord),
+        },
+        {
+          provide: getRepositoryToken(ResourceGrantRecord),
+          useValue: repo<ResourceGrantRecord>(ResourceGrantRecord),
+        },
       ],
     }).compile();
 
@@ -236,6 +252,134 @@ describe('UsersController', () => {
       const cookie = Array.isArray(raw) ? raw.join('\n') : String(raw);
       expect(cookie).toContain(`${REFRESH_COOKIE.name}=;`);
       expect(cookie).toContain('Path=/auth');
+    });
+  });
+
+  /**
+   * `GET /users/me/principal`: the actor's own principal.
+   *
+   * It owes a spec of its own because no conformance suite covers it — it is a
+   * transport shape over `PrincipalService`, not a method of any core contract
+   * — and because what it must NOT carry is as load-bearing as what it must.
+   */
+  describe('the actor\'s own principal', () => {
+    const ORG = '55555555-5555-4555-8555-555555555555';
+
+    const seedMembership = (organizationId: string, userId: string, role: OrgRole): void => {
+      source.seed(MembershipRecord, [
+        {
+          id: `membership-${organizationId}-${userId}`,
+          organizationId,
+          userId,
+          role,
+          createdAt: EPOCH,
+          updatedAt: EPOCH,
+        },
+      ]);
+    };
+
+    const seedGrant = (id: string, subjectUserId: string, expiresAt: Date | null): void => {
+      source.seed(ResourceGrantRecord, [
+        {
+          id,
+          organizationId: ORG,
+          subjectUserId,
+          resourceType: 'document',
+          resourceId: 'doc-1',
+          permission: 'organization:update',
+          grantedBy: null,
+          createdAt: EPOCH,
+          expiresAt,
+        },
+      ]);
+    };
+
+    it('is closed to a caller with no credential', async () => {
+      // Not `@Public()`: a principal with no proven subject is not a question
+      // with an answer.
+      await request(app.getHttpServer()).get('/users/me/principal').expect(401);
+    });
+
+    it('is reached by `me/principal` and not parsed as an identifier', async () => {
+      // The route-order hazard this controller's own comment describes, one
+      // segment deeper. `/users/:id` cannot match two segments, but a future
+      // `/users/:id/...` could, and the pipe would refuse `me` with a 400.
+      await request(app.getHttpServer())
+        .get('/users/me/principal')
+        .set('Authorization', bearer(ADA))
+        .expect(200);
+    });
+
+    it('carries the memberships the actor holds, and their roles', async () => {
+      seedMembership(ORG, ADA, OrgRole.ADMIN);
+
+      const response = await request(app.getHttpServer())
+        .get('/users/me/principal')
+        .set('Authorization', bearer(ADA))
+        .expect(200);
+
+      expect(response.body.userId).toBe(ADA);
+      expect(response.body.platformRole).toBe(PlatformRole.PLATFORM_USER);
+      expect(response.body.memberships).toEqual([
+        { organizationId: ORG, role: OrgRole.ADMIN },
+      ]);
+    });
+
+    it('is about the actor and never about anybody else', async () => {
+      // There is no path to another person's principal, the same way there is
+      // no path to another person's profile through `PATCH /users/me`. The
+      // subject is the credential's and nothing on the request can name one.
+      seedMembership(ORG, GRACE, OrgRole.OWNER);
+
+      const response = await request(app.getHttpServer())
+        .get('/users/me/principal')
+        .set('Authorization', bearer(ADA))
+        .expect(200);
+
+      expect(response.body.userId).toBe(ADA);
+      expect(response.body.memberships).toEqual([]);
+    });
+
+    it('carries only the grants that are live, which is R2 reaching the wire', async () => {
+      seedGrant('live', ADA, new Date(Date.now() + 60 * 60 * 1000));
+      seedGrant('lapsed', ADA, new Date(Date.now() - 1000));
+
+      const response = await request(app.getHttpServer())
+        .get('/users/me/principal')
+        .set('Authorization', bearer(ADA))
+        .expect(200);
+
+      expect(response.body.grants.map((grant: { id: string }) => grant.id)).toEqual(['live']);
+    });
+
+    it('serializes a grant\'s instants as strings, which a payload has no `Date` for', async () => {
+      seedGrant('forever', ADA, null);
+
+      const response = await request(app.getHttpServer())
+        .get('/users/me/principal')
+        .set('Authorization', bearer(ADA))
+        .expect(200);
+
+      expect(response.body.grants[0].createdAt).toBe(EPOCH.toISOString());
+      expect(response.body.grants[0].expiresAt).toBeNull();
+    });
+
+    it('carries exactly the four facts `Principal` has, and no secret material', async () => {
+      seedMembership(ORG, ADA, OrgRole.ADMIN);
+      seedGrant('forever', ADA, null);
+
+      const response = await request(app.getHttpServer())
+        .get('/users/me/principal')
+        .set('Authorization', bearer(ADA))
+        .expect(200);
+
+      expect(Object.keys(response.body).sort().join(',')).toBe(
+        'grants,memberships,platformRole,userId',
+      );
+      // The same grep `GET /users/me` carries, for the same reason: the shape is
+      // asserted above, and this is what catches a field that arrives by some
+      // route the shape assertion did not anticipate.
+      expect(JSON.stringify(response.body)).not.toMatch(/hash|secret|token|password/i);
     });
   });
 

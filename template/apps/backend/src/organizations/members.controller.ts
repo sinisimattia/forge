@@ -1,7 +1,8 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Query, UseGuards } from '@nestjs/common';
 import type { OrganizationId } from '__FORGE_SCOPE__/core/organizations/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { CurrentUser } from '../auth/decorators';
+import { PermissionsGuard, RequirePermission } from '../authorization';
 import type { AuthenticatedActor } from '../auth/strategies';
 import { ParseUuidParamPipe } from '../common/pipes';
 import type { PaginatedResponse } from '../common/types';
@@ -22,9 +23,13 @@ import { OrganizationsService } from './organizations.service';
  * says what it is, rather than every route this backend serves living on one
  * class.
  *
- * **Nothing here is `@Public()`, and nothing is `@UseGuards(PermissionsGuard)`
- * yet** — see `OrganizationsController`'s own comment; Task 13 is the one
- * pass that adds authorization to every route Tasks 10–12 shipped.
+ * **Nothing here is `@Public()`**, and every route carries
+ * `@UseGuards(PermissionsGuard)` with the permission it requires. The guard
+ * judges the ORGANIZATION named by `:id`, resolved from its stored row, and
+ * never the `:userId` the request also names — who the target is stays the
+ * service's question (a target outside the organization is
+ * `MembershipNotFoundError`), and folding it in here would be the same rule
+ * stated twice.
  *
  * ## Route order
  *
@@ -39,6 +44,8 @@ export class MembersController {
 
   /** One page of an organization's memberships. */
   @Get()
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('member:read')
   public async list(
     @CurrentUser() actor: AuthenticatedActor,
     @Param('id', ParseUuidParamPipe) organizationId: string,
@@ -60,6 +67,8 @@ export class MembersController {
    * for why that status and not another.
    */
   @Patch(':userId')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('member:update')
   public async changeRole(
     @CurrentUser() actor: AuthenticatedActor,
     @Param('id', ParseUuidParamPipe) organizationId: string,
@@ -77,6 +86,8 @@ export class MembersController {
 
   /** Ends a membership. The account itself is untouched. */
   @Delete(':userId')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('member:remove')
   @HttpCode(HttpStatus.NO_CONTENT)
   public async remove(
     @CurrentUser() actor: AuthenticatedActor,

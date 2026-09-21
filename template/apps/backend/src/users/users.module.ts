@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { PlatformAdminGuard } from '../auth/guards';
+import { AuthorizationModule } from '../authorization';
 import { UserRecord } from './user-record.entity';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
@@ -16,6 +17,11 @@ import { UsersService } from './users.service';
  * and never the other: `AuthModule` knows nothing about this one, so a
  * registration does not depend on the administration surface existing.
  *
+ * `AuthorizationModule` is imported for `PrincipalService`, which `GET
+ * /users/me/principal` answers from. No route on this controller carries
+ * `@RequirePermission` — every one of them is about a person rather than an
+ * organization, which is the one thing `can`'s second layer never judges.
+ *
  * `PlatformAdminGuard` is provided **here** rather than exported from
  * `AuthModule`, and the reason is a cycle that would otherwise be unavoidable:
  * the guard needs `AuditService`, `AuthModule` already imports `AuditModule`,
@@ -24,7 +30,7 @@ import { UsersService } from './users.service';
  * costs a module graph nobody can reason about.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([UserRecord]), AuditModule, AuthModule],
+  imports: [TypeOrmModule.forFeature([UserRecord]), AuditModule, AuthModule, AuthorizationModule],
   controllers: [UsersController],
   providers: [UsersService, PlatformAdminGuard],
   exports: [UsersService],

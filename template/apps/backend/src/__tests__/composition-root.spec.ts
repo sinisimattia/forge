@@ -5,7 +5,7 @@ import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { Test } from '@nestjs/testing';
 import { AuditService } from '../audit/audit.service';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { TypeOrmModule, getRepositoryToken } from '@nestjs/typeorm';
 import { IsString } from 'class-validator';
 import type { Request } from 'express';
 import request from 'supertest';
@@ -26,6 +26,9 @@ import { SessionRecord } from '../auth/entities/session-record.entity';
 import { REFRESH_COOKIE } from '../auth/refresh-cookie';
 import { ACCESS_TOKEN_TTL_SECONDS, SessionService } from '../auth/session/session.service';
 import { JwtStrategy } from '../auth/strategies';
+import { AuthorizationModule } from '../authorization/authorization.module';
+import { PermissionsGuard } from '../authorization/permissions.guard';
+import { PrincipalService } from '../authorization/principal.service';
 import { ResourceGrantRecord } from '../authorization/resource-grant-record.entity';
 import { HealthModule } from '../health/health.module';
 import { AuthIdentityRecord } from '../identities/auth-identity-record.entity';
@@ -90,6 +93,10 @@ import { UsersModule } from '../users/users.module';
  * | `jwt.strategy.ts`: `ignoreExpiration: true` | `global-guard.spec.ts › refuses a credential that has expired` |
  * | `jwt.strategy.ts`: credential read from the query string | `global-guard.spec.ts › refuses a credential offered in the query string` |
  * | `refresh-cookie.ts`: `secure` in production | `the renewal cookie › is Secure in production` |
+ * | `organizations.controller.ts`: `@UseGuards(PermissionsGuard)` on `PATCH /organizations/:id` | `organizations/__tests__/organizations.controller.spec.ts › refuses a MEMBER who may read the organization but may not rename it` — the service's own `requireMember` goes on refusing non-members, so every other test in that file stays green; what changes is that a MEMBER renames the organization. Measured: deleting the line turned exactly 2 of 769 red |
+ * | `organizations.module.ts` / `users.module.ts`: `AuthorizationModule` from `imports` | `AuthorizationModule › is imported by every module whose controllers name the guard` — a guard named in `@UseGuards` is resolved from the controller's own module context, so without the import the application fails at start-up, which is a moment no behavioural spec reaches |
+ * | `authorization.module.ts`: `PermissionsGuard` or `PrincipalService` from `providers`/`exports` | `AuthorizationModule › provides and exports what the guarded controllers resolve` |
+ * | `authorization.module.ts`: an entity from `forFeature` | `AuthorizationModule › registers every table the hydrator reads` — `PrincipalService` reads three and the guard reads the fourth; a missing one is a repository Nest cannot resolve |
  *
  * What is still beyond reach: the single line `configureApp(app)` in `main.ts`.
  * Reaching it would mean starting the real `AppModule`, which needs a database.
@@ -217,6 +224,53 @@ describe('the composition root', () => {
       // registers `GLOBAL_PROVIDERS`; this is what makes them assertions about
       // the application rather than about an array only the spec uses.
       expect(Reflect.getMetadata(MODULE_METADATA.PROVIDERS, AppModule)).toBe(GLOBAL_PROVIDERS);
+    });
+  });
+
+  /**
+   * The authorization wiring, which is invisible to every behavioural spec for
+   * the usual reason: each of them assembles its own testing module and names
+   * `PermissionsGuard` and `PrincipalService` in it directly, so none of them
+   * can see whether the shipped modules do.
+   *
+   * The failure this catches is a start-up failure — Nest cannot resolve a guard
+   * a controller names — which is worse than it sounds: it is the one class of
+   * fault whose only witness is a container that will not boot, reached after
+   * every gate in this repository has reported green.
+   */
+  describe('AuthorizationModule', () => {
+    it.each([
+      ['OrganizationsModule', OrganizationsModule],
+      ['UsersModule', UsersModule],
+    ])('is imported by %s, whose controllers name the guard', (_name, consumer) => {
+      expect(moduleImports(consumer)).toContain(AuthorizationModule);
+    });
+
+    it('provides and exports what the guarded controllers resolve', () => {
+      // Exported as well as provided: a guard named in `@UseGuards` is
+      // instantiated from the module context of the controller that names it, so
+      // providing it here and not exporting it resolves nothing anywhere else.
+      for (const provided of [PermissionsGuard, PrincipalService]) {
+        expect(moduleProviders(AuthorizationModule)).toContain(provided);
+        expect(Reflect.getMetadata(MODULE_METADATA.EXPORTS, AuthorizationModule)).toContain(
+          provided,
+        );
+      }
+    });
+
+    it('registers every table the hydrator and the guard read', () => {
+      // Read off the dynamic module `forFeature` produced, by the token each
+      // repository is injected under — the same thing `@InjectRepository` asks
+      // for, rather than a shape assertion about a library's internals.
+      const registered = dynamicImport(AuthorizationModule, TypeOrmModule);
+      const tokens = ((registered?.providers ?? []) as { provide?: unknown }[]).map(
+        (provider) => provider.provide,
+      );
+      // Named one by one, for the reason the entity list below is: a count
+      // passes while one entity is swapped for another. Three are the hydrator's
+      // and the fourth is the guard's own lookup of the organization it judges.
+      const read = [UserRecord, MembershipRecord, ResourceGrantRecord, OrganizationRecord];
+      for (const entity of read) expect(tokens).toContain(getRepositoryToken(entity));
     });
   });
 

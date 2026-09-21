@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import type { InvitationId, OrganizationId } from '__FORGE_SCOPE__/core/organizations/types';
 import { CurrentUser } from '../auth/decorators';
+import { PermissionsGuard, RequirePermission } from '../authorization';
 import type { AuthenticatedActor } from '../auth/strategies';
 import { ParseUuidParamPipe } from '../common/pipes';
 import type { PaginatedResponse } from '../common/types';
@@ -34,9 +35,15 @@ import { OrganizationsService } from './organizations.service';
  * which is what makes `Invitation.acceptedByUserId` a fact this backend
  * established rather than a value some other layer had to guess at.
  *
- * **Nothing here is `@UseGuards(PermissionsGuard)` yet** — see
- * `OrganizationsController`'s own comment; Task 13 is the one pass that adds
- * authorization to every route Tasks 10–12 shipped.
+ * **The three organization-scoped routes carry `@UseGuards(PermissionsGuard)`;
+ * `POST /invitations/:token/accept` does not, and must not.** It is authorized
+ * by holding the token — a 32-byte CSPRNG credential from
+ * `generateOpaqueToken` — and by the address it was sent to matching the
+ * caller's own, which `OrganizationsService.acceptInvitation` checks. It could
+ * not be guarded here in any case: the caller is by definition not yet a member
+ * of the organization, so `can` would refuse every redemption, and the route
+ * names no `:id` for the guard to resolve one from. That is the shape of a
+ * route the guard is right to leave alone, not a gap in it.
  */
 @Controller()
 export class InvitationsController {
@@ -44,6 +51,8 @@ export class InvitationsController {
 
   /** Offers somebody a role in an organization, addressed to an email. */
   @Post('organizations/:id/invitations')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('member:invite')
   public async invite(
     @CurrentUser() actor: AuthenticatedActor,
     @Param('id', ParseUuidParamPipe) organizationId: string,
@@ -59,6 +68,8 @@ export class InvitationsController {
 
   /** One page of an organization's invitations. */
   @Get('organizations/:id/invitations')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('invitation:read')
   public async list(
     @CurrentUser() actor: AuthenticatedActor,
     @Param('id', ParseUuidParamPipe) organizationId: string,
@@ -81,6 +92,8 @@ export class InvitationsController {
    * just put the invitation into without a second request.
    */
   @Delete('organizations/:id/invitations/:invitationId')
+  @UseGuards(PermissionsGuard)
+  @RequirePermission('invitation:revoke')
   public async revoke(
     @CurrentUser() actor: AuthenticatedActor,
     @Param('id', ParseUuidParamPipe) organizationId: string,
