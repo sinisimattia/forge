@@ -660,9 +660,18 @@ describe('tenant isolation (D9)', () => {
    * the schema's.
    *
    * So it is left. Task 20's walk stands up a real Postgres and is where the
-   * cascade becomes reachable; the mapper that has to survive it
-   * (`to-invitation.ts`) already reads the column as `UserId | null`, and
-   * `migration-sql.spec.ts` asserts the `ON DELETE SET NULL` clauses themselves.
+   * cascade becomes reachable, and the mapper that has to survive it
+   * (`to-invitation.ts`) already reads the column as `UserId | null`.
+   *
+   * The clause itself is pinned in `migration-sql.spec.ts` → `the
+   * organizations-and-authorization migration` → `nulls <table>.<column> when
+   * the account it names is deleted, rather than deleting the row`, one row per
+   * column for `invited_by_user_id`, `accepted_by_user_id` and `granted_by`.
+   * **Those assertions were written because this comment first claimed they
+   * existed and they did not** — the file's only `ON DELETE SET NULL` assertion
+   * was an earlier phase's, for `refresh_tokens`. An incorrect pointer to
+   * coverage is worse than an acknowledged gap, because it stops the next
+   * person looking.
    */
   describe('the null-inviter path', () => {
     it('is asserted at the migration and not faked here', () => {

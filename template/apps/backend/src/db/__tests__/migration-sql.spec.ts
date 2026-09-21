@@ -1469,6 +1469,93 @@ describe('audit_entries never has its privileges handed back', () => {
 });
 
 describe('the organizations-and-authorization migration', () => {
+  const phase3 = migrationSource('OrganizationsAndAuthorization');
+
+  /**
+   * The column list of one `CREATE TABLE` in THIS migration, and nothing after
+   * it.
+   *
+   * The same helper `the schema migration` defines, for the same reason its
+   * comment gives at length: an unbounded `[\s\S]*?` between a table name and
+   * a referential action simply runs on into the next table that still has one,
+   * so every such assertion passes with the clause deleted. Duplicated rather
+   * than hoisted because each is closed over its own migration's source, and a
+   * shared one would need the source passed in at every call — which is the
+   * argument most easily got wrong in exactly the way this bounding exists to
+   * prevent.
+   */
+  function createTableBody(table: string): string {
+    const match = new RegExp(`CREATE TABLE ${table} \\(([\\s\\S]*?)\\n\\s*\\)`).exec(phase3);
+    expect(match).not.toBeNull();
+    return match?.[1] ?? '';
+  }
+
+  /**
+   * One column's definition line, and only that line.
+   *
+   * Bounded to the line rather than to the table, which is a second bound on
+   * top of `createTableBody`'s and is the one that matters here.
+   * `organization_invitations` carries **two** `ON DELETE SET NULL` columns, so
+   * an assertion made against the whole table body passes with either one of
+   * them changed — the other still supplies the string. Per column is the only
+   * granularity at which these can fail.
+   */
+  function columnDefinition(table: string, column: string): string {
+    const line = createTableBody(table)
+      .split('\n')
+      .filter((each) => new RegExp(`^\\s*${column}\\s`).test(each))[0];
+    expect(line).toBeDefined();
+    return line ?? '';
+  }
+
+  /**
+   * Every column whose account may go away without taking the row with it.
+   *
+   * These three are the reason `Invitation.invitedByUserId`,
+   * `Invitation.acceptedByUserId` and `ResourceGrant.grantedBy` are
+   * `UserId | null` on core's types and `string | null` on the record classes.
+   * **Nothing else in this repository asserts them.** `to-invitation.ts` and
+   * `to-grant.ts` read the columns as nullable, and `tenant-isolation.spec.ts`
+   * records that the state is unreachable from the fast tier — `FakeDataSource`
+   * has no foreign keys, so deleting a user there leaves a dangling id rather
+   * than a nulled column, which is a different state and not one worth faking.
+   * That leaves the clause itself, here, as the whole of the coverage.
+   */
+  const NULLED_ON_ACCOUNT_DELETE: ReadonlyArray<readonly [string, string]> = [
+    ['organization_invitations', 'invited_by_user_id'],
+    ['organization_invitations', 'accepted_by_user_id'],
+    ['resource_grants', 'granted_by'],
+  ];
+
+  it.each(NULLED_ON_ACCOUNT_DELETE)(
+    'nulls %s.%s when the account it names is deleted, rather than deleting the row',
+    (table, column) => {
+      const definition = columnDefinition(table, column);
+      // Two propositions, and both are needed. `ON DELETE SET NULL` on a NOT
+      // NULL column is a schema Postgres accepts at creation and then fails at
+      // the first delete, so the nullability is not decoration — it is the half
+      // that makes the action executable.
+      expect(definition).toMatch(/\buuid\s+NULL\b/);
+      expect(definition).toContain('REFERENCES users (id) ON DELETE SET NULL');
+    },
+  );
+
+  // The counterweight. Every assertion above says "this column is spared"; none
+  // of them says anything about the columns that must NOT be, and a migration
+  // that spared all of them would satisfy the three rows above completely. An
+  // invitation whose organization is deleted, or a grant whose subject is, has
+  // no meaning left — those cascade, and here is where that is said.
+  it.each([
+    ['memberships', 'organization_id', 'organizations'],
+    ['memberships', 'user_id', 'users'],
+    ['organization_invitations', 'organization_id', 'organizations'],
+    ['resource_grants', 'organization_id', 'organizations'],
+    ['resource_grants', 'subject_user_id', 'users'],
+  ])('cascades %s.%s from %s', (table, column, referenced) => {
+    expect(columnDefinition(table, column))
+      .toContain(`REFERENCES ${referenced} (id) ON DELETE CASCADE`);
+  });
+
   // The guarantee this protects is not a property of `audit_entries` alone: it
   // is a property of every foreign key anyone ever adds to it. So the assertion
   // is over the whole migration directory, not over one file, and it is written
