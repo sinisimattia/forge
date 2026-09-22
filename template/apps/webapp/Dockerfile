@@ -18,7 +18,20 @@ RUN npm ci
 FROM base AS dev
 COPY . .
 EXPOSE 3001
-CMD ["npm", "run", "dev", "-w", "apps/webapp", "--", "--host", "0.0.0.0"]
+# `npx nx build core` first, in the CMD rather than as a `RUN` step above: `compose.yaml`
+# bind-mounts the whole repo over `/app` at container start (`.:/app`), which shadows
+# anything an image-build-time `RUN` produced under `libs/core/dist` the moment the
+# container actually runs — so the build has to happen after that mount is live, the same
+# reason `apps/backend/Dockerfile`'s dev CMD runs migrations before `nest start --watch`
+# rather than during its own image build. Without this, `libs/core/package.json`'s
+# `exports` map sends every subpath to `./dist/`, which no dev boot ever produced, and the
+# server plugin chain (`app/plugins/auth-init.server.ts` -> `useAuthStore` ->
+# `__FORGE_SCOPE__/core/*`) 500s on every route. `libs/core/README.md` names the five
+# wildcard-to-source resolution points on purpose — `apps/webapp/vitest.config.ts` among
+# them — and the running app is deliberately not a sixth: in dev exactly as in production,
+# it resolves through `exports` into `dist`. This keeps that promise instead of adding a
+# Vite alias that would make dev and prod resolve core differently.
+CMD ["sh", "-lc", "npx nx build core && npm run dev -w apps/webapp -- --host 0.0.0.0"]
 
 # --- build: produce the self-contained Nitro output at apps/webapp/.output ---
 FROM base AS build

@@ -315,6 +315,7 @@ test(
     await fs.writeFile(path.join(target, 'apps/backend/drift-probe.ts'), DRIFT_PROBE);
 
     const base = `http://localhost:${backendPort}`;
+    const webappBase = `http://localhost:${webappPort}`;
 
     try {
       try {
@@ -323,23 +324,23 @@ test(
         // healthcheck condition can't be satisfied, instead of us blindly
         // polling an HTTP endpoint that a dead container would never answer.
         //
-        // `postgres backend` — not the whole stack. Nothing below this line
-        // makes a single request against `webapp`: every walk in this test
-        // drives the backend's own HTTP API directly and reads a `Location`
-        // header or a database row for its evidence, never a rendered page.
-        // Building and booting `webapp` here would cost a second image (and
-        // its own build-cache footprint — measured at roughly 1.24 GB image
-        // plus its share of a ~1.7 GB cold build cache) for zero coverage.
-        // **If you are adding an assertion that calls the webapp, add the
-        // service back here first** — it is not started, so a request against
-        // it will simply hang until `--wait-timeout`, which will look like an
-        // unrelated failure. (It is not merely unbuilt by omission, either:
-        // the dev webapp's SSR currently 500s on every page for reasons
-        // unrelated to this test — see the phase's own follow-on task for
-        // that defect. That is exactly why nothing here has ever exercised
-        // it, and exactly why "add coverage" rather than "restore the old
-        // scope" is the right fix when someone needs it.)
-        await compose('up', '-d', '--build', '--wait', '--wait-timeout', '600', 'postgres', 'backend');
+        // `webapp` IS started here, unlike the rest of this test's walks, which still
+        // drive the backend's own HTTP API directly and read a `Location` header or a
+        // database row for their evidence, never a rendered page. This is the one
+        // exception, and it exists because "nothing here ever requests the webapp" was
+        // itself the gap that let the dev webapp SSR-500 on every route for days —
+        // this repository's only other live-webapp assertion curls the *production*
+        // image (below, in the "production images boot" test), which never exercises
+        // `apps/webapp/Dockerfile`'s `dev` target and so was immune. The fix for that
+        // defect made the dev CMD build core before `nuxt dev`; this is the check that
+        // would have failed without it and now guards the regression. Costs a third
+        // image on top of `postgres`/`backend` (roughly another ~1.2 GB layer plus its
+        // share of build cache) — accepted because "add coverage" is the whole point
+        // of this addition, not a cost to avoid the way it was when there was nothing
+        // here for it to cover.
+        await compose(
+          'up', '-d', '--build', '--wait', '--wait-timeout', '600', 'postgres', 'backend', 'webapp',
+        );
       } catch (error) {
         const diagnostics = await composeDiagnostics(target, projectName);
         throw new Error(`docker compose up --wait failed: ${error.message}\n\n${diagnostics}`);
@@ -348,6 +349,25 @@ test(
       const health = await call(base, 'GET', '/health');
       assert.equal(health.status, 200);
       assert.deepEqual(health.json, { status: 'ok' });
+
+      // The regression guard for the dev webapp's SSR-500 defect. `compose.yaml`'s
+      // `webapp` healthcheck already made `--wait` above block until this route
+      // answers `200`, so this is not a race — it is naming what "the stack is up"
+      // was already waiting on, and asserting it rather than trusting it. Two
+      // routes, not one, because the defect was in a globally-registered server
+      // plugin (`app/plugins/auth-init.server.ts`) and hit every route identically;
+      // `/` and `/login` are enough to show it isn't one page's problem.
+      for (const route of ['/', '/login']) {
+        const page = await call(webappBase, 'GET', route);
+        assert.equal(
+          page.status, 200,
+          `the dev webapp answered ${route} with ${page.status}:\n${page.text.slice(0, 500)}`,
+        );
+        assert.match(
+          page.text, /id="__nuxt"/,
+          `${route} carries no Nuxt root, so this is not the app:\n${page.text.slice(0, 500)}`,
+        );
+      }
 
       await walkTheIdentityFlow(base, target);
       await walkFederatedSignIn(base);
