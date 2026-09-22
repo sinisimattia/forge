@@ -19,6 +19,17 @@ const enabled = process.env.FORGE_E2E === '1';
 const tempDir = tempDirFactory('forge-docker-');
 
 /**
+ * The address the dev provider is configured to assert for the whole of
+ * {@link walkFederatedSignIn} — a fresh address nobody else in this walk
+ * registers, so "creates an account" and "signs into the same one twice" are
+ * unambiguous. Set once, in `apps/backend/.env`, before the stack ever boots.
+ * {@link walkTheFederatedRefusal} points the dev provider at a different
+ * address later, by rewriting that file and recreating the `backend`
+ * container — see that function's own doc for why.
+ */
+const DEV_OAUTH_INITIAL_EMAIL = 'federated-walker@example.com';
+
+/**
  * The host running this test may already have something bound to 5432/3000/3001
  * (another project's Postgres, a locally running dev server, ...). Never assume
  * they are free — ask the OS for a free port instead and publish the stack there.
@@ -121,6 +132,20 @@ async function call(base, method, route, { body, token, cookie } = {}) {
   const response = await fetch(`${base}${route}`, {
     method,
     headers,
+    // `redirect: 'manual'` — found the hard way, by `walkFederatedSignIn`'s
+    // first run: `fetch`'s default (`'follow'`) auto-follows `OAuthController`'s
+    // `302`s straight through this application's own callback and into
+    // whatever the webapp answers at `PUBLIC_WEBAPP_URL/oauth/callback`, so
+    // `call()` returned the WEBAPP's response (once even a `500` from its dev
+    // server) instead of this backend's own `302` — silently, since nothing
+    // about that shape says "this followed a redirect you did not ask for."
+    // `'manual'` hands back the `3xx` itself, `status` and `Location`
+    // included (confirmed against Node's own `fetch`, which — unlike a
+    // browser's opaque redirect — does not hide either behind `redirect:
+    // 'manual'`), which is what every caller of `.location` below needs and
+    // what D7's byte-for-byte comparisons already assumed of every other
+    // route.
+    redirect: 'manual',
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const text = await response.text();
@@ -130,7 +155,18 @@ async function call(base, method, route, { body, token, cookie } = {}) {
   } catch {
     json = undefined;
   }
-  return { status: response.status, text, json, setCookie: response.headers.getSetCookie() };
+  return {
+    status: response.status,
+    text,
+    json,
+    setCookie: response.headers.getSetCookie(),
+    // Only the federated walk needs this — `OAuthController` answers every one
+    // of its routes with a `302` rather than a body, so following the trip a
+    // browser would take means reading `Location` ourselves. Added as an
+    // extra field rather than a new return shape so every existing caller,
+    // which never reads it, is unaffected.
+    location: response.headers.get('location'),
+  };
 }
 
 /** The `name=value` pair of the renewal cookie in a response, or `undefined`. */
@@ -258,9 +294,18 @@ test(
     // this walk needs that it does NOT pin, so it arrives through the optional
     // `apps/backend/.env` the service already reads. An absolute path, so what is asserted
     // is the bind mount rather than an agreement about the container's working directory.
+    // OAUTH_DEV_ENABLED/OAUTH_DEV_EMAIL land here for the same reason
+    // MAIL_OUTBOX_DIR does: `compose.yaml` pins `NODE_ENV`, `DATABASE_URL` and
+    // the rest of the backend's `environment:` block, which wins over
+    // `env_file:`, but names neither of these two — so this optional file is
+    // the only way in. `NODE_ENV=development` is pinned there, so the
+    // production refusal (proven separately, against the real prod image, by
+    // `proveProductionRefusesTheDevProvider`) does not fire here.
     await fs.writeFile(
       path.join(target, 'apps/backend/.env'),
-      'MAIL_OUTBOX_DIR=/app/.mail-outbox\n',
+      'MAIL_OUTBOX_DIR=/app/.mail-outbox\n'
+      + 'OAUTH_DEV_ENABLED=1\n'
+      + `OAUTH_DEV_EMAIL=${DEV_OAUTH_INITIAL_EMAIL}\n`,
     );
 
     // The entity-versus-migration drift probe. It lives outside `src/`, so `nest
@@ -277,7 +322,24 @@ test(
         // (bounded by --wait-timeout) as soon as a container exits or a
         // healthcheck condition can't be satisfied, instead of us blindly
         // polling an HTTP endpoint that a dead container would never answer.
-        await compose('up', '-d', '--build', '--wait', '--wait-timeout', '600');
+        //
+        // `postgres backend` — not the whole stack. Nothing below this line
+        // makes a single request against `webapp`: every walk in this test
+        // drives the backend's own HTTP API directly and reads a `Location`
+        // header or a database row for its evidence, never a rendered page.
+        // Building and booting `webapp` here would cost a second image (and
+        // its own build-cache footprint — measured at roughly 1.24 GB image
+        // plus its share of a ~1.7 GB cold build cache) for zero coverage.
+        // **If you are adding an assertion that calls the webapp, add the
+        // service back here first** — it is not started, so a request against
+        // it will simply hang until `--wait-timeout`, which will look like an
+        // unrelated failure. (It is not merely unbuilt by omission, either:
+        // the dev webapp's SSR currently 500s on every page for reasons
+        // unrelated to this test — see the phase's own follow-on task for
+        // that defect. That is exactly why nothing here has ever exercised
+        // it, and exactly why "add coverage" rather than "restore the old
+        // scope" is the right fix when someone needs it.)
+        await compose('up', '-d', '--build', '--wait', '--wait-timeout', '600', 'postgres', 'backend');
       } catch (error) {
         const diagnostics = await composeDiagnostics(target, projectName);
         throw new Error(`docker compose up --wait failed: ${error.message}\n\n${diagnostics}`);
@@ -288,6 +350,8 @@ test(
       assert.deepEqual(health.json, { status: 'ok' });
 
       await walkTheIdentityFlow(base, target);
+      await walkFederatedSignIn(base);
+      await walkTheFederatedRefusal(compose, projectName, base, target);
       await walkTheTenancyFlow(base, target);
       await proveTheAuditLogIsAppendOnly(compose, projectName, target);
       await proveWhatTheFakeCannotExpress(compose, base, target);
@@ -472,6 +536,259 @@ async function walkTheIdentityFlow(base, target) {
     body: { email, secret: 'a-different-correct-horse-77' },
   });
   assert.equal(withNew.status, 200, withNew.text);
+}
+
+/**
+ * One statement, one scalar, via `psql` inside the `postgres` container.
+ *
+ * The idiom {@link proveWhatTheFakeCannotExpress}'s own `ask` already uses,
+ * hoisted so {@link walkFederatedSignIn} and {@link walkTheFederatedRefusal}
+ * — which run before that function, against identities and sessions rather
+ * than the audit log — do not each grow a private copy of it.
+ *
+ * @param compose - the project-scoped compose runner
+ * @param url - the connection string to run as (see `connectionUrlsFrom`)
+ * @param sql - the statement, `-tAc` — no header, no alignment, tuples only
+ * @returns the trimmed stdout
+ */
+async function psqlValue(compose, url, sql) {
+  const { stdout } = await compose('exec', '-T', 'postgres', 'psql', url, '-tAc', sql);
+  return stdout.trim();
+}
+
+/**
+ * One full round trip through `DevOAuthProvider`: `GET /auth/oauth/OIDC`
+ * begins the "sign-in", and following its own `Location` straight back into
+ * `GET /auth/oauth/OIDC/callback` completes it — no page, ever, in between
+ * (see that adapter's own doc for why). Returns the callback's response,
+ * which is where a session's cookie or a refusal's `error=` code lands.
+ *
+ * @param base - the stack's base URL
+ * @returns the callback's own response
+ */
+async function signInThroughDevProvider(base) {
+  const begin = await call(base, 'GET', '/auth/oauth/OIDC');
+  assert.equal(begin.status, 302, begin.text);
+  assert.ok(begin.location, `no Location header on the dev provider's own redirect: ${begin.text}`);
+
+  // The host on this Location is `PUBLIC_API_URL`, which is `base` itself
+  // here (`compose.yaml` pins it to `http://localhost:${BACKEND_PORT}`) — but
+  // read from the header rather than assumed, the same discipline the D11
+  // unit test's own `follow()` applies to a provider's redirect.
+  const target = new URL(begin.location);
+  return call(base, 'GET', `${target.pathname}${target.search}`);
+}
+
+/**
+ * Federated sign-in through the development adapter, against the real stack:
+ * `GET /auth/oauth/providers` lists it, a first round trip creates an
+ * account, a second signs into the *same* one, and the linked identity shows
+ * up at `GET /users/me/identities` — the walk `DevOAuthProvider` exists to
+ * make possible with no third-party account (see its own doc, and
+ * ADR-0011's R10).
+ *
+ * The stack was booted with `OAUTH_DEV_ENABLED=1` and
+ * `OAUTH_DEV_EMAIL={@link DEV_OAUTH_INITIAL_EMAIL}` from the start (see the
+ * `apps/backend/.env` written before `compose up` above) — this address is
+ * not registered by anything else in this walk, so "one account, not two"
+ * has an unambiguous account to be about.
+ *
+ * Every claim here is checked against the real database, not only the HTTP
+ * response: `FakeDataSource` enforces no unique constraint on
+ * `auth_identities`, so "the second round trip did not provision a second
+ * account" is invisible to the unit tier no matter how the response reads.
+ *
+ * @param base - the stack's base URL
+ */
+async function walkFederatedSignIn(base) {
+  const providers = await call(base, 'GET', '/auth/oauth/providers');
+  assert.equal(providers.status, 200, providers.text);
+  assert.ok(
+    Array.isArray(providers.json?.providers) && providers.json.providers.includes('OIDC'),
+    `the development provider is not in the configured list: ${providers.text}`,
+  );
+
+  const first = await signInThroughDevProvider(base);
+  assert.equal(first.status, 302, first.text);
+  assert.match(first.location, /\/oauth\/callback/, `landed somewhere unexpected: ${first.location}`);
+  assert.ok(
+    !/[?&]error=/.test(first.location),
+    `the first round trip through the dev provider was refused: ${first.location}`,
+  );
+  const firstCookie = refreshCookie(first);
+  assert.ok(firstCookie, `no renewal cookie was set on account creation: ${JSON.stringify(first.setCookie)}`);
+
+  const renewed = await call(base, 'POST', '/auth/refresh', { cookie: firstCookie });
+  assert.equal(renewed.status, 200, renewed.text);
+  assert.equal(renewed.json.user.email, DEV_OAUTH_INITIAL_EMAIL);
+  assert.ok(renewed.json.accessToken, `no access credential after renewal: ${renewed.text}`);
+  const userId = renewed.json.user.id;
+
+  const identitiesAfterFirst = await call(base, 'GET', '/users/me/identities', {
+    token: renewed.json.accessToken,
+  });
+  assert.equal(identitiesAfterFirst.status, 200, identitiesAfterFirst.text);
+  assert.equal(
+    identitiesAfterFirst.json.length,
+    1,
+    `expected exactly one identity after the first sign-in, got ${identitiesAfterFirst.text}`,
+  );
+  assert.equal(identitiesAfterFirst.json[0].provider, 'OIDC');
+  assert.equal(identitiesAfterFirst.json[0].providerAccountId, DEV_OAUTH_INITIAL_EMAIL);
+
+  // ---- the same flow, a second time: signs in, does not provision again ----
+  const second = await signInThroughDevProvider(base);
+  assert.equal(second.status, 302, second.text);
+  assert.ok(
+    !/[?&]error=/.test(second.location),
+    `the second round trip through the dev provider was refused: ${second.location}`,
+  );
+  const secondCookie = refreshCookie(second);
+  assert.ok(secondCookie, `no renewal cookie was set on the second sign-in: ${JSON.stringify(second.setCookie)}`);
+
+  const renewedAgain = await call(base, 'POST', '/auth/refresh', { cookie: secondCookie });
+  assert.equal(renewedAgain.status, 200, renewedAgain.text);
+  assert.equal(
+    renewedAgain.json.user.id,
+    userId,
+    `the second round trip signed into a DIFFERENT account: first ${userId}, second ${renewedAgain.json.user.id}`,
+  );
+
+  const identitiesAfterSecond = await call(base, 'GET', '/users/me/identities', {
+    token: renewedAgain.json.accessToken,
+  });
+  assert.equal(identitiesAfterSecond.status, 200, identitiesAfterSecond.text);
+  assert.equal(
+    identitiesAfterSecond.json.length,
+    1,
+    `a second identity row appeared on the second sign-in: ${identitiesAfterSecond.text}`,
+  );
+}
+
+/**
+ * D11, against the real stack: a dev-provider callback whose asserted address
+ * already belongs to a password account must not link it or sign anyone in —
+ * see ADR-0011 and `oauth.service.ts`'s own
+ * `REFUSE_EMAIL_BELONGS_TO_ANOTHER_ACCOUNT` branch. Proven at the unit tier
+ * already, against `FakeDataSource`; this is the one tier where
+ * `auth_identities` carries a real foreign key and a real uniqueness
+ * invariant to actually violate, so "nothing was linked" is checked against
+ * the database those constraints live in, not against a fake that could not
+ * enforce them either way.
+ *
+ * `OAUTH_DEV_EMAIL` is fixed for the life of a container — `DevOAuthProvider`
+ * asserts exactly one address, configured once at construction, never per
+ * request (see that class's own doc). Rehearsing the collision therefore
+ * means pointing it at an address that ALREADY belongs to a seeded password
+ * account and rebooting: `apps/backend/.env` is rewritten and only the
+ * `backend` service is recreated — `postgres` (which holds the very rows
+ * being asserted on) and `webapp` are left untouched, exactly `.env.example`'s
+ * own guidance for this variable.
+ *
+ * @param compose - the project-scoped compose runner
+ * @param projectName - the compose project, for diagnostics on a failed recreate
+ * @param base - the stack's base URL
+ * @param target - the generated project directory, for the outbox and `.env`
+ */
+async function walkTheFederatedRefusal(compose, projectName, base, target) {
+  const COLLISION_EMAIL = 'password-collision@example.com';
+  const secret = 'correct-horse-battery-staple-42';
+
+  const registered = await call(base, 'POST', '/auth/register', {
+    body: { email: COLLISION_EMAIL, displayName: 'Has A Password Already', secret },
+  });
+  assert.equal(registered.status, 202, registered.text);
+  const verification = await waitForMessage(
+    target,
+    (message) => message.to === COLLISION_EMAIL && /verify/i.test(message.subject),
+  );
+  const verified = await call(base, 'POST', '/auth/verify-email', {
+    body: { credential: tokenFrom(verification) },
+  });
+  assert.equal(verified.status, 200, verified.text);
+
+  const { owner } = await connectionUrlsFrom(target);
+  const userId = await psqlValue(compose, owner, `SELECT id FROM users WHERE email = '${COLLISION_EMAIL}'`);
+  assert.match(userId, /^[0-9a-f-]{36}$/, `the seeded password account is missing: ${userId}`);
+
+  const identitiesBefore = await psqlValue(
+    compose, owner, `SELECT count(*) FROM auth_identities WHERE user_id = '${userId}'`,
+  );
+  const sessionsBefore = await psqlValue(
+    compose, owner, `SELECT count(*) FROM sessions WHERE user_id = '${userId}'`,
+  );
+  assert.equal(
+    identitiesBefore,
+    '1',
+    `the seeded account should hold exactly its password identity before the collision attempt, got ${identitiesBefore}`,
+  );
+
+  await fs.writeFile(
+    path.join(target, 'apps/backend/.env'),
+    'MAIL_OUTBOX_DIR=/app/.mail-outbox\n'
+    + 'OAUTH_DEV_ENABLED=1\n'
+    + `OAUTH_DEV_EMAIL=${COLLISION_EMAIL}\n`,
+  );
+  try {
+    // `--force-recreate`, not a bare `up -d`: an env_file's content is not
+    // part of what compose diffs to decide whether a service needs
+    // recreating, so without it `backend` would keep running with
+    // `DEV_OAUTH_INITIAL_EMAIL` still configured and this whole function
+    // would be asserting nothing. Only `backend` — `postgres` and `webapp`
+    // are named nowhere in this call and stay exactly as they were.
+    await compose('up', '-d', '--wait', '--wait-timeout', '120', '--force-recreate', 'backend');
+  } catch (error) {
+    const diagnostics = await composeDiagnostics(target, projectName);
+    throw new Error(
+      `backend did not come back up after pointing the dev provider at the collision address: `
+      + `${error.message}\n\n${diagnostics}`,
+    );
+  }
+
+  const refused = await signInThroughDevProvider(base);
+  assert.equal(refused.status, 302, refused.text);
+  assert.match(
+    refused.location,
+    /[?&]error=EMAIL_ALREADY_REGISTERED\b/,
+    `D11: the dev-provider callback did not refuse a colliding address: ${refused.location}`,
+  );
+  assert.equal(
+    refused.setCookie.length,
+    0,
+    `D11: a renewal cookie was set for a refused, unauthenticated callback: ${JSON.stringify(refused.setCookie)}`,
+  );
+
+  const identitiesAfter = await psqlValue(
+    compose, owner, `SELECT count(*) FROM auth_identities WHERE user_id = '${userId}'`,
+  );
+  const sessionsAfter = await psqlValue(
+    compose, owner, `SELECT count(*) FROM sessions WHERE user_id = '${userId}'`,
+  );
+  assert.equal(
+    identitiesAfter,
+    identitiesBefore,
+    `D11: a federated identity was linked to the account despite the refusal — before `
+    + `${identitiesBefore}, after ${identitiesAfter}`,
+  );
+  assert.equal(
+    sessionsAfter,
+    sessionsBefore,
+    `D11: a session was created for the account despite the refusal — before ${sessionsBefore}, `
+    + `after ${sessionsAfter}`,
+  );
+
+  const refusalRecorded = await psqlValue(
+    compose,
+    owner,
+    "SELECT count(*) FROM audit_entries WHERE action = 'FEDERATED_LINK_REFUSED' "
+    + `AND actor_user_id = '${userId}'`,
+  );
+  assert.equal(
+    refusalRecorded,
+    '1',
+    `D11: no FEDERATED_LINK_REFUSED entry was recorded against the account that already existed: `
+    + refusalRecorded,
+  );
 }
 
 /**
@@ -863,8 +1180,8 @@ async function proveWhatTheFakeCannotExpress(compose, base, target) {
     [...report.tables].sort(),
     [
       'audit_entries', 'auth_identities', 'email_verification_tokens', 'memberships',
-      'organization_invitations', 'organizations', 'password_reset_tokens', 'refresh_tokens',
-      'resource_grants', 'sessions', 'users',
+      'oauth_authorization_requests', 'organization_invitations', 'organizations',
+      'password_reset_tokens', 'refresh_tokens', 'resource_grants', 'sessions', 'users',
     ],
     `the set of tables TypeORM maps has changed. Got: ${[...report.tables].sort().join(', ')}. `
     + 'A new domain means adding its tables here; a table DISAPPEARING from this list means an '
@@ -924,6 +1241,58 @@ async function proveWhatTheFakeCannotExpress(compose, base, target) {
 }
 
 /**
+ * R10, against the real production image: `NODE_ENV=production` together
+ * with `OAUTH_DEV_ENABLED` must refuse to boot at all, not merely decline to
+ * register the adapter. `buildOAuthProviders` (`oauth.config.ts`) throws
+ * synchronously while `AuthModule`'s providers are being built, which is
+ * before `NestFactory.create`'s promise ever resolves — `main.ts`'s
+ * `bootstrap()` is called with no `.catch`, so that rejection is unhandled and
+ * Node exits non-zero. A unit test already drives `buildOAuthProviders`
+ * directly and asserts the throw; what it cannot show is that the *shipped
+ * artifact* — the compiled `prod` image, `NODE_ENV` pinned in
+ * `compose.prod.yaml`'s own `environment:` exactly as a real deployment would
+ * see it — actually dies rather than serving. This is that proof, against the
+ * same `prodapp-backend:local` image the rest of this test already built and
+ * booted successfully.
+ *
+ * `docker compose run --rm --no-deps`, not `up`: `backend`'s own
+ * `restart: unless-stopped` would otherwise put a crashing container into a
+ * restart loop this assertion would have to race against — polling for a
+ * state that may flip between "restarting" and "exited" from one moment to
+ * the next. `run` starts one throwaway container from the same image and
+ * hands back its real exit status directly, with nothing to race. `--no-deps`
+ * only skips *starting* `postgres`/`migrate` again — both are already up and
+ * healthy from earlier in this same test, on the same compose network, so
+ * `DATABASE_URL` still resolves; it plays no part in which error wins, since
+ * the OAuth guard throws before any provider that would need it is built.
+ *
+ * @param prod - the project-scoped, `compose.prod.yaml`-pinned compose runner
+ */
+async function proveProductionRefusesTheDevProvider(prod) {
+  const attempt = await prod(
+    'run', '--rm', '--no-deps',
+    '-e', 'OAUTH_DEV_ENABLED=1',
+    '-e', 'OAUTH_DEV_EMAIL=refused-in-production@example.test',
+    'backend',
+  ).then(
+    (result) => ({ ok: true, out: `${result.stdout}${result.stderr}` }),
+    (error) => ({ ok: false, out: `${error.stdout ?? ''}${error.stderr ?? ''}${error.message}` }),
+  );
+
+  assert.equal(
+    attempt.ok,
+    false,
+    `the production backend booted successfully with OAUTH_DEV_ENABLED=1 and NODE_ENV=production, `
+    + `rather than refusing to start:\n${attempt.out}`,
+  );
+  assert.match(
+    attempt.out,
+    /OAUTH_DEV_ENABLED is set with NODE_ENV=production/,
+    `the backend exited, but not for the reason this test is about:\n${attempt.out}`,
+  );
+}
+
+/**
  * The production images, booted — which until this test nothing had ever done.
  *
  * A smoke check and not a second walk. Two prod-only defects were found by hand
@@ -974,6 +1343,15 @@ test(
       // `WEBAPP_PORT`, so naming a different port here would be a stack that
       // mails links to one place and accepts requests from another.
       `PUBLIC_WEBAPP_URL=http://localhost:${webappPort}`,
+      // The origin every federated provider redirect URI is built from —
+      // `compose.prod.yaml` pins `PUBLIC_API_URL: ${PUBLIC_API_URL:?required}`
+      // on the `backend` service with no default, so without this line
+      // `docker compose config` (and therefore `up`) refuses to resolve at
+      // all, before a single image builds. Missing here for a time even
+      // after the compose file started requiring it — this test is the one
+      // thing that would have caught that gap, and until this line existed
+      // it hadn't been run since the requirement was added.
+      `PUBLIC_API_URL=http://localhost:${backendPort}`,
       `BACKEND_PORT=${backendPort}`,
       `WEBAPP_PORT=${webappPort}`,
       '',
@@ -984,7 +1362,9 @@ test(
     // that is worth asserting rather than assuming: a default would be a
     // credential shared by every project generated from this template. Checked
     // before anything is built, because `config` needs no image.
-    for (const missing of ['JWT_SECRET', 'POSTGRES_PASSWORD', 'APP_DB_ROLE', 'PUBLIC_WEBAPP_URL']) {
+    for (const missing of [
+      'JWT_SECRET', 'POSTGRES_PASSWORD', 'APP_DB_ROLE', 'PUBLIC_WEBAPP_URL', 'PUBLIC_API_URL',
+    ]) {
       await fs.writeFile(
         path.join(target, '.env'),
         env.split('\n').filter((line) => !line.startsWith(`${missing}=`)).join('\n'),
@@ -1054,6 +1434,17 @@ test(
         /id="__nuxt"/,
         `the page carries no Nuxt root, so this is not the app:\n${page.text.slice(0, 500)}`,
       );
+
+      // The dev-provider production refusal is proven in its OWN test
+      // ('the production backend refuses to boot with the development OAuth
+      // provider enabled', below) rather than tacked on here. This test
+      // already builds both prod images — the one thing standing between a
+      // generated project and shipping a broken production image, and this
+      // headroom-tight host cannot always carry a third check (a one-off
+      // `docker compose run`) inside that same build. The refusal check
+      // needs only the backend image, which this test also builds, so
+      // splitting it costs a second `--build backend` in the other test
+      // rather than a bigger build in this one.
     } finally {
       // `--rmi local` removes `<project>-webapp` (no explicit `image:` in the
       // compose file) but NOT the backend: `x-backend-image` gives that one an
@@ -1064,6 +1455,81 @@ test(
         process.stderr.write(`warning: production down -v failed: ${error.message}\n`);
       });
       await run('docker', ['image', 'rm', 'prodapp-backend:local']).catch(() => {});
+    }
+  },
+);
+
+/**
+ * R10, against the real production image — split off from the test above on
+ * purpose.
+ *
+ * This host's Docker headroom is tight enough that the two prod images the
+ * test above builds (backend and webapp, together the thing standing between
+ * a generated project and shipping a broken production build) do not
+ * reliably leave room for a third build inside the same run. This assertion
+ * needs only the backend image — never the webapp, which plays no part in
+ * R10 — so it gets its own project, its own generated directory, and its own
+ * teardown, rather than costing the webapp check a build it does not need.
+ * `proveProductionRefusesTheDevProvider`'s own doc has the rest of the
+ * reasoning (`docker compose run --rm --no-deps`, not `up`, and why).
+ */
+test(
+  'the production backend refuses to boot with the development OAuth provider enabled',
+  { skip: !enabled && 'set FORGE_E2E=1' },
+  async () => {
+    const { target, projectName } = await generateProject('prodrefusal');
+
+    const prod = (...args) =>
+      run('docker', ['compose', '-f', 'compose.prod.yaml', '-p', projectName, ...args], {
+        cwd: target,
+        maxBuffer: 64 * 1024 * 1024,
+      });
+
+    const [backendPort, webappPort] = await Promise.all([getFreePort(), getFreePort()]);
+    // The full set of `:?required` production variables, exactly as the other
+    // production test provides them — `compose.prod.yaml`'s `backend` service
+    // needs every one of them to resolve at all, whether or not `webapp` is
+    // ever built. `WEBAPP_PORT` is still required even with no `webapp`
+    // service here: `CORS_ORIGIN` and `PUBLIC_WEBAPP_URL` are both derived
+    // from it, and neither is conditional on the service existing.
+    const env = [
+      'POSTGRES_DB=prodrefusal',
+      'POSTGRES_USER=prodrefusal',
+      'POSTGRES_PASSWORD=prodrefusal-owner-local-smoke-test',
+      'APP_DB_ROLE=prodrefusal-app',
+      'APP_DB_PASSWORD=prodrefusal-app-local-smoke-test',
+      'JWT_SECRET=prodrefusal-local-smoke-test-signing-key',
+      `PUBLIC_WEBAPP_URL=http://localhost:${webappPort}`,
+      `PUBLIC_API_URL=http://localhost:${backendPort}`,
+      `BACKEND_PORT=${backendPort}`,
+      `WEBAPP_PORT=${webappPort}`,
+      '',
+    ].join('\n');
+    await fs.writeFile(path.join(target, '.env'), env);
+
+    try {
+      try {
+        // `backend` only — `migrate` runs first regardless, as its own
+        // `depends_on: condition: service_completed_successfully`, and
+        // `webapp` is never named so it is never built.
+        await prod('up', '-d', '--build', '--wait', '--wait-timeout', '900', 'backend');
+      } catch (error) {
+        const diagnostics = await composeDiagnostics(target, projectName, ['compose.prod.yaml']);
+        throw new Error(`the production backend did not come up: ${error.message}\n\n${diagnostics}`);
+      }
+
+      // Proves the image this refusal is about to be checked against is a
+      // working one — the refusal below means nothing if the backend never
+      // serves at all for some unrelated reason.
+      const health = await call(`http://localhost:${backendPort}`, 'GET', '/health');
+      assert.equal(health.status, 200, `the production backend that R10 is checked against never came up healthy: ${health.text}`);
+
+      await proveProductionRefusesTheDevProvider(prod);
+    } finally {
+      await prod('down', '-v', '--rmi', 'local').catch((error) => {
+        process.stderr.write(`warning: production refusal down -v failed: ${error.message}\n`);
+      });
+      await run('docker', ['image', 'rm', 'prodrefusal-backend:local']).catch(() => {});
     }
   },
 );
