@@ -9,6 +9,18 @@ const WEBAPP_ROOT = resolve(HERE, '../..');
 
 const STORIES_GLOB = '../stories/**/*.stories.@(js|jsx|mjs|ts|tsx)';
 
+// Read out of STORIES_GLOB itself — asserted below to be the literal text
+// `main.ts` runs — rather than written a second, narrower time here. A
+// second copy is exactly how the story count below once undercounted: the
+// glob matches `@(js|jsx|mjs|ts|tsx)` and this file's own filter once
+// matched only `.stories.ts`, so a story added as `.stories.tsx` would build
+// correctly and still read as zero new stories to this guard.
+const STORIES_EXTENSIONS = STORIES_GLOB.match(/@\(([^)]+)\)$/)?.[1];
+if (STORIES_EXTENSIONS === undefined) {
+  throw new Error('STORIES_GLOB has no @(...) extension suffix to check against');
+}
+const STORY_FILE = new RegExp(`\\.stories\\.(${STORIES_EXTENSIONS})$`);
+
 /**
  * Storybook's entry files name paths, and a path that names nothing fails in a
  * way that reads as something else entirely: `.storybook/preview.ts` imported
@@ -54,7 +66,21 @@ describe('storybook configuration', () => {
     // take the CI job green having compiled not one story — which is precisely
     // the failure this file was written after. Assert it has something to match.
     const matched = readdirSync(stories, { recursive: true, encoding: 'utf8' })
-      .filter((entry) => entry.endsWith('.stories.ts'));
+      .filter((entry) => STORY_FILE.test(entry));
     expect(matched.length).toBeGreaterThan(0);
+  });
+
+  it('counts a story under every extension the glob itself accepts, not only .stories.ts', () => {
+    // Every extension @(js|jsx|mjs|ts|tsx) names has to be recognised by the
+    // same pattern the directory scan above filters with — a filename ending
+    // `.stories.ts` alone (this codebase's only extension in use today) would
+    // pass this same assertion even after regressing to that narrower check,
+    // which is exactly the "check that cannot fail" shape this guards
+    // against: it is watched against a filename none of the repository's real
+    // stories happen to use.
+    for (const extension of STORIES_EXTENSIONS.split('|')) {
+      expect(STORY_FILE.test(`Example.stories.${extension}`)).toBe(true);
+    }
+    expect(STORY_FILE.test('Example.not-a-story.ts')).toBe(false);
   });
 });

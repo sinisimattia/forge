@@ -65,6 +65,55 @@ describe('buildOAuthProviders', () => {
     expect(built.map((p) => p.provider)).toEqual([AuthProvider.OIDC]);
   });
 
+  describe('OAUTH_DEV_ENABLED as a boolean, not by isConfigured\'s presence rule', () => {
+    it('accepts "true" as well as "1"', () => {
+      const built = buildOAuthProviders(configOf({
+        NODE_ENV: 'development',
+        PUBLIC_API_URL: 'http://localhost:3000',
+        OAUTH_DEV_ENABLED: 'true',
+        OAUTH_DEV_EMAIL: 'dev-signin@example.test',
+      }));
+      expect(built.map((p) => p.provider)).toEqual([AuthProvider.OIDC]);
+    });
+
+    it('refuses at start-up for "false", rather than silently registering the adapter that authenticates anybody', () => {
+      // isConfigured's "present and non-empty" rule would read "false" as ON
+      // — right for a credential, inverted for a boolean. The live shape
+      // this guards against: an operator writes OAUTH_DEV_ENABLED=false
+      // meaning to turn the adapter off, but leaves OAUTH_DEV_EMAIL set from
+      // an earlier configuration, on a deployment that is not
+      // NODE_ENV=production (so the production guard above does not apply).
+      expect(() => buildOAuthProviders(configOf({
+        NODE_ENV: 'staging',
+        PUBLIC_API_URL: 'https://staging.example.test',
+        OAUTH_DEV_ENABLED: 'false',
+        OAUTH_DEV_EMAIL: 'dev-signin@example.test',
+      }))).toThrow(/OAUTH_DEV_ENABLED/);
+    });
+
+    it('refuses at start-up rather than quietly declining to register, for "false"', () => {
+      // Same distinction as the production case above: a silent decline
+      // would mean a mis-spelled flag surfaces as nothing pointing at why.
+      let registered: IOAuthProvider[] | null = null;
+      try {
+        registered = buildOAuthProviders(configOf({
+          NODE_ENV: 'staging',
+          PUBLIC_API_URL: 'https://staging.example.test',
+          OAUTH_DEV_ENABLED: 'false',
+          OAUTH_DEV_EMAIL: 'dev-signin@example.test',
+        }));
+      } catch { /* expected */ }
+      expect(registered).toBeNull();
+    });
+
+    it('treats an unset variable as off, same as every other provider\'s absence', () => {
+      expect(buildOAuthProviders(configOf({
+        PUBLIC_API_URL: 'http://localhost:3000',
+        OAUTH_DEV_EMAIL: 'dev-signin@example.test',
+      }))).toEqual([]);
+    });
+  });
+
   it('refuses to start when the development provider is enabled but OAUTH_DEV_EMAIL is not', () => {
     // Same shape as the PUBLIC_API_URL regression case just below: the one
     // address this adapter will ever assert has to come from configuration,

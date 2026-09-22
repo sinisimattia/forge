@@ -1,3 +1,4 @@
+import { looksLikeAnAddress } from '../../shared/policies/looksLikeAnAddress';
 import { normalizeEmail } from '../../shared/policies/normalizeEmail';
 import { FederatedSignInOutcome } from '../enums/FederatedSignInOutcome';
 import type { FederatedSignInDecision } from '../types/FederatedSignInDecision';
@@ -13,9 +14,18 @@ import type { FederatedSignInInput } from '../types/FederatedSignInInput';
  *    provider that later stops disclosing a verified address must not lock
  *    somebody out of an account they already hold, which is what any ordering
  *    that checked the address first would do.
- * 2. **An unverified or absent address is refused before it is compared with
- *    anything.** Not after — a comparison that happens and is then discarded is
- *    one refactor away from a comparison that is acted on.
+ * 2. **An unverified address, an absent one, or one that is not shaped like an
+ *    address at all is refused before it is compared with anything.** Not
+ *    after — a comparison that happens and is then discarded is one refactor
+ *    away from a comparison that is acted on. The shape check matters on its
+ *    own: `emailVerified: true` is the provider's own claim, not a guarantee
+ *    about the string it is attached to, and nothing downstream of
+ *    `PROVISION_NEW` re-validates it — the value is written straight into
+ *    storage a real registration reaches only through {@link User}'s own
+ *    constructor, which enforces exactly this shape. A provider (or a
+ *    misconfigured development one) asserting a verified non-address must
+ *    fail here, not at the next unrelated read of the row it would otherwise
+ *    create.
  * 3. **A verified address that belongs to an existing account is refused, and
  *    the assertion is NOT linked to it.** This is discriminating test D11 and
  *    the reason this function exists. A provider asserting an address proves it
@@ -56,7 +66,11 @@ export function decideFederatedSignIn(input: FederatedSignInInput): FederatedSig
     };
   }
 
-  if (account.email === null || !account.emailVerified) {
+  if (
+    account.email === null
+    || !account.emailVerified
+    || !looksLikeAnAddress(normalizeEmail(account.email))
+  ) {
     return { outcome: FederatedSignInOutcome.REFUSE_UNVERIFIED_EMAIL };
   }
 

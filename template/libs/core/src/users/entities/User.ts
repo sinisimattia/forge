@@ -1,3 +1,4 @@
+import { looksLikeAnAddress } from '../../shared/policies/looksLikeAnAddress';
 import { normalizeEmail } from '../../shared/policies/normalizeEmail';
 import { PlatformRole } from '../enums/PlatformRole';
 import { UserStatus } from '../enums/UserStatus';
@@ -45,7 +46,7 @@ export class User {
   constructor(props: UserProps) {
     const email = normalizeEmail(props.email);
     if (email === '') throw new EmailRequiredError();
-    if (!User.looksLikeAnAddress(email)) throw new InvalidEmailError(props.email);
+    if (!looksLikeAnAddress(email)) throw new InvalidEmailError(props.email);
     if (props.displayName.trim() === '') throw new DisplayNameRequiredError();
 
     this.id = props.id;
@@ -57,17 +58,6 @@ export class User {
     this.createdAt = props.createdAt;
     this.updatedAt = props.updatedAt;
     this.deletedAt = props.deletedAt;
-  }
-
-  /**
-   * A deliberately shallow check: exactly one `@`, something either side, no
-   * whitespace. Anything stricter rejects addresses that are legal and in use;
-   * the only real proof that an address exists is that someone received a
-   * message at it, which is what verification is for.
-   */
-  private static looksLikeAnAddress(value: string): boolean {
-    const parts = value.split('@');
-    return parts.length === 2 && parts[0] !== '' && parts[1] !== '' && !/\s/.test(value);
   }
 
   /** Whether the address has been proven. */

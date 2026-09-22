@@ -423,6 +423,27 @@ describe('OAuthService.complete', () => {
       expect(user.displayName).toBe('nameless');
     });
 
+    it('bounds a provider-disclosed display name, since it is stored and carries no DTO in front of it', async () => {
+      // A password registration bounds this field with RegisterDto's own
+      // @MaxLength(200) before it ever reaches the service. Nothing stands in
+      // front of a provider's assertion the same way — this is the one place
+      // the bound can live.
+      await seedRow();
+      const longName = 'A'.repeat(500);
+      googleFetchAccount = async () => account({
+        subject: 'long-name-subject', email: 'long-name@example.test', emailVerified: true,
+        displayName: longName,
+      });
+
+      await service.complete('GOOGLE', CODE, STATE, CLIENT);
+
+      const [user] = source.all(UserRecord);
+      // The exact 200-character value, not merely its length — pins both
+      // "bounded" and "the surviving 200 are the first 200", not a slice
+      // from the wrong end.
+      expect(user.displayName).toBe('A'.repeat(200));
+    });
+
     it('provisions the identity under the registry-resolved provider, not the adapter\'s own self-report', async () => {
       // The adapter registered as GOOGLE answers with `provider: GITHUB` in
       // the account it asserts — every real adapter agrees with itself, but
@@ -694,8 +715,14 @@ describe('OAuthService.complete', () => {
 
     it('refuses a LINK-purpose row with no owner, rather than creating an identity with a null actor', async () => {
       // `seedRow`'s own `userId` override accepts `null` explicitly for
-      // exactly this case; `beginLink` itself never writes one.
-      await seedRow({ purpose: OAuthAuthorizationPurpose.LINK, userId: null });
+      // exactly this case; `beginLink` itself never writes one. `redirectTo`
+      // is deliberately non-null, the same discipline the AUTHORIZATION_UNKNOWN
+      // cases above use: `seedRow`'s own default of `null` would let this
+      // assertion pass whether the code echoes `row.redirectTo` or always
+      // answers `null`, which is exactly the "AUTHORIZATION_UNKNOWN never
+      // echoes redirectTo" property `consumeAuthorizationRow`'s own TSDoc
+      // states.
+      await seedRow({ purpose: OAuthAuthorizationPurpose.LINK, userId: null, redirectTo: '/somewhere' });
       googleFetchAccount = async () => account({ subject: 'whatever-subject' });
 
       const result = await service.complete('GOOGLE', CODE, STATE, CLIENT);

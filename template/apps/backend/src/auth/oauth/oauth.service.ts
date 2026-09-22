@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, LessThan, Repository } from 'typeorm';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import { AuthenticationRejectionReason } from '__FORGE_SCOPE__/core/auth/enums';
 import type { ClientContext } from '__FORGE_SCOPE__/core/auth/types';
@@ -65,6 +65,19 @@ export type OAuthAuthorizationPurpose
  * started.
  */
 export const OAUTH_AUTHORIZATION_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * The bound {@link OAuthService.resolveDisplayName} enforces on its result.
+ *
+ * Matches `RegisterDto`'s `@MaxLength(200)` on the equivalent field for a
+ * password registration. There is no DTO in front of a provider's assertion
+ * — the input arrives from `provisionAndSignIn`, not a request body — so
+ * nothing upstream of this constant bounds it: a provider's own display name
+ * is whatever it chose to disclose, and it is stored, so an unbounded one is
+ * a way to write as much as you like into `users.display_name`. Same idiom
+ * `clientContextOf` already uses for a stored header.
+ */
+export const DISPLAY_NAME_MAX_LENGTH = 200;
 
 /**
  * The opaque codes {@link OAuthService.complete} may put in a redirect.
@@ -619,11 +632,15 @@ export class OAuthService {
    * by it, or treat it as though a provider had asserted it — that would be
    * mistaking a cosmetic default for a fact this function was never in a
    * position to establish.
+   *
+   * Bounded to {@link DISPLAY_NAME_MAX_LENGTH} on the way out — see that
+   * constant's own doc — on both branches, since the fallback is a slice of
+   * `email`, which carries no length bound of its own either.
    */
   private static resolveDisplayName(displayName: string | null, email: string): string {
     const trimmed = displayName?.trim() ?? '';
-    if (trimmed !== '') return trimmed;
-    return email.split('@')[0];
+    const resolved = trimmed !== '' ? trimmed : email.split('@')[0];
+    return resolved.slice(0, DISPLAY_NAME_MAX_LENGTH);
   }
 
   /**
@@ -649,7 +666,7 @@ export class OAuthService {
     // identical shape of gap: a null owner must never reach the write below
     // that creates an identity.
     if (row.userId === null) {
-      return { status: 'REFUSED', code: 'AUTHORIZATION_UNKNOWN', redirectTo: row.redirectTo };
+      return { status: 'REFUSED', code: 'AUTHORIZATION_UNKNOWN', redirectTo: null };
     }
     const actorId = row.userId as UserId;
 
@@ -712,6 +729,31 @@ export class OAuthService {
       default:
         return assertNever(decision);
     }
+  }
+
+  /**
+   * Deletes authorization rows whose time has run out. Not on any request
+   * path — `GET /auth/oauth/:provider` and `GET /auth/oauth/:provider/link`
+   * write a row each and neither anything in this class nor anything calling
+   * it deletes one afterward, so this table only grows unless something
+   * outside a request calls this. Same shape as
+   * {@link SessionService.pruneExpired}, which is the sibling single-use
+   * table's own answer to the identical question, and the same TTL an
+   * unconsumed row of this table is subject to is `OAUTH_AUTHORIZATION_TTL_MS`,
+   * far shorter than a refresh token's — a deployment running this on any
+   * ordinary schedule discards nothing anybody could still be mid-flow with.
+   *
+   * `ix_oauth_authorization_requests_expires_at` — the migration's own
+   * `expires_at` index — is what this query is run against; both consumed
+   * and never-consumed rows past their `expires_at` are deleted alike, the
+   * same choice `SessionService.pruneExpired` makes for a spent or unspent
+   * refresh token, because a row's own history has no further use once
+   * nothing can act on it again.
+   *
+   * @param before - delete every row whose `expiresAt` is earlier than this
+   */
+  public async pruneExpired(before: Date): Promise<void> {
+    await this.requests.delete({ expiresAt: LessThan(before) });
   }
 
   /** One audit write, with this phase's fixed `organizationId` of `null` and `resourceType` of `'user'`. */

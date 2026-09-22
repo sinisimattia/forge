@@ -79,6 +79,21 @@ describe('decideFederatedSignIn', () => {
     expect(decision).toEqual({ outcome: FederatedSignInOutcome.REFUSE_UNVERIFIED_EMAIL });
   });
 
+  it('refuses an unlinked subject whose provider-verified "address" is not shaped like one', () => {
+    // `emailVerified: true` is the provider's own claim about a string, not a
+    // guarantee the string is an address — a self-hosted OIDC issuer whose
+    // `email` claim is a bare username, or a misconfigured development
+    // provider, can assert this. Nothing downstream of PROVISION_NEW
+    // re-validates the shape, so it has to be refused here.
+    const decision = decideFederatedSignIn({
+      account: account({ email: 'devuser', emailVerified: true }),
+      linkedIdentity: null,
+      userWithMatchingEmail: null,
+    });
+
+    expect(decision).toEqual({ outcome: FederatedSignInOutcome.REFUSE_UNVERIFIED_EMAIL });
+  });
+
   // ─── D11 ───────────────────────────────────────────────────────────────────
   it('refuses, and does NOT link, when a verified address belongs to an existing account', () => {
     const decision = decideFederatedSignIn({
@@ -105,6 +120,7 @@ describe('decideFederatedSignIn', () => {
     ['a verified address matching nobody', {}, null],
     ['an unverified address', { emailVerified: false }, null],
     ['an absent address', { email: null }, null],
+    ['a verified value not shaped like an address', { email: 'devuser' }, null],
   ])('never signs in an unlinked subject — %s', (_description, accountOverrides, userWithMatchingEmail) => {
     const decision = decideFederatedSignIn({
       account: account(accountOverrides),

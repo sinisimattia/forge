@@ -17,6 +17,40 @@ function hasCredentialPair(config: ConfigService, idKey: string, secretKey: stri
 }
 
 /**
+ * `OAUTH_DEV_ENABLED` is a boolean, and is read by its own rule rather than
+ * {@link isConfigured} — the two conventions genuinely differ, on purpose,
+ * rather than one being an inconsistent application of the other.
+ *
+ * `isConfigured`'s "present and non-empty" rule is right for a credential: a
+ * client id or secret has no spelling that means "off," so any non-empty
+ * value means "supplied" and an empty one means "not supplied" — there is no
+ * third state to get wrong. A boolean flag has exactly the state that rule
+ * gets wrong: `OAUTH_DEV_ENABLED=false` is present and non-empty, so
+ * `isConfigured` would read it as **on**, inverted from what the value says.
+ * The live shape this guards against is an operator writing
+ * `OAUTH_DEV_ENABLED=false` while leaving `OAUTH_DEV_EMAIL` set — "turn this
+ * off but keep the address" — on a deployment that is not `NODE_ENV=production`
+ * (which the refusal above already covers regardless of this value), silently
+ * registering a provider that authenticates anybody.
+ *
+ * Unset or empty is off, same as every other provider's absence. `'1'` and
+ * `'true'` are on. Anything else present is refused at start-up rather than
+ * silently treated as off — a spelling this factory does not recognise is a
+ * configuration a deployer should have to notice and fix, not one this
+ * factory guesses about on their behalf.
+ */
+function isDevEnabledFlag(config: ConfigService): boolean {
+  const raw = config.get<string>('OAUTH_DEV_ENABLED');
+  if (raw === undefined || raw === '') return false;
+  if (raw === '1' || raw === 'true') return true;
+  throw new Error(
+    `OAUTH_DEV_ENABLED is set to "${raw}", which is neither "1" nor "true". This factory `
+    + 'does not guess whether a value it does not recognise means on or off — unset the '
+    + 'variable to disable the development provider, or set it to "1" or "true" to enable it.',
+  );
+}
+
+/**
  * Which providers this deployment has, decided once at start-up.
  *
  * Exported by name so `AuthModule` uses this exact function — a spec that
@@ -98,7 +132,7 @@ function hasCredentialPair(config: ConfigService, idKey: string, secretKey: stri
  * built.
  */
 export function buildOAuthProviders(config: ConfigService): IOAuthProvider[] {
-  const devEnabled = isConfigured(config, 'OAUTH_DEV_ENABLED');
+  const devEnabled = isDevEnabledFlag(config);
   const isProduction = config.get<string>('NODE_ENV') === 'production';
 
   if (devEnabled && isProduction) {

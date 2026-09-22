@@ -16,6 +16,10 @@ export enum FederatedSignInOutcome {
    * string.
    */
   REFUSE_EMAIL_BELONGS_TO_ANOTHER_ACCOUNT = 'REFUSE_EMAIL_BELONGS_TO_ANOTHER_ACCOUNT',
-  /** The address is absent, or the provider has not itself verified it. */
+  /**
+   * The address is absent, the provider has not itself verified it, or the
+   * value is not shaped like an address at all — the last of which can be
+   * true even when the provider claims `emailVerified: true`.
+   */
   REFUSE_UNVERIFIED_EMAIL = 'REFUSE_UNVERIFIED_EMAIL',
 }
