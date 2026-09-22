@@ -1065,3 +1065,78 @@ Phase 3's item 1 is worth a second look now: it concerns `auth-init.client.ts`, 
 neighbour `auth-init.server.ts` is the plugin at the centre of
 [the six](#the-six-worth-knowing-before-you-touch-the-code) item 3. Whoever opens one should
 read both.
+
+---
+
+## 9. The final whole-branch review, and what it found
+
+**Written after the rest of this document.** Sections 1–8 were committed at `d0d9aa2`; the
+whole-branch review and its fix wave landed at `941d672`, one commit later. Without this
+section the log would describe a phase that ended one commit before it actually did — which
+is the failure mode §6 names, arriving in the document that names it.
+
+The review read 39 commits across 159 files with one instruction: find what per-task review
+**structurally cannot** see. Each task had already had its own review and fix loop; what no
+single reviewer could see was interaction, drift, and properties that exist only once the
+whole thing is assembled.
+
+**Verdict: merge, zero Critical.** It looked hardest for cross-task drift and found none —
+it diffed every pre-existing file touched by the vocabulary sweep and confirmed each changed
+prose only, with no guard, cookie option, refusal path or audit actor weakened by a later
+commit. It confirmed all three repaired gates can fail. And it traced D11 across core,
+backend and webapp and found the property structurally protected rather than merely
+implemented: `FederatedLinkInput` carries no email field at all, so the link path cannot grow
+an address comparison.
+
+### The three Important findings, all at seams
+
+**1. Federated provisioning bypassed every invariant `User` enforces.** `provisionAndSignIn`
+inserted a `users` row directly — no `new User(...)`, and no DTO in front of it, because the
+input arrives from a provider rather than a request body. So a provider asserting
+`email: "devuser"` with `email_verified: true` persisted a row `User`'s own constructor
+forbids. **The callback succeeded and set a cookie**; the *next* read of that account threw,
+the controller's blanket catch turned it into an opaque `PROVIDER_UNAVAILABLE`, and the
+account was permanently unusable with nothing pointing at the cause. Reachable two ways in
+supported configurations: a self-hosted OIDC issuer whose `email` claim is not an address,
+and a typo'd `OAUTH_DEV_EMAIL` on a freshly generated project — ADR-0008's forbidden "button
+that fails when someone presses it". `displayName` was also unbounded into a `text NOT NULL`
+column where the password path bounds it at 200.
+
+Fixed **in core, where D11 already lives**: `looksLikeAnAddress` was extracted from `User`
+into `shared/policies` — one definition, with `User` now consuming it rather than keeping a
+second copy — and folded into `decideFederatedSignIn`'s `REFUSE_UNVERIFIED_EMAIL` branch.
+"Is this assertion usable as an address at all" is a pure rule about what a provider's
+assertion *means*, which is what that function is for. No enum member was added; the existing
+outcome's meaning widened, so every exhaustive switch still compiled unchanged.
+
+**2. A sweep that two artifacts claimed exists, and did not.** The migration comment
+justified its index as *"What the sweep for expired, never-completed requests is run
+against"*, and a test was **named** `indexes expires_at for the sweep`. There was no sweep
+anywhere. Rows are written by `GET /auth/oauth/:provider` — public, unauthenticated — and
+were never deleted, consumed or not. Fixed by **building the sweep** (`OAuthService.pruneExpired`,
+in `SessionService.pruneExpired`'s exact shape, including its "no caller in this codebase"
+precedent) rather than softening the comment, per this project's standing rule that a false
+comment is better made true.
+
+**3. `OAUTH_DEV_ENABLED=false` enabled the adapter that authenticates nobody.** `isConfigured`
+returns true for any present, non-empty value — a convention that is *correct for credentials*
+and inverts for a boolean flag. Production was covered, because the refusal throws on presence
+regardless of value; the live shape was an operator writing `OAUTH_DEV_ENABLED=false` while
+leaving `OAUTH_DEV_EMAIL` set on a non-production deployment. Now read as a boolean, refusing
+at start-up on any other present value, with the reasoning stated beside `isConfigured` so the
+two conventions are visibly separate decisions rather than one rule applied inconsistently.
+
+### The smallest fix was the most characteristic
+
+One Minor was a single character: a null-owner guard echoed `row.redirectTo` where the same
+commit's own TSDoc said every `AUTHORIZATION_UNKNOWN` refusal passes `null`. The fix also
+repaired **the pre-existing test that could not have caught it** — `seedRow`'s own `null`
+default meant the assertion passed identically whichever way the code answered. The phase's
+signature defect, found and closed in its last commit.
+
+### What this section is evidence for
+
+Every task on this branch was reviewed, and every one of those reviews was clean before this
+one ran. A whole-branch read still found three seam defects, one of them a configuration away
+from an unusable account. **Per-task review and whole-branch review are not the same
+instrument**, and the second is not a formality after the first.
