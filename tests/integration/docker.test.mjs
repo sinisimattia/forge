@@ -338,8 +338,20 @@ test(
         // share of build cache) — accepted because "add coverage" is the whole point
         // of this addition, not a cost to avoid the way it was when there was nothing
         // here for it to cover.
+        //
+        // `--wait-timeout 900`, not 600: `webapp` depends_on `backend: condition:
+        // service_healthy`, so its healthcheck timer only starts once backend's own
+        // resolves — the two budgets stack rather than run concurrently. Worst case,
+        // backend's healthcheck (compose.yaml: 120s start_period + 30 * 10s retries ≈
+        // 420s) plus webapp's (90s start_period + 30 * 5s retries ≈ 240s) is ≈ 660s, which
+        // 600 does not cover. A timeout here reads identically to "webapp is unhealthy" —
+        // indistinguishable from the regression this guard exists to catch — which is the
+        // one failure mode a guard must not produce on a merely slow box. 900 matches the
+        // production test's own `--wait-timeout` below rather than being a fresh guess. If
+        // a fourth service with its own `depends_on` chain joins this call, re-add its
+        // healthcheck budget to this sum before assuming 900 still covers it.
         await compose(
-          'up', '-d', '--build', '--wait', '--wait-timeout', '600', 'postgres', 'backend', 'webapp',
+          'up', '-d', '--build', '--wait', '--wait-timeout', '900', 'postgres', 'backend', 'webapp',
         );
       } catch (error) {
         const diagnostics = await composeDiagnostics(target, projectName);
