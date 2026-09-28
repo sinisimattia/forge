@@ -312,6 +312,35 @@ An absence, which takes **three** assertions rather than one:
 The first two alone pass a system that creates the session and merely declines to
 mention it. The third is the one that would have caught it.
 
+### 8.4 Every path that issues a session consults the policy
+
+Everything above describes `POST /auth/login`, and that is not the only door.
+
+An account may hold a confirmed second factor **and** a linked federated
+identity. Signing in through the provider reaches
+`decideFederatedSignIn`, which answers `SIGN_IN_EXISTING`, and
+`OAuthService.completeSignIn` calls `sessions.begin` — with no second factor
+consulted anywhere on that path. The result is a complete bypass of everything
+this phase builds, reachable by anyone who can complete an ordinary Google
+sign-in for an account whose owner deliberately enrolled a factor to prevent
+exactly that.
+
+**A second factor is a property of the account, not of the way its owner
+arrived.** So the rule is structural rather than per-endpoint: every path that
+reaches `sessions.begin` calls `decideAuthenticationStep` first, and refuses on
+`REQUIRE_SECOND_FACTOR` by minting a `LOGIN` challenge, whichever path it is.
+Today that is two paths — password and federated. A third added later inherits
+the requirement by being unable to reach session issuance without passing
+through the same decision.
+
+This needs saying because `SIGN_IN_EXISTING` *reads* like a completed
+authentication. It is not: it is an answer to "which account is this?", which is
+a different question from "may this account have a session now?" — and Phase 4
+wrote that distinction down in `decideFederatedSignIn`'s own TSDoc, which notes
+that whether the named account may actually be used is decided by the caller,
+not by that function. MFA is a second instance of the same rule, and the first
+one to have a bypass on the other side of getting it wrong.
+
 ## 9. TOTP
 
 `otplib` for verification, with a ±1 step window and a 30-second period.
