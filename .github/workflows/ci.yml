@@ -5,9 +5,9 @@ name: CI
 #                         because it is the cheapest check and the one that catches an
 #                         extraction mistake (a source-project trace or a populated secret).
 #   - generated-project: push AND PR. Actually generates a project and runs its lint/
-#                         typecheck/test/build/purity/layers gates — slow (an npm ci plus a
-#                         Nuxt build), and it does that twice: once for the gate suite and
-#                         once for the inventory suite. It installs with `npm ci` so the
+#                         typecheck/test/build/purity/layers/coverage gates — slow (an npm ci
+#                         plus a Nuxt build), and it does that twice: once for the gate suite
+#                         and once for the inventory suite. It installs with `npm ci` so the
 #                         committed lockfile is exercised by the same command Docker and
 #                         dev:up use.
 #   - storybook:          push AND PR, and blocking. `build-storybook` is a separate nx
@@ -80,7 +80,7 @@ jobs:
         run: npm test
 
   generated-project:
-    name: generated-project gate (lint/typecheck/test/build/purity/layers)
+    name: generated-project gate (lint/typecheck/test/build/purity/layers/coverage)
     needs: unit
     # Push AND PR — see "Why the slow tiers run on push" at the top of this file. The
     # `schedule` trigger drives `lockfile-refresh` alone, which runs this same command

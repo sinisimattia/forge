@@ -445,10 +445,21 @@ This phase asserts that a login answering `MFA_REQUIRED` routes to
 
 ## 13. Audit
 
-Six new members, taking `AuditAction` from 33 to **39**:
+Eight new members, taking `AuditAction` from 33 to **41**:
 
-`MFA_METHOD_ADDED`, `MFA_METHOD_REMOVED`, `MFA_CHALLENGE_SUCCEEDED`,
-`MFA_CHALLENGE_FAILED`, `RECOVERY_CODES_REGENERATED`, `RECOVERY_CODE_CONSUMED`.
+`MFA_METHOD_ADDED`, `MFA_METHOD_REMOVED`, `MFA_CHALLENGE_ISSUED`,
+`MFA_CHALLENGE_SUCCEEDED`, `MFA_CHALLENGE_FAILED`, `RECOVERY_CODES_REGENERATED`,
+`RECOVERY_CODE_CONSUMED`, `FEDERATED_AUTHORIZATION_CORRUPT`.
+
+This section first named six. `MFA_CHALLENGE_ISSUED` and
+`FEDERATED_AUTHORIZATION_CORRUPT` were added while building and are kept, because
+each satisfies the rule that decides whether a member is owed at all: **an ending
+of a path is a fact about the system that no other member would record.** A
+challenge handed out with nothing yet proven is one — a federated sign-in reaches
+that point having presented no local credential, so without it the issuance is
+silence. A stored authorization row found in a state this application never
+writes is the other. Anyone extending this enum should apply that rule rather
+than reading this list as the set.
 
 **Every one is added to the hand-written pinning map**, and a failure there is the
 guard working rather than an obstacle. The map is transcribed rather than derived

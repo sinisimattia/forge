@@ -75,6 +75,23 @@ services:
       # request, because that would let anyone who can reach this API choose
       # where an authorization code is delivered.
       PUBLIC_API_URL: http://localhost:${BACKEND_PORT:-3000}
+      # The name an authenticator app shows for this deployment's second factor.
+      # This container refuses to boot without one — `MfaService` reads it with
+      # `getOrThrow` at construction. A display name and not a credential, so it
+      # is inline like the values around it.
+      MFA_ISSUER: __FORGE_TITLE__
+      # WebAuthn is optional and absent unless MFA_WEBAUTHN_ENABLED is `true`. These
+      # pass through from the shell or the project's .env with an empty default, and
+      # empty means unset: the API boots without WebAuthn exactly as it does with none
+      # of them. Enabled without an RP ID or an origin it refuses to boot
+      # (`buildWebAuthnConfig`). These variables therefore reach the container ONLY from the
+      # shell or the project root's .env: setting them in apps/backend/.env has no effect,
+      # because these lines override that file even when they interpolate to empty, and the
+      # result is no WebAuthn and no error. Deliberately no `:?required` — that would make a
+      # feature most deployments do not use a precondition for starting.
+      MFA_WEBAUTHN_ENABLED: ${MFA_WEBAUTHN_ENABLED:-}
+      MFA_WEBAUTHN_RP_ID: ${MFA_WEBAUTHN_RP_ID:-}
+      MFA_WEBAUTHN_ORIGIN: ${MFA_WEBAUTHN_ORIGIN:-}
       # The key access credentials are signed with. Obviously-local and inline, exactly
       # as the postgres credentials above are and for the same reason: a dev stack that
       # needs a populated .env before it will start is a dev stack nobody runs. The

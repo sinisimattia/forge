@@ -113,6 +113,21 @@ describe('LoginForm', () => {
     expect(sent.secret).toBe(PLAINTEXT);
   });
 
+  it('hands a pending second factor to the page, and is neither a session nor a failure', async () => {
+    // The third arm of the outcome switch. A form that folded `MFA_REQUIRED` into
+    // `AUTHENTICATED` would announce a session that does not exist; one that folded it into
+    // `REJECTED` would tell a person who typed the right password that they did not.
+    backend.requireSecondFactor(ACTOR.id, {
+      methods: [{ id: 'method-1', type: 'TOTP', label: 'Phone', code: '123456' }],
+    });
+
+    const wrapper = await signIn(ACTOR_EMAIL, PLAINTEXT);
+
+    expect(wrapper.emitted('challenged')).toHaveLength(1);
+    expect(wrapper.emitted('authenticated')).toBeUndefined();
+    expect(wrapper.text()).not.toContain('auth.signIn.failed');
+  });
+
   it('shows the single fixed failure message on rejection', async () => {
     const wrapper = await signIn(ACTOR_EMAIL, WRONG_PLAINTEXT);
     expect(wrapper.text()).toContain('auth.signIn.failed');

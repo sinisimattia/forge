@@ -27,6 +27,19 @@ const PUBLIC_WEBAPP_URL = 'https://app.example.test';
  */
 const OAUTH_CALLBACK_PATH = '/oauth/callback';
 
+/**
+ * The same pin for the second page this controller can land a browser on —
+ * written out here rather than imported, for the reason above. This is the
+ * route Nuxt turns `apps/webapp/app/pages/mfa/challenge.vue` into. **That
+ * file does not exist yet**, so this literal is not merely the whole of the
+ * cross-check, it is currently the only statement anywhere of where the
+ * webapp half has to be built.
+ */
+const MFA_CHALLENGE_PATH = '/mfa/challenge';
+
+/** A challenge token fixture, named after itself — see {@link ACCESS_TOKEN}. */
+const CHALLENGE_TOKEN = 'CHALLENGE_TOKEN';
+
 /** A fake adapter carrying nothing but the one field the registry reads. */
 function fakeProvider(provider: AuthProvider): IOAuthProvider {
   return {
@@ -182,6 +195,32 @@ describe('OAuthController', () => {
       expect(location.searchParams.get('error')).toBeNull();
       expect(location.toString()).not.toContain(credentials.accessToken);
       expect(location.toString()).not.toContain(credentials.refreshToken);
+    });
+
+    it('lands on the challenge page, with the token and no cookie, when a second factor is owed', async () => {
+      // Spec §8.4's ending on the wire. The two halves that have to meet are
+      // the token and the destination: a controller that redirected to the
+      // ordinary callback page would leave the token nowhere it can be spent,
+      // and one that landed here without it would send somebody to a page
+      // that cannot ask them for anything.
+      const controller = build([AuthProvider.GOOGLE]);
+      oauth.complete.mockResolvedValue({
+        status: 'MFA_REQUIRED', challengeToken: CHALLENGE_TOKEN, redirectTo: '/dashboard',
+      });
+      const response = fakeResponse();
+
+      await controller.callback('GOOGLE', 'code', 'state', CLIENT_REQUEST, response as unknown as Response);
+
+      const location = new URL(redirectedTo(response));
+      expect(location.origin + location.pathname).toBe(`${PUBLIC_WEBAPP_URL}${MFA_CHALLENGE_PATH}`);
+      expect(location.searchParams.get('challengeToken')).toBe(CHALLENGE_TOKEN);
+      // The destination survives the detour: whoever completes the factor
+      // still ends up where they were going.
+      expect(location.searchParams.get('redirectTo')).toBe('/dashboard');
+      // The one that would catch a session issued and merely not mentioned at
+      // this boundary. Only SIGNED_IN sets the renewal cookie.
+      expect(response.cookie).not.toHaveBeenCalled();
+      expect(location.searchParams.get('error')).toBeNull();
     });
 
     it('lands on the callback page with no redirectTo when the authorization carried none', async () => {

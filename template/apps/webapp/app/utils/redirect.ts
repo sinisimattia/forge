@@ -60,5 +60,17 @@ export function localRedirect(value: unknown, fallback: string): string {
  */
 export const SIGN_IN_PATH = '/login';
 
+/**
+ * Where a sign-in that still owes a second factor goes: the page at
+ * `pages/mfa/challenge.vue`.
+ *
+ * The sign-in page names it here. The backend names the same path from its own
+ * side, for a federated sign-in, and the two are separate literals in separate
+ * apps. That the file at this path exists, and that the backend's redirect lands
+ * on it too, is asserted rather than assumed: see
+ * `pages/__tests__/mfa-challenge.spec.ts` → *the meeting point*.
+ */
+export const MFA_CHALLENGE_PATH = '/mfa/challenge';
+
 /** Where a signed-in visitor goes when the request carried nowhere to go back to. */
 export const SIGNED_IN_HOME = '/';

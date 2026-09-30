@@ -114,6 +114,14 @@ test('a generated project passes every gate it ships with', async (t) => {
   await t.test('build', async () => {
     await run('npm', ['run', 'build'], { cwd: project, ...BIG });
   });
+  // `coverage` is in the generated project's own CI (`nx affected -t ... coverage`) and
+  // in its root `affected` script, and `libs/core` enforces 100% through it — but no other
+  // subtest here invokes it, so a coverage regression was red in the generated project's
+  // repository and green in this one. `--skip-nx-cache` because a cached pass proves
+  // nothing about this tree.
+  await t.test('coverage', async () => {
+    await run('npx', ['nx', 'run-many', '-t', 'coverage', '--skip-nx-cache'], { cwd: project, ...BIG });
+  });
   await t.test('core purity', async () => {
     await run('npm', ['run', 'purity', '-w', 'libs/core'], { cwd: project, ...BIG });
   });

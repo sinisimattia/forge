@@ -96,6 +96,34 @@
       "types": "./dist/identities/types/index.d.ts",
       "default": "./dist/identities/types/index.js"
     },
+    "./mfa/contracts": {
+      "types": "./dist/mfa/contracts/index.d.ts",
+      "default": "./dist/mfa/contracts/index.js"
+    },
+    "./mfa/entities": {
+      "types": "./dist/mfa/entities/index.d.ts",
+      "default": "./dist/mfa/entities/index.js"
+    },
+    "./mfa/enums": {
+      "types": "./dist/mfa/enums/index.d.ts",
+      "default": "./dist/mfa/enums/index.js"
+    },
+    "./mfa/errors": {
+      "types": "./dist/mfa/errors/index.d.ts",
+      "default": "./dist/mfa/errors/index.js"
+    },
+    "./mfa/policies": {
+      "types": "./dist/mfa/policies/index.d.ts",
+      "default": "./dist/mfa/policies/index.js"
+    },
+    "./mfa/testing": {
+      "types": "./dist/mfa/testing/index.d.ts",
+      "default": "./dist/mfa/testing/index.js"
+    },
+    "./mfa/types": {
+      "types": "./dist/mfa/types/index.d.ts",
+      "default": "./dist/mfa/types/index.js"
+    },
     "./organizations/contracts": {
       "types": "./dist/organizations/contracts/index.d.ts",
       "default": "./dist/organizations/contracts/index.js"

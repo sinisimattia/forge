@@ -28,7 +28,13 @@ import {
   postResetPassword,
   postVerifyEmail,
 } from '~/fetchers';
-import type { ApiClient, AuthResponseBody, IssuedCredential, OwnSession } from '~/types';
+import type {
+  ApiClient,
+  IssuedCredential,
+  LoginResponseBody,
+  OwnSession,
+  SignInResult,
+} from '~/types';
 
 /**
  * The error the contract names for a refusal that arrived as an envelope.
@@ -167,17 +173,47 @@ export class AuthHttpService implements IAuthService {
   /**
    * @inheritdoc
    *
-   * Two requests, and the second one is not a convenience. The contract promises
-   * a `Session`, the sign-in response does not carry one, and the only other
-   * place a session can come from is the list the server holds — read back with
-   * the credential that sign-in just issued, which nothing else has yet been
-   * given. Reading it back is also strictly better evidence than an echo would
-   * be: what comes back is what the server *stored*, so an implementation that
-   * accepted the client context and then dropped it is visible here rather than
-   * reflected.
+   * Core's `authenticate`, for an account that can be answered in core's terms.
+   *
+   * **Throws for one that cannot.** An account holding a second factor is
+   * answered with a challenge, and core's `MFA_REQUIRED` outcome needs a `User`
+   * that the wire does not carry — see {@link ChallengedSignIn}. Returning
+   * a made-up one would be a lie in the type; returning a rejection would be
+   * a lie about the account. What answers the question is
+   * {@link AuthHttpService.beginSignIn}, which the store calls.
+   *
+   * @throws Error when the account is owed a second factor
    */
   public async authenticate(attempt: AuthenticationAttempt): Promise<AuthenticationOutcome> {
-    let body: AuthResponseBody;
+    const result = await this.beginSignIn(attempt);
+    if (result.status === AuthenticationStatus.MFA_REQUIRED) {
+      throw new Error(
+        'This sign-in is owed a second factor, which authenticate() cannot express. Call beginSignIn().',
+      );
+    }
+    return result;
+  }
+
+  /**
+   * Attempts authentication, and says so when the password was not enough.
+   *
+   * Two requests for a sign-in that succeeds, and the second one is not a
+   * convenience. The contract promises a `Session`, the sign-in response does
+   * not carry one, and the only other place a session can come from is the list
+   * the server holds — read back with the credential that sign-in just issued,
+   * which nothing else has yet been given. Reading it back is also strictly
+   * better evidence than an echo would be: what comes back is what the server
+   * *stored*, so an implementation that accepted the client context and then
+   * dropped it is visible here rather than reflected.
+   *
+   * **One request, and no session, for a challenge.** Nothing is parked and
+   * nothing is fetched, because the server opened nothing.
+   *
+   * @returns core's outcome, or {@link ChallengedSignIn} carrying the token to
+   * present with the second factor
+   */
+  public async beginSignIn(attempt: AuthenticationAttempt): Promise<SignInResult> {
+    let body: LoginResponseBody;
     try {
       // `attempt.client` is deliberately not sent. See `postLogin`: the server
       // observes what it can tell about the client, and this side cannot.
@@ -203,6 +239,14 @@ export class AuthHttpService implements IAuthService {
         };
       }
       throw domainErrorFor(error, attempt.email);
+    }
+
+    if (body.status === AuthenticationStatus.MFA_REQUIRED) {
+      return {
+        status: AuthenticationStatus.MFA_REQUIRED,
+        challengeToken: body.challengeToken,
+        methods: body.methods,
+      };
     }
 
     const user = User.fromJSON(body.user);

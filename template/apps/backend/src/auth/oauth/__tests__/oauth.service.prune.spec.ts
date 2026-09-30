@@ -9,6 +9,9 @@ import { FakeDataSource } from '../../../common/testing';
 import { AuthIdentityRecord } from '../../../identities/auth-identity-record.entity';
 import { Argon2PasswordHasher } from '../../../identities/hashing';
 import { IdentitiesService } from '../../../identities/identities.service';
+import { MfaChallengeRecord } from '../../../mfa/entities/mfa-challenge-record.entity';
+import { MfaMethodRecord } from '../../../mfa/entities/mfa-method-record.entity';
+import { MfaChallengeService } from '../../../mfa/mfa-challenge.service';
 import { MembershipRecord } from '../../../organizations/membership-record.entity';
 import { UserRecord } from '../../../users/user-record.entity';
 import { RefreshTokenRecord } from '../../entities/refresh-token-record.entity';
@@ -101,6 +104,11 @@ describe('OAuthService.pruneExpired', () => {
       audit,
       source as unknown as DataSource,
       new ConfigService({ PUBLIC_API_URL }),
+      repo<MfaMethodRecord>(MfaMethodRecord),
+      new MfaChallengeService(
+        repo<MfaChallengeRecord>(MfaChallengeRecord),
+        source as unknown as DataSource,
+      ),
     );
   });
 

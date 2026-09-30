@@ -4,26 +4,24 @@ import { SESSION_TTL_SECONDS } from './session/session.service';
 /**
  * The one place the renewal credential's cookie is named and described.
  *
- * **Seven call sites read this and none of them spells its own options**:
- * signing in sets it (`AuthController.login`), renewing replaces it
- * (`AuthController.refreshSession`, on success), a refused renewal clears it
- * (`AuthController.refreshSession`, on failure), changing a password re-issues
- * it (`AuthController.changePassword`), signing out clears it
- * (`AuthController.logout`), completing a federated sign-in sets it
- * (`OAuthController.callback`), and closing an account clears it
- * (`UsersController.deleteMe`). That is the point of the file existing — and
- * the count is written down because a new call site is exactly the one a
- * reader forgets to add here, which is exactly the one a hand-spelled
- * `clearCookie` would get wrong. **Read this file's own history before
- * trusting this number**: it was already stale once, undercounting by three,
- * before anyone noticed — update it in the same commit that adds an eighth.
+ * **No caller spells its own options.** Everywhere the renewal credential is
+ * set, replaced or removed goes through `set` and `clear` below, so a cookie is
+ * always cleared with the attributes it was set with — by construction, not by
+ * everyone having remembered. That is the whole point of the file existing.
+ *
+ * This docblock used to list the call sites and count them. It was wrong twice:
+ * a count is a claim about the day it was written, and the call site that makes
+ * it stale is exactly the one whose author did not know to come here. The
+ * property above is what the file is for, and it does not go stale — it is
+ * violated only by somebody writing `response.cookie('refreshCredential', …)`
+ * by hand, which is the thing to look for in review.
  *
  * Clearing a cookie only works when the name, the `path` and the other
  * attributes match what was set — the browser treats a different `path` as a
  * different cookie — and a mismatch fails *silently*: the response looks
  * correct, the server believes the credential is gone, and the browser still
- * holds a working one. Seven call sites each spelling their own options is
- * exactly how that arrives.
+ * holds a working one. Callers each spelling their own options is exactly how
+ * that arrives, which is why none does.
  *
  * ### Why each attribute is what it is
  *
@@ -86,18 +84,12 @@ export const REFRESH_COOKIE = {
     };
   },
 
-  /**
-   * Sets the credential. Used by signing in, by renewal, by a password
-   * change and by completing a federated sign-in.
-   */
+  /** Sets the credential. Every path that hands one out comes through here. */
   set(response: Response, value: string): void {
     response.cookie(this.name, value, { ...this.attributes(), maxAge: this.maxAgeMs });
   },
 
-  /**
-   * Removes it. Used by signing out, by any path that refuses a renewal, and
-   * by closing an account.
-   */
+  /** Removes it. Every path that ends or refuses a session comes through here. */
   clear(response: Response): void {
     response.clearCookie(this.name, this.attributes());
   },

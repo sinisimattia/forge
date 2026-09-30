@@ -15,6 +15,13 @@ import { NoOpBreachedPasswordRegistry } from '../../identities/breached-password
 import { Argon2PasswordHasher } from '../../identities/hashing';
 import { IdentitiesService } from '../../identities/identities.service';
 import type { IMailer, OutboundMessage } from '../../mail';
+import { MfaChallengeRecord } from '../../mfa/entities/mfa-challenge-record.entity';
+import { MfaMethodRecord } from '../../mfa/entities/mfa-method-record.entity';
+import { MfaRecoveryCodeRecord } from '../../mfa/entities/mfa-recovery-code-record.entity';
+import { RecoveryCodes } from '../../mfa/recovery/recovery-codes';
+import { MfaChallengeService } from '../../mfa/mfa-challenge.service';
+import { MfaVerificationService } from '../../mfa/mfa-verification.service';
+import { TotpVerifier } from '../../mfa/totp/TotpVerifier';
 import { UserRecord } from '../../users/user-record.entity';
 import { AuthController } from '../auth.controller';
 import { AuthService } from '../auth.service';
@@ -189,6 +196,11 @@ describe('D7: a known address and an unknown one are indistinguishable', () => {
       source as unknown as DataSource,
       mailer,
       new NoOpBreachedPasswordRegistry(),
+      repo<MfaMethodRecord>(MfaMethodRecord),
+      new MfaChallengeService(
+        repo<MfaChallengeRecord>(MfaChallengeRecord),
+        source as unknown as DataSource,
+      ),
       new ConfigService({ PUBLIC_WEBAPP_URL: WEBAPP_URL }),
     );
 
@@ -233,6 +245,28 @@ describe('D7: a known address and an unknown one are indistinguishable', () => {
         { provide: AuthService, useValue: auth },
         { provide: SessionService, useValue: sessions },
         { provide: RefreshTokenService, useValue: {} as RefreshTokenService },
+        // `AuthController` names it, and a controller whose constructor cannot
+        // be satisfied mounts none of its routes. Nothing in this file drives
+        // `POST /auth/mfa/verify`; the real service is provided rather than a
+        // stub so that this application is the one `AuthModule` builds.
+        {
+          provide: MfaVerificationService,
+          useValue: new MfaVerificationService(
+            repo<MfaMethodRecord>(MfaMethodRecord),
+            new MfaChallengeService(
+              repo<MfaChallengeRecord>(MfaChallengeRecord),
+              source as unknown as DataSource,
+            ),
+            new TotpVerifier(),
+            sessions,
+            audit,
+            repo<UserRecord>(UserRecord),
+            new RecoveryCodes(
+              repo<MfaRecoveryCodeRecord>(MfaRecoveryCodeRecord),
+              source as unknown as DataSource,
+            ),
+          ),
+        },
       ],
     }).compile();
 

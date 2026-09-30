@@ -48,14 +48,25 @@ describe('AuditAction enum values', () => {
     IDENTITY_LINKED: 'IDENTITY_LINKED',
     FEDERATED_LINK_REFUSED: 'FEDERATED_LINK_REFUSED',
     IDENTITY_LINK_CONFLICT: 'IDENTITY_LINK_CONFLICT',
+    MFA_METHOD_ADDED: 'MFA_METHOD_ADDED',
+    MFA_METHOD_REMOVED: 'MFA_METHOD_REMOVED',
+    MFA_CHALLENGE_ISSUED: 'MFA_CHALLENGE_ISSUED',
+    MFA_CHALLENGE_SUCCEEDED: 'MFA_CHALLENGE_SUCCEEDED',
+    MFA_CHALLENGE_FAILED: 'MFA_CHALLENGE_FAILED',
+    RECOVERY_CODES_REGENERATED: 'RECOVERY_CODES_REGENERATED',
+    RECOVERY_CODE_CONSUMED: 'RECOVERY_CODE_CONSUMED',
+    FEDERATED_AUTHORIZATION_CORRUPT: 'FEDERATED_AUTHORIZATION_CORRUPT',
   };
 
-  it('every member has the expected string value', () => {
-    for (const [key, expected] of Object.entries(EXPECTED_VALUES)) {
-      expect((AuditAction as Record<string, string>)[key]).toBe(expected);
-    }
+  // One case per member, so a failure names the key that moved instead of stopping a loop
+  // at the first one — and every phase that adds an action meets this list first.
+  it.each(Object.entries(EXPECTED_VALUES))('%s has the expected string value', (key, expected) => {
+    expect((AuditAction as Record<string, string>)[key]).toBe(expected);
   });
 
+  // Redundant with the `Record<keyof typeof AuditAction, string>` annotation above, on purpose:
+  // that one is checked by `core:typecheck`, a separate target, and this one is checked by the
+  // test run itself, so a member added without a value goes red in either place.
   it('every enum member is in the expected values map', () => {
     const enumKeys = Object.keys(AuditAction);
     expect(enumKeys.sort()).toEqual(Object.keys(EXPECTED_VALUES).sort());

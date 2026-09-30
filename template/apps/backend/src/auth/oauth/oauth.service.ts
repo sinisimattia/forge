@@ -14,14 +14,20 @@ import type {
   FederatedLinkInput,
   FederatedSignInInput,
 } from '__FORGE_SCOPE__/core/identities/types';
+import { MfaStep } from '__FORGE_SCOPE__/core/mfa/enums';
 import { assertNever, normalizeEmail } from '__FORGE_SCOPE__/core/shared/policies';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { AuditService } from '../../audit/audit.service';
+import { recordUserAudit } from '../record-user-audit';
 import { generateOpaqueToken, hashOpaqueToken } from '../../common/crypto';
 import { IdentitiesService } from '../../identities/identities.service';
+import { MfaMethodRecord } from '../../mfa/entities/mfa-method-record.entity';
+import { MfaChallengePurpose } from '../../mfa/enums/MfaChallengePurpose';
+import { MfaChallengeService } from '../../mfa/mfa-challenge.service';
 import { UserRecord } from '../../users/user-record.entity';
 import { AuthService } from '../auth.service';
+import { SecondFactorSettled } from '../session/second-factor-settled';
 import { IssuedCredentials, SessionService } from '../session/session.service';
 import { OAuthAuthorizationRequestRecord } from './oauth-authorization-request.entity';
 import { OAuthProviderRegistry } from './oauth-provider.registry';
@@ -113,6 +119,26 @@ export type CompletedAuthorization
     readonly credentials: IssuedCredentials;
     readonly redirectTo: string | null;
   }
+  | {
+    /**
+     * The provider proved which account this is, and the account owes a
+     * second factor before it may have a session. Spec §8.4's ending: the
+     * federated half of `AuthenticationStatus.MFA_REQUIRED`, carrying the
+     * token to present at `POST /auth/mfa/verify` and no credential of any
+     * kind — there is no `credentials` field on this member because there is
+     * nothing to put in one.
+     *
+     * A separate member rather than a `REFUSED` code, because it is not a
+     * refusal: nothing went wrong, the sign-in is half finished, and the only
+     * thing that distinguishes it from a completed one is what the holder
+     * still has to prove. A `FederatedRefusalCode` would have sent the
+     * browser to the callback page's error branch, which renders a message
+     * saying the attempt failed.
+     */
+    readonly status: 'MFA_REQUIRED';
+    readonly challengeToken: string;
+    readonly redirectTo: string | null;
+  }
   | { readonly status: 'LINKED'; readonly redirectTo: string | null }
   | { readonly status: 'REFUSED'; readonly code: FederatedRefusalCode; readonly redirectTo: string | null };
 
@@ -178,6 +204,9 @@ export class OAuthService {
     private readonly audit: AuditService,
     private readonly dataSource: DataSource,
     config: ConfigService,
+    @InjectRepository(MfaMethodRecord)
+    private readonly mfaMethods: Repository<MfaMethodRecord>,
+    private readonly challenges: MfaChallengeService,
   ) {
     // Read once, at construction, with no default — the reasoning
     // `AuthService`'s own `PUBLIC_WEBAPP_URL` field gives applies unchanged: a
@@ -330,6 +359,17 @@ export class OAuthService {
         client,
       );
     }
+    // Reaching this line means the stored row is corrupt, which is when a trace is
+    // worth most: the refusal is written down, with the actor null because no
+    // account has been established.
+    await recordUserAudit(
+      this.audit,
+      AuditAction.FEDERATED_AUTHORIZATION_CORRUPT,
+      null,
+      { reason: 'UNRECOGNISED_PURPOSE', provider: provider.provider },
+      now,
+      client,
+    );
     return { status: 'REFUSED', code: 'AUTHORIZATION_UNKNOWN', redirectTo: null };
   }
 
@@ -457,7 +497,8 @@ export class OAuthService {
         // field in this row saying anything about whoever made the attempt,
         // and this action's own TSDoc calls it the entry a reader looking
         // for an attempted takeover would search for.
-        await this.record(
+        await recordUserAudit(
+          this.audit,
           AuditAction.FEDERATED_LINK_REFUSED,
           decision.existingUserId,
           { provider },
@@ -479,7 +520,8 @@ export class OAuthService {
         // `AuthenticationRejectionReason` — this is not a judgement about a
         // local account's state, nothing local was ever reached, it is
         // only what the provider itself said.
-        await this.record(
+        await recordUserAudit(
+          this.audit,
           AuditAction.LOGIN_FAILED,
           null,
           { code: 'EMAIL_UNVERIFIED', provider },
@@ -516,7 +558,8 @@ export class OAuthService {
       // cannot exist — and answered rather than thrown regardless, the same
       // discipline `AuthService.signIn` holds itself to for the identical
       // shape of gap.
-      await this.record(
+      await recordUserAudit(
+        this.audit,
         AuditAction.LOGIN_FAILED,
         null,
         { reason: AuthenticationRejectionReason.UNKNOWN_ACCOUNT },
@@ -536,7 +579,8 @@ export class OAuthService {
       // one outward code for all three, the same collapse
       // `AuthenticationRejectionReason`'s own doc describes for a rejected
       // password attempt.
-      await this.record(
+      await recordUserAudit(
+        this.audit,
         AuditAction.LOGIN_FAILED,
         user.id,
         { reason: AuthService.rejectionFor(user) },
@@ -547,8 +591,50 @@ export class OAuthService {
     }
 
     await this.identities.markUsed(identityId, now);
-    const credentials = await this.sessions.begin(user.id, client);
-    await this.record(
+
+    // Spec §8.4: the second factor, decided before a session exists, on this
+    // path exactly as `AuthService.signIn` decides it on the password one.
+    //
+    // **A second factor is a property of the account, not of the way its
+    // owner arrived.** `decideFederatedSignIn` answering `SIGN_IN_EXISTING`
+    // reads like a completed authentication and is not one — it is the answer
+    // to "which account is this?", and that function's own TSDoc says the
+    // question of whether the named account may actually be used belongs to
+    // this caller. Without the lines below, an account holding a confirmed
+    // method and a linked provider signed in here with no second factor at
+    // all, which is every other line this phase wrote bypassed by anybody who
+    // can complete an ordinary provider sign-in for it.
+    //
+    // `markUsed` above stays above: the identity really did prove the
+    // subject, whatever is still owed afterwards, and the password path
+    // records its own identity's use before this same branch for the same
+    // reason.
+    //
+    // The query that narrows to confirmed rows, and the two reasons it has to,
+    // are `SecondFactorSettled.confirmedMethodsOf`'s — written once there
+    // rather than three times here, in `AuthService.signIn` and below.
+    //
+    // The evidence this produces is what `sessions.begin` further down will not
+    // open a session without, which is why the branch below cannot be forgotten
+    // by whoever writes the next path: see {@link SecondFactorSettled}.
+    const decision = await SecondFactorSettled.settle(this.mfaMethods, user.id);
+    if (decision.step === MfaStep.REQUIRE_SECOND_FACTOR) {
+      // `sessions.begin` is below this branch and is not reached by it, and
+      // no `LOGIN_SUCCEEDED` is recorded either — no login has succeeded yet.
+      // The purpose is fixed here, by the endpoint that knows what it is
+      // asking for, and never taken from anything the request that later
+      // spends the challenge sends: `MfaChallengePurpose`'s own discipline.
+      const challengeToken = await this.challenges.mint(user.id, MfaChallengePurpose.LOGIN, null);
+      // No local credential was presented on this path, only a provider's
+      // assertion, so this entry is the only record that the attempt happened
+      // if the challenge is never answered.
+      await recordUserAudit(this.audit, AuditAction.MFA_CHALLENGE_ISSUED, user.id, {}, now, client);
+      return { status: 'MFA_REQUIRED', challengeToken, redirectTo };
+    }
+
+    const credentials = await this.sessions.begin(user.id, client, decision.settled);
+    await recordUserAudit(
+      this.audit,
       AuditAction.LOGIN_SUCCEEDED,
       user.id,
       { sessionId: credentials.session.id },
@@ -568,6 +654,52 @@ export class OAuthService {
    * "the account exists" and "the session exists" would leave somebody who
    * just proved a brand-new address with no way to use the account it was
    * proven for.
+   *
+   * ## Spec §8.4's policy call is here too, and unconditionally
+   *
+   * Today it can only answer `ISSUE_SESSION`. The account is `manager.insert`ed
+   * a few lines below, so nothing has been able to enrol a method against it
+   * and the query comes back empty every time.
+   *
+   * **The call is here anyway, and that it currently decides nothing is the
+   * reason rather than an objection to it.** §8.4's rule is structural — every
+   * path reaching session issuance consults the policy — and the whole value of
+   * a structural rule is that it holds without anybody re-deriving a local
+   * argument before editing nearby. The day something provisions an account and
+   * attaches a factor in one flow — an invitation that pre-enrols one, a
+   * migration path, an administrator creating an account — the fact that makes
+   * the query empty stops being true, and the branch below starts carrying
+   * weight without anybody having to notice that it should.
+   *
+   * {@link SecondFactorSettled} is now what stops the call being dropped: the
+   * `beginIn` below takes evidence, `settleIn` is the only thing here that can
+   * make it, and "simplify away a query that always comes back empty" no longer
+   * compiles. Before it existed, the property rested on this paragraph and on
+   * nothing a compiler or a test could see — which is why the paragraph was
+   * this long. It stays because the *reachability* argument is still prose, and
+   * the two are different claims: the type says the policy was asked, and only
+   * this paragraph and the tripwire below say what its answer can be today.
+   *
+   * A query that returns empty is the cheap half of that trade. See
+   * {@link OAuthService.signInExisting} for the same call where it does decide
+   * something.
+   *
+   * **What this costs, said plainly rather than left to be discovered:** the
+   * `REQUIRE_SECOND_FACTOR` branch below is unreachable today, so no test
+   * covers it and deleting the branch leaves the whole suite green. The
+   * surrounding refactor *is* covered — `oauth.service.complete.spec.ts`
+   * asserts this path still issues a session and still records
+   * `USER_REGISTERED`.
+   *
+   * **The premise that makes the branch unreachable is covered, though**, and
+   * that is what stops this paragraph being the only thing holding it.
+   * `oauth.service.complete.spec.ts`'s `produces an account holding no
+   * confirmed method — the premise the policy call rests on` asserts that a
+   * provisioned account has zero confirmed methods. It fails on exactly the
+   * change described above, and it fails with a message telling whoever tripped
+   * it that the branch is now reachable and owes a test before the assertion is
+   * changed. So: the branch is uncovered, the condition under which that is
+   * acceptable is not.
    */
   private async provisionAndSignIn(
     email: string,
@@ -597,12 +729,46 @@ export class OAuthService {
       });
       const id = inserted.identifiers[0].id as UserId;
       await this.identities.createFederatedIdentityIn(manager, id, provider, subject, now);
-      const issued = await this.sessions.beginIn(manager, id, client);
+
+      // §8.4, on this path too — `settleIn` rather than `settle`, so the read
+      // goes through `manager` and sees this transaction's own uncommitted
+      // writes rather than a stale snapshot beside them. `credentials: null` is
+      // how this block says "issued nothing": the account and its identity
+      // still commit, because they were both really established, and only the
+      // session is withheld.
+      const decision = await SecondFactorSettled.settleIn(manager, id);
+      if (decision.step === MfaStep.REQUIRE_SECOND_FACTOR) {
+        return { userId: id, credentials: null };
+      }
+
+      const issued = await this.sessions.beginIn(manager, id, client, decision.settled);
       return { userId: id, credentials: issued };
     });
 
-    await this.record(AuditAction.USER_REGISTERED, userId, {}, now);
-    await this.record(
+    // Recorded on both endings: the account really was registered either way,
+    // and this entry is about that rather than about the session.
+    await recordUserAudit(this.audit, AuditAction.USER_REGISTERED, userId, {}, now);
+
+    if (credentials === null) {
+      // Minted after the commit, never inside it: a challenge naming a user
+      // whose row got rolled back would be a challenge nothing can spend.
+      //
+      // **Two things are owed here, and only one of them is a token.** The day
+      // this branch becomes reachable (see the tripwire in
+      // `oauth.service.complete.spec.ts`), it must land on the challenge *and*
+      // record `AuditAction.MFA_CHALLENGE_ISSUED` beside the mint, as
+      // `signInExisting` does: a provider assertion presents no local
+      // credential, so that entry is the only record the attempt happened. A
+      // test that checks only the token passes with the entry missing.
+      return {
+        status: 'MFA_REQUIRED',
+        challengeToken: await this.challenges.mint(userId, MfaChallengePurpose.LOGIN, null),
+        redirectTo,
+      };
+    }
+
+    await recordUserAudit(
+      this.audit,
       AuditAction.LOGIN_SUCCEEDED,
       userId,
       { sessionId: credentials.session.id },
@@ -666,6 +832,14 @@ export class OAuthService {
     // identical shape of gap: a null owner must never reach the write below
     // that creates an identity.
     if (row.userId === null) {
+      await recordUserAudit(
+        this.audit,
+        AuditAction.FEDERATED_AUTHORIZATION_CORRUPT,
+        null,
+        { reason: 'LINK_WITHOUT_OWNER', provider },
+        now,
+        client,
+      );
       return { status: 'REFUSED', code: 'AUTHORIZATION_UNKNOWN', redirectTo: null };
     }
     const actorId = row.userId as UserId;
@@ -717,7 +891,8 @@ export class OAuthService {
         // `client` IS passed, matching `IDENTITY_LINKED` a few lines above —
         // a refusal entry recording less about the request than its own
         // sibling success entry would be an odd asymmetry to ship silently.
-        await this.record(
+        await recordUserAudit(
+          this.audit,
           AuditAction.IDENTITY_LINK_CONFLICT,
           actorId,
           { provider },
@@ -754,27 +929,6 @@ export class OAuthService {
    */
   public async pruneExpired(before: Date): Promise<void> {
     await this.requests.delete({ expiresAt: LessThan(before) });
-  }
-
-  /** One audit write, with this phase's fixed `organizationId` of `null` and `resourceType` of `'user'`. */
-  private record(
-    action: AuditAction,
-    actorId: UserId | null,
-    metadata: Record<string, unknown>,
-    occurredAt: Date,
-    client: ClientContext = { address: null, label: null },
-  ): Promise<void> {
-    return this.audit.record({
-      organizationId: null,
-      actorId,
-      action,
-      resourceType: 'user',
-      resourceId: actorId,
-      metadata,
-      clientAddress: client.address,
-      clientLabel: client.label,
-      occurredAt,
-    });
   }
 
   /** The whole of beginning an authorization. See this class's own TSDoc. */

@@ -28,6 +28,7 @@
   },
   "auth": {
     "invalid_credentials": "That email address and password do not match an account",
+    "mfa_verification_failed": "That second step could not be completed. Start signing in again",
     "secret_is_public": "That password appears in a public list of known passwords. Choose a different one",
     "session_not_found": "That session is no longer valid. Sign in again",
     "token_consumed": "That link has already been used",

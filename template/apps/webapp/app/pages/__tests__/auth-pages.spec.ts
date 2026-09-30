@@ -10,7 +10,9 @@ import { stubBackend } from '~/services/__tests__/stubBackend';
 import { useAuthStore } from '~/stores/auth';
 import { FEDERATED_REFUSAL_CODES } from '~/types';
 import type { ApiClient, ApiErrorCode, ApiRequest } from '~/types';
+import { MFA_CHALLENGE_PATH } from '~/utils/redirect';
 import ForgotPasswordPage from '../forgot-password.vue';
+import OAuthButtons from '~/components/organisms/OAuthButtons.vue';
 import LoginPage from '../login.vue';
 import OAuthCallbackPage from '../oauth/callback.vue';
 import ResetPasswordPage from '../reset-password.vue';
@@ -304,6 +306,142 @@ describe('the pages a signed-out visitor meets', () => {
       await flushPromises();
 
       expect(navigations).toEqual(['/']);
+    });
+
+    describe('leaving for a provider', () => {
+      // `window.location.href = …` is a real navigation, which the test environment
+      // either refuses noisily or performs. Replaced for these two cases and put back.
+      const realLocation = window.location;
+      beforeEach(() => {
+        Object.defineProperty(window, 'location', {
+          value: { href: 'http://localhost/login' },
+          writable: true,
+          configurable: true,
+        });
+      });
+      afterEach(() => {
+        Object.defineProperty(window, 'location', {
+          value: realLocation,
+          writable: true,
+          configurable: true,
+        });
+      });
+
+      it('disables every provider button once one is chosen', async () => {
+        const wrapper = mount(LoginPage, { global: mountOptions() });
+        const buttons = wrapper.findComponent(OAuthButtons);
+        expect(buttons.props('busy')).toBe(false);
+
+        buttons.vm.$emit('choose', 'GITHUB');
+        await flushPromises();
+
+        expect(buttons.props('busy')).toBe(true);
+        wrapper.unmount();
+      });
+
+      it('enables them again when the page is shown from the back/forward cache', async () => {
+        // The page is not re-run when a back-navigation restores it, only shown, so
+        // without a `pageshow` handler a person coming back from a provider's consent
+        // screen finds every provider button dead — silently.
+        const wrapper = mount(LoginPage, { global: mountOptions() });
+        const buttons = wrapper.findComponent(OAuthButtons);
+        buttons.vm.$emit('choose', 'GITHUB');
+        await flushPromises();
+        expect(buttons.props('busy')).toBe(true);
+
+        // A plain `Event` carrying `persisted`: the test environment's own
+        // page-transition class does not keep that field.
+        const restored = Object.assign(new Event('pageshow'), { persisted: true });
+        window.dispatchEvent(restored);
+        await flushPromises();
+
+        expect(buttons.props('busy')).toBe(false);
+        wrapper.unmount();
+      });
+
+      it('stops listening for pageshow once the page is gone', async () => {
+        // A single-page visit to /login mounts the page again each time. A listener the page
+        // never removed would keep holding the earlier visit's ref for the life of the tab.
+        const added: EventListenerOrEventListenerObject[] = [];
+        const removed: EventListenerOrEventListenerObject[] = [];
+        const realAdd = window.addEventListener.bind(window);
+        const realRemove = window.removeEventListener.bind(window);
+        type Options = boolean | AddEventListenerOptions;
+        const watching = vi.spyOn(window, 'addEventListener').mockImplementation(
+          (type: string, listener: EventListenerOrEventListenerObject, options?: Options) => {
+            if (type === 'pageshow') added.push(listener);
+            realAdd(type, listener, options);
+          },
+        );
+        const dropping = vi.spyOn(window, 'removeEventListener').mockImplementation(
+          (type: string, listener: EventListenerOrEventListenerObject, options?: Options) => {
+            if (type === 'pageshow') removed.push(listener);
+            realRemove(type, listener, options);
+          },
+        );
+        try {
+          const wrapper = mount(LoginPage, { global: mountOptions() });
+          expect(added).toHaveLength(1);
+          expect(removed).toHaveLength(0);
+
+          wrapper.unmount();
+
+          expect(removed).toEqual(added);
+        } finally {
+          watching.mockRestore();
+          dropping.mockRestore();
+        }
+      });
+    });
+
+    describe('when the correct password is not enough', () => {
+      // `login.vue`'s `onChallenged`. The form only announces that a factor is
+      // owed; the destination is the page's, and it is built by hand from
+      // `?redirect=` rather than handed to `navigateTo` as a path plus a query
+      // object — so every one of these asserts the exact string the handler
+      // produced.
+      beforeEach(() => {
+        backend.requireSecondFactor(ACTOR_ID, {
+          methods: [{ id: 'method-1', type: 'TOTP', label: 'Phone', code: '123456' }],
+        });
+      });
+
+      /** Signs in as the account that owes a factor, from a link carrying `query`. */
+      async function signInOwingAFactor(query: Record<string, unknown>): Promise<void> {
+        route.query = query;
+        const wrapper = mount(LoginPage, { global: mountOptions() });
+        await wrapper.find('#sign-in-email').setValue(ACTOR.email);
+        await wrapper.find('#sign-in-secret').setValue(PLAINTEXT);
+        await wrapper.find('form').trigger('submit');
+        await flushPromises();
+      }
+
+      it('goes to the challenge with nothing attached when the link named nowhere', async () => {
+        // An absent parameter is how the handler tells "nowhere" from a
+        // destination, so a bare path — not an empty `?redirectTo=`.
+        await signInOwingAFactor({});
+        expect(navigations).toEqual([MFA_CHALLENGE_PATH]);
+      });
+
+      it('carries the destination the link named, encoded', async () => {
+        await signInOwingAFactor({ redirect: '/settings/billing' });
+        expect(navigations).toEqual([`${MFA_CHALLENGE_PATH}?redirectTo=%2Fsettings%2Fbilling`]);
+      });
+
+      it('does NOT carry a destination outside this application through the challenge', async () => {
+        // The open redirect the sign-in page exists to close, attempted one hop
+        // later. Both spellings fail `localRedirect`, which answers with the `''`
+        // fallback, and `''` is what the handler reads as "nowhere" — so the
+        // challenge path goes on its own and the attacker's value goes nowhere.
+        // A handler that judged `?redirect=` only on the way home would pass
+        // every other test in this block and fail this one.
+        await signInOwingAFactor({ redirect: 'https://evil.example/x' });
+        expect(navigations).toEqual([MFA_CHALLENGE_PATH]);
+
+        navigations.length = 0;
+        await signInOwingAFactor({ redirect: '//evil.example/x' });
+        expect(navigations).toEqual([MFA_CHALLENGE_PATH]);
+      });
     });
 
     it('does NOT navigate at all when the sign-in was refused', async () => {

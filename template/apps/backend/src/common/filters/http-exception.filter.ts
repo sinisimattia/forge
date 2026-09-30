@@ -30,6 +30,14 @@ import {
   OrganizationNameRequiredError,
   OrganizationNotFoundError,
 } from '__FORGE_SCOPE__/core/organizations/errors';
+import {
+  MfaLabelRequiredError,
+  MfaMethodAlreadyConfirmedError,
+  MfaMethodNotFoundError,
+  MfaReauthenticationRequiredError,
+  MfaVerificationFailedError,
+  RecoveryCodeAlreadyConsumedError,
+} from '__FORGE_SCOPE__/core/mfa/errors';
 import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
 import {
   DisplayNameRequiredError,
@@ -272,6 +280,31 @@ const DOMAIN_ERRORS: {
   // collapses into 404 — and 422 was rejected because the request is not
   // malformed, it is a legal ask about a set that has to change first.
   { type: CrossTenantGrantError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict', code: 'CROSS_TENANT_GRANT' },
+  // The refusals of managing one's own second factors (`/mfa/*`). Not
+  // reached by `POST /auth/mfa/verify`, which flattens every one of its
+  // refusals into a single `401` itself and never lets these through.
+  //
+  // 404 for a method that is not the caller's, and the shared key for the same
+  // reason as every 404 above: a method belonging to somebody else answers as
+  // one that does not exist.
+  { type: MfaMethodNotFoundError, status: HttpStatus.NOT_FOUND, messageKey: 'errors.http.not_found', code: 'MFA_METHOD_NOT_FOUND' },
+  // 409: state, not shape. The request is well-formed and the method is real and
+  // the caller's; it is refused because confirmation already happened, and
+  // resending changes nothing.
+  { type: MfaMethodAlreadyConfirmedError, status: HttpStatus.CONFLICT, messageKey: 'errors.http.conflict', code: 'MFA_METHOD_ALREADY_CONFIRMED' },
+  // 422, and not 401: the caller's session is fine, it is the code they typed
+  // that is wrong. A 401 would be read by the webapp's transport as a dead
+  // credential and set off a renewal.
+  { type: MfaVerificationFailedError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.http.unprocessable', code: 'MFA_VERIFICATION_FAILED' },
+  { type: MfaLabelRequiredError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.http.unprocessable', code: 'MFA_LABEL_REQUIRED' },
+  // 403, and not 401: the session is valid and is who it says it is; it is not
+  // *enough* for this action. A 401 would set off a token renewal that cannot
+  // help, and the webapp reads this code as "ask for a second-factor proof".
+  { type: MfaReauthenticationRequiredError, status: HttpStatus.FORBIDDEN, messageKey: 'errors.http.forbidden', code: 'MFA_REAUTHENTICATION_REQUIRED' },
+  // 422 like a wrong code, and for the same reason. Distinct from it because the
+  // caller is signed in and the difference reveals nothing they could not learn
+  // from their own sheet: this code was theirs and is spent.
+  { type: RecoveryCodeAlreadyConsumedError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.http.unprocessable', code: 'RECOVERY_CODE_ALREADY_CONSUMED' },
 ];
 
 /**

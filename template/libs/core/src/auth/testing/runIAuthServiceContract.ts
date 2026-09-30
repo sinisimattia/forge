@@ -91,6 +91,8 @@ function describeOutcome(outcome: AuthenticationOutcome): string {
       return `AUTHENTICATED:${String(outcome.user.id)}`;
     case AuthenticationStatus.REJECTED:
       return `REJECTED:${outcome.reason}`;
+    case AuthenticationStatus.MFA_REQUIRED:
+      return `MFA_REQUIRED:${String(outcome.user.id)}:${outcome.methods.length}`;
     default:
       return assertNever(outcome);
   }
@@ -526,8 +528,16 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
       // The compile-time half of this is enforced by `describeOutcome` existing
       // at all: widening the union turns its `switch` into a build failure,
       // which no test run can show. What runs here is the other half — that
-      // both members really are produced, and that nothing else is.
-      it('handles both members of the outcome, and refuses anything else', async () => {
+      // the members implementations actually produce really are produced, and
+      // that nothing else is.
+      //
+      // `MFA_REQUIRED` is exercised here as a literal rather than through
+      // `service.authenticate`: no `IAuthService` implementation returns it
+      // yet (that lands with the deployment that requires a second factor),
+      // but `describeOutcome`'s parameter type is the whole union regardless,
+      // so its branch for this member is real code this suite must cover —
+      // the same reasoning `NOT_A_MEMBER` below already applies to `default`.
+      it('handles every member of the outcome, and refuses anything else', async () => {
         const { service, actorEmailAsGiven, actorSecret, unknownEmail } = await makeContext();
 
         const good = await service.authenticate(attempt(actorEmailAsGiven, actorSecret));
@@ -542,6 +552,18 @@ export function runIAuthServiceContract(deps: IAuthServiceContractDeps): void {
           describeOutcome(bad).startsWith('REJECTED:'),
           true,
           'a failed attempt must take the REJECTED branch of a consumer\'s switch',
+        );
+
+        const notYetSignedIn = (good as AuthenticatedOutcome).user;
+        const mfaRequired: AuthenticationOutcome = {
+          status: AuthenticationStatus.MFA_REQUIRED,
+          user: notYetSignedIn,
+          methods: [],
+        };
+        expect.equal(
+          describeOutcome(mfaRequired).startsWith('MFA_REQUIRED:'),
+          true,
+          'an outcome owing a second factor must take the MFA_REQUIRED branch of a consumer\'s switch',
         );
 
         await expect.rejects(

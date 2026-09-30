@@ -381,7 +381,7 @@ describe('HttpExceptionFilter', () => {
    * The other half of a cross-check, and the only thing that can see the webapp's
    * copy of this vocabulary drift away from it.
    *
-   * `apps/webapp/app/types/__tests__/api-error-code.spec.ts` pins the same eleven
+   * `apps/webapp/app/types/__tests__/api-error-code.spec.ts` pins the same
    * names against the webapp's own list. The two apps share no package a wire
    * error code could live in — it is transport vocabulary, so `libs/core` may not
    * hold it (ADR-0008) — so the vocabulary is written twice, and a literal on
@@ -412,8 +412,14 @@ describe('HttpExceptionFilter', () => {
         'LAST_IDENTITY_REMOVAL',
         'LAST_OWNER',
         'MEMBERSHIP_NOT_FOUND',
+        'MFA_LABEL_REQUIRED',
+        'MFA_METHOD_ALREADY_CONFIRMED',
+        'MFA_METHOD_NOT_FOUND',
+        'MFA_REAUTHENTICATION_REQUIRED',
+        'MFA_VERIFICATION_FAILED',
         'ORGANIZATION_NAME_REQUIRED',
         'ORGANIZATION_NOT_FOUND',
+        'RECOVERY_CODE_ALREADY_CONSUMED',
         'SESSION_NOT_FOUND',
         'TOKEN_CONSUMED',
         'TOKEN_EXPIRED',

@@ -5,6 +5,7 @@ import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import { AuthenticationRejectionReason } from '__FORGE_SCOPE__/core/auth/enums';
 import type { ClientContext } from '__FORGE_SCOPE__/core/auth/types';
 import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
+import { MfaMethodType } from '__FORGE_SCOPE__/core/mfa/enums';
 import type { AuthIdentityId, FederatedAccount } from '__FORGE_SCOPE__/core/identities/types';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
@@ -15,6 +16,10 @@ import { FakeDataSource } from '../../../common/testing';
 import { AuthIdentityRecord } from '../../../identities/auth-identity-record.entity';
 import { Argon2PasswordHasher } from '../../../identities/hashing';
 import { IdentitiesService } from '../../../identities/identities.service';
+import { MfaChallengeRecord } from '../../../mfa/entities/mfa-challenge-record.entity';
+import { MfaMethodRecord } from '../../../mfa/entities/mfa-method-record.entity';
+import { MfaChallengePurpose } from '../../../mfa/enums/MfaChallengePurpose';
+import { MfaChallengeService } from '../../../mfa/mfa-challenge.service';
 import { MembershipRecord } from '../../../organizations/membership-record.entity';
 import { UserRecord } from '../../../users/user-record.entity';
 import { RefreshTokenRecord } from '../../entities/refresh-token-record.entity';
@@ -32,6 +37,16 @@ const CLIENT: ClientContext = { address: '203.0.113.9', label: 'test-client' };
 
 /** This harness's signing key. Not a credential: it signs nothing outside this spec. */
 const SIGNING_KEY = 'complete-spec-signing-key';
+
+/**
+ * A fixture seed, not a credential — declared here and passed by reference
+ * rather than written inline, the idiom `mapMfaMethodRecord.spec.ts`
+ * established for the same reason: a quoted literal next to a key matching
+ * `*secret*` is indistinguishable from a real one to `tools/sanitize.mjs`'s
+ * text scan, which is the extraction gate working correctly rather than a
+ * rule to exempt this file from.
+ */
+const FAKE_TOTP_SEED = 'JBSWY3DPEHPK3PXP';
 
 /** An adapter whose `fetchAccount` is swapped out per test. `authorizationUrl` is never called here. */
 function fakeProvider(
@@ -193,6 +208,11 @@ describe('OAuthService.complete', () => {
       audit,
       source as unknown as DataSource,
       new ConfigService({ PUBLIC_API_URL }),
+      repo<MfaMethodRecord>(MfaMethodRecord),
+      new MfaChallengeService(
+        repo<MfaChallengeRecord>(MfaChallengeRecord),
+        source as unknown as DataSource,
+      ),
     );
   });
 
@@ -411,6 +431,59 @@ describe('OAuthService.complete', () => {
       expect(source.all(SessionRecord)).toHaveLength(1);
     });
 
+    it('produces an account holding no confirmed method — the premise the policy call rests on', async () => {
+      // **A tripwire, not a property test.** `provisionAndSignIn` calls
+      // `decideAuthenticationStep` unconditionally, and that call cannot
+      // currently decide anything: the account is inserted in the same
+      // transaction, so no `mfa_methods` row can name it and the query comes
+      // back empty every time. Its `REQUIRE_SECOND_FACTOR` branch is therefore
+      // unreachable and uncovered — deleting the branch leaves the suite
+      // green.
+      //
+      // What CAN be pinned is the premise that makes it unreachable. This
+      // case asserts that provisioning produces an account with zero confirmed
+      // methods, and it fails on exactly the change the method's own TSDoc
+      // predicts: the day provisioning learns to attach a factor — an
+      // invitation that pre-enrols one, a migration path, an administrator
+      // creating an account — the branch above becomes reachable and this goes
+      // red at the moment somebody is making that change, rather than waiting
+      // for them to have read a comment first.
+      await seedRow();
+      googleFetchAccount = async () => account({
+        subject: 'no-factor-subject', email: 'no-factor@example.test', emailVerified: true,
+      });
+
+      const result = await service.complete('GOOGLE', CODE, STATE, CLIENT);
+
+      // **The tripwire runs FIRST, before any assertion about the outcome**,
+      // and that ordering is load-bearing rather than tidy. Once provisioning
+      // attaches a factor, `complete` answers `MFA_REQUIRED` — so a
+      // `toBe('SIGNED_IN')` placed above this would fail first, with
+      // `Expected: "SIGNED_IN" / Received: "MFA_REQUIRED"` and none of the
+      // explanation below. That is what happened when this case was first
+      // written, and it would have sent the one reader this exists for looking
+      // for a broken sign-in rather than at the branch they had just made
+      // reachable.
+      const confirmed = source.all(MfaMethodRecord).filter((row) => row.confirmedAt !== null);
+      if (confirmed.length > 0) {
+        // Thrown rather than asserted, because the message is the whole point
+        // and `expect` has nowhere to put one.
+        throw new Error(
+          `Provisioning now attaches ${confirmed.length} confirmed method(s) to a brand-new `
+          + 'account. The REQUIRE_SECOND_FACTOR branch in OAuthService.provisionAndSignIn is '
+          + 'therefore reachable and is currently covered by nothing. Two things are owed, and '
+          + 'the test must check both: the callback must land on the challenge with a token and '
+          + 'open no session, AND the branch must record AuditAction.MFA_CHALLENGE_ISSUED beside '
+          + 'the mint (as signInExisting does) — that entry is the only record such an attempt '
+          + 'happened, and a test that checks only the token passes with it missing. Write that '
+          + 'test before you change this assertion.',
+        );
+      }
+
+      // The ordinary case, asserted after the tripwire has had its say.
+      expect(result.status).toBe('SIGNED_IN');
+    });
+
     it('falls back to the mailbox local part when the provider discloses no name', async () => {
       await seedRow();
       googleFetchAccount = async () => account({
@@ -472,6 +545,124 @@ describe('OAuthService.complete', () => {
         'self-report-mismatch-subject',
       );
       expect(found).not.toBeNull();
+    });
+  });
+
+  describe('a second factor the account already holds', () => {
+    /**
+     * Writes one `mfa_methods` row for `userId`, confirmed or not.
+     *
+     * A TOTP row with a seed, because `mapMfaMethodRecord` throws for a row
+     * whose kind and columns disagree — a row this helper could produce by
+     * omitting the seed would fail every case below for a reason that has
+     * nothing to do with what they assert.
+     */
+    const seedMethod = (userId: UserId, confirmedAt: Date | null): void => {
+      const now = new Date();
+      source.insert(MfaMethodRecord, {
+        userId,
+        type: MfaMethodType.TOTP,
+        label: 'Phone',
+        totpSecret: FAKE_TOTP_SEED,
+        totpLastStep: null,
+        webauthnCredentialId: null,
+        webauthnPublicKey: null,
+        webauthnCounter: null,
+        confirmedAt,
+        lastUsedAt: null,
+        createdAt: now,
+      });
+    };
+
+    it('answers MFA_REQUIRED with a token, and opens no session', async () => {
+      const userId = await seedUser({ email: 'ada@example.test' });
+      await seedIdentity(userId, AuthProvider.GOOGLE, 'subject-1');
+      seedMethod(userId, new Date());
+      await seedRow({ redirectTo: '/dashboard' });
+      googleFetchAccount = async () => account({ subject: 'subject-1' });
+
+      const result = await service.complete('GOOGLE', CODE, STATE, CLIENT);
+
+      expect(result.status).toBe('MFA_REQUIRED');
+      if (result.status !== 'MFA_REQUIRED') throw new Error('unreachable');
+      expect(result.challengeToken).toEqual(expect.any(String));
+      expect(result.redirectTo).toBe('/dashboard');
+
+      // The assertion that sees the fault this whole change exists to close:
+      // a path that consults the policy and then issues the session anyway
+      // satisfies everything above.
+      expect(source.all(SessionRecord)).toHaveLength(0);
+
+      // One `LOGIN` challenge, and no `LOGIN_SUCCEEDED` — nothing has
+      // succeeded yet.
+      const challenges = source.all(MfaChallengeRecord);
+      expect(challenges).toHaveLength(1);
+      expect(challenges[0].purpose).toBe(MfaChallengePurpose.LOGIN);
+      expect(challenges[0].userId).toBe(userId);
+      expect(auditOf(AuditAction.LOGIN_SUCCEEDED)).toHaveLength(0);
+    });
+
+    it('signs in outright when the only method was never confirmed', async () => {
+      // An abandoned enrollment is not a weaker gate than a confirmed one, it
+      // is no gate at all — gating on it would lock out the one person who
+      // cannot produce the proof it demands.
+      //
+      // **This case does not discriminate the query's `confirmedAt` filter**,
+      // and saying so is the point: `decideAuthenticationStep` filters to
+      // confirmed methods itself, so dropping the predicate leaves this
+      // green. It asserts the outcome, not the mechanism. The predicate's own
+      // evidence is the case below.
+      const userId = await seedUser({ email: 'ada@example.test' });
+      await seedIdentity(userId, AuthProvider.GOOGLE, 'subject-1');
+      seedMethod(userId, null);
+      await seedRow();
+      googleFetchAccount = async () => account({ subject: 'subject-1' });
+
+      const result = await service.complete('GOOGLE', CODE, STATE, CLIENT);
+
+      expect(result.status).toBe('SIGNED_IN');
+      expect(source.all(SessionRecord)).toHaveLength(1);
+      expect(source.all(MfaChallengeRecord)).toHaveLength(0);
+    });
+
+    it('signs in an account carrying a half-written unconfirmed method', async () => {
+      // **What the `confirmedAt: Not(IsNull())` predicate is actually for**,
+      // and the case that fails when it goes. `mapMfaMethodRecord` throws for
+      // a row whose kind and columns disagree. No enrollment path in this
+      // application writes such a row — WebAuthn writes none until the
+      // attestation verifies — so this one is seeded, standing in for a
+      // partial restore or a hand edit. Map every row
+      // and that one row turns every federated sign-in for this account into
+      // a throw — which this callback's caller renders as
+      // `PROVIDER_UNAVAILABLE` — with no path out: the person cannot sign in
+      // to delete the row that stops them signing in.
+      //
+      // Watched failing with the predicate removed: `mapMfaMethodRecord`
+      // throws out of `signInExisting`, and the rejection is this test's
+      // failure rather than any assertion below it.
+      const userId = await seedUser({ email: 'ada@example.test' });
+      await seedIdentity(userId, AuthProvider.GOOGLE, 'subject-1');
+      source.insert(MfaMethodRecord, {
+        userId,
+        type: MfaMethodType.WEBAUTHN,
+        label: 'Half-written',
+        totpSecret: null,
+        totpLastStep: null,
+        // Ceremony begun, never finished.
+        webauthnCredentialId: null,
+        webauthnPublicKey: null,
+        webauthnCounter: null,
+        confirmedAt: null,
+        lastUsedAt: null,
+        createdAt: new Date(),
+      });
+      await seedRow();
+      googleFetchAccount = async () => account({ subject: 'subject-1' });
+
+      const result = await service.complete('GOOGLE', CODE, STATE, CLIENT);
+
+      expect(result.status).toBe('SIGNED_IN');
+      expect(source.all(SessionRecord)).toHaveLength(1);
     });
   });
 
@@ -711,6 +902,11 @@ describe('OAuthService.complete', () => {
       expect(result).toEqual({ status: 'REFUSED', code: 'AUTHORIZATION_UNKNOWN', redirectTo: null });
       expect(source.all(SessionRecord)).toHaveLength(0);
       expect(source.all(UserRecord)).toHaveLength(0);
+      // A corrupt row is the case a trace is worth most for.
+      const entries = auditOf(AuditAction.FEDERATED_AUTHORIZATION_CORRUPT);
+      expect(entries).toHaveLength(1);
+      expect(entries[0].actorUserId).toBeNull();
+      expect(entries[0].metadata).toEqual({ reason: 'UNRECOGNISED_PURPOSE', provider: 'GOOGLE' });
     });
 
     it('refuses a LINK-purpose row with no owner, rather than creating an identity with a null actor', async () => {
@@ -729,6 +925,10 @@ describe('OAuthService.complete', () => {
 
       expect(result).toEqual({ status: 'REFUSED', code: 'AUTHORIZATION_UNKNOWN', redirectTo: null });
       expect(source.all(AuthIdentityRecord)).toHaveLength(0);
+      const entries = auditOf(AuditAction.FEDERATED_AUTHORIZATION_CORRUPT);
+      expect(entries).toHaveLength(1);
+      expect(entries[0].actorUserId).toBeNull();
+      expect(entries[0].metadata).toEqual({ reason: 'LINK_WITHOUT_OWNER', provider: 'GOOGLE' });
     });
   });
 });

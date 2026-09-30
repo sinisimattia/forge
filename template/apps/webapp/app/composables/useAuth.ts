@@ -1,7 +1,7 @@
 import type { ComputedRef } from 'vue';
-import type { AuthenticationOutcome } from '__FORGE_SCOPE__/core/auth/types';
 import type { User } from '__FORGE_SCOPE__/core/users/entities';
 import { type AuthStatus, useAuthStore } from '~/stores/auth';
+import type { LoginOutcome } from '~/types';
 
 /** What a component gets when it asks who is signed in. */
 export interface UseAuth {
@@ -11,8 +11,11 @@ export interface UseAuth {
   readonly isAuthenticated: ComputedRef<boolean>;
   /** Whether the question has been answered yet, and what the answer was. */
   readonly status: ComputedRef<AuthStatus>;
-  /** Proves who somebody is. Returns core's outcome; a refusal is not a throw. */
-  readonly login: (email: string, secret: string) => Promise<AuthenticationOutcome>;
+  /**
+   * Proves who somebody is. Returns the outcome — core's, or a second-factor
+   * challenge with its token taken off; a refusal is not a throw.
+   */
+  readonly login: (email: string, secret: string) => Promise<LoginOutcome>;
   /** Ends the session on the server, and forgets it here either way. */
   readonly logout: () => Promise<void>;
   /**

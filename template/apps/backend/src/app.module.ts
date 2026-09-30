@@ -20,6 +20,10 @@ import { HealthModule } from './health/health.module';
 import { AuthIdentityRecord } from './identities/auth-identity-record.entity';
 import { IdentitiesModule } from './identities/identities.module';
 import { MailModule } from './mail';
+import { MfaChallengeRecord } from './mfa/entities/mfa-challenge-record.entity';
+import { MfaMethodRecord } from './mfa/entities/mfa-method-record.entity';
+import { MfaRecoveryCodeRecord } from './mfa/entities/mfa-recovery-code-record.entity';
+import { MfaModule } from './mfa/mfa.module';
 import { InvitationRecord } from './organizations/invitation-record.entity';
 import { MembershipRecord } from './organizations/membership-record.entity';
 import { OrganizationRecord } from './organizations/organization-record.entity';
@@ -75,6 +79,17 @@ export function typeOrmOptions(config: ConfigService): TypeOrmModuleOptions {
       MembershipRecord,
       InvitationRecord,
       ResourceGrantRecord,
+      // All three at once, and not one per feature as each is first read. The
+      // schema-drift probe in `tests/integration/docker.test.mjs` asserts the
+      // exact SET of tables TypeORM maps, so a partial registration turns it
+      // red just as surely as an unregistered table does — three tasks each
+      // adding one entity would be three red probes and three edits to the
+      // same expected list. `mfa_recovery_codes` therefore appears here before
+      // anything reads it: the row it maps exists in the migration, and the
+      // cost of mapping a table nothing queries is nothing at all.
+      MfaMethodRecord,
+      MfaChallengeRecord,
+      MfaRecoveryCodeRecord,
     ],
     synchronize: false,
   };
@@ -199,6 +214,7 @@ export const GLOBAL_PROVIDERS: Provider[] = [
     AuditModule,
     IdentitiesModule,
     AuthModule,
+    MfaModule,
     UsersModule,
     OrganizationsModule,
   ],

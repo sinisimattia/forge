@@ -1,6 +1,13 @@
 import type { SessionId } from '__FORGE_SCOPE__/core/auth/types';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
-import type { ApiClient, AuthResponseBody, SessionResponseBody } from '~/types';
+import type {
+  ApiClient,
+  AuthResponseBody,
+  LoginResponseBody,
+  MfaChallengeMethodBody,
+  MfaVerifyProof,
+  SessionResponseBody,
+} from '~/types';
 
 /**
  * The `/auth` endpoints, one function apiece.
@@ -60,17 +67,64 @@ export async function postResendVerification(client: ApiClient, email: string): 
  * extra field is a `400`, and the two things a client context describes — the
  * network address and the user agent — are the two things a client may not
  * assert about itself. The server observes them.
+ *
+ * **Answers a {@link LoginResponseBody}, not an `AuthResponseBody`**: a correct
+ * password on an account that holds a second factor is a `200` whose body has
+ * no credential in it, and a caller has to say what it does with that.
  */
 export async function postLogin(
   client: ApiClient,
   attempt: { email: string; secret: string },
-): Promise<AuthResponseBody> {
-  return client<AuthResponseBody>({
+): Promise<LoginResponseBody> {
+  return client<LoginResponseBody>({
     method: 'POST',
     path: '/auth/login',
     body: attempt,
     withCookie: true,
   });
+}
+
+/**
+ * Finishes a sign-in the password did not finish. Rejects with an `ApiError`
+ * — always the same `401` — for every way it can fail.
+ *
+ * The body is the challenge and one proof: `{ methodId, code }` or
+ * `{ recoveryCode }`, never both ({@link MfaVerifyProof} cannot be built with
+ * both). Nothing in it names an account; the backend reads that off the
+ * challenge.
+ */
+export async function postMfaVerify(
+  client: ApiClient,
+  challengeToken: string,
+  proof: MfaVerifyProof,
+): Promise<AuthResponseBody> {
+  return client<AuthResponseBody>({
+    method: 'POST',
+    path: '/auth/mfa/verify',
+    body: { challengeToken, ...proof },
+    withCookie: true,
+  });
+}
+
+/**
+ * Asks which methods a challenge may be finished with. **Spends nothing.**
+ *
+ * The half of `POST /auth/login`'s answer that a redirect could not carry: a
+ * federated sign-in arrives holding a token and no list. Rejects with the same
+ * `401` as every other refusal here when the challenge is absent, expired,
+ * spent or not a login's.
+ */
+export async function postMfaMethods(
+  client: ApiClient,
+  challengeToken: string,
+): Promise<MfaChallengeMethodBody[]> {
+  const answer = await client<{ methods: MfaChallengeMethodBody[] }>({
+    method: 'POST',
+    path: '/auth/mfa/methods',
+    body: { challengeToken },
+    withCookie: true,
+  });
+  return answer.methods;
 }
 
 /**

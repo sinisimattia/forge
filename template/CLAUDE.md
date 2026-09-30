@@ -23,7 +23,7 @@ authorization (organizations, memberships, invitations, organization roles, per-
 grants, and `PermissionsGuard` over core's `can()`). No business domain of its own — that is
 what a generated project adds.
 
-**Four decisions here bind everything built on top**, and each has an ADR because getting it
+**Five decisions here bind everything built on top**, and each has an ADR because getting it
 wrong later is a migration rather than an edit: authorization is a pure function in core
 ([ADR-0006](docs/adrs/0006-authorization-is-a-pure-function-in-core.md)), tenancy is explicit
 and never ambient ([ADR-0007](docs/adrs/0007-tenancy-is-explicit-never-ambient.md)), the
@@ -32,7 +32,9 @@ application connects as a role with no `UPDATE`/`DELETE` on `audit_entries`
 foreign key to that table voids the guarantee while leaving it looking correct), and a
 federated provider's assertion about an address never links to an existing account —
 linking requires an authenticated session
-([ADR-0011](docs/adrs/0011-federated-identity-never-auto-links.md)).
+([ADR-0011](docs/adrs/0011-federated-identity-never-auto-links.md)), and a second factor
+is a property of the account, so every path that would open a session asks the same policy
+first ([ADR-0012](docs/adrs/0012-a-second-factor-is-a-property-of-the-account.md)).
 
 ## Canonical truth
 

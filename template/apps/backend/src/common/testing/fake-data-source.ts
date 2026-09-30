@@ -105,6 +105,13 @@ type EntityClass = { name: string };
  *    reason as (1). What this fake *can* still show, single-threaded, is that
  *    the count is read and compared before the write commits — see
  *    `organizations.service.spec.ts`'s `LastOwnerError` cases.
+ * 10. **Row ids are no longer unique by construction.** `insert` honours an
+ *    explicitly supplied `id` (see its own comment for why), so two seeds that
+ *    name the same one produce two rows sharing it, and `findOne` answers with
+ *    whichever was written first. Ids were previously minted here and unique by
+ *    construction; a seed that names its own is now responsible for keeping it
+ *    distinct. Nothing enforces it — see (4), since this is that same missing
+ *    constraint reached from the other side.
  */
 export class FakeDataSource {
   private readonly tables = new Map<string, Row[]>();
@@ -158,9 +165,11 @@ export class FakeDataSource {
    *
    * Without rollback a fake cannot express atomicity at all, so "these two
    * writes happen together or not at all" is a property no test can fail —
-   * which is how `AuthController.changePassword` came to replace a secret and
-   * issue a session in two statements with nothing asserting that a failure
-   * between them could not leave a caller both changed and signed out.
+   * which is how the password change came to replace a secret and issue a
+   * session in two statements, with nothing asserting that a failure between
+   * them could not leave a caller both changed and signed out. It is one
+   * indivisible call now — `AuthService.changePasswordAndReissue` — and the
+   * rollback below is what lets a test fail if it stops being one.
    *
    * The obvious implementation is a snapshot of every table before `work` and a
    * restore on throw, and it is wrong here: this fake runs transactions
@@ -219,12 +228,14 @@ export class FakeDataSource {
         return detach(this.match(entity, options.where)[0] ?? null);
       },
       // Ordered, like `findAndCount` below and unlike this method as first
-      // written. Dropping `order` here is not a harmless simplification: the
-      // only caller that asks for one is `SessionService.listActive`, whose
-      // whole promise is "newest first", and a fake that answered in insertion
-      // order made that promise unfalsifiable — 392 tests passed over it. The
-      // core conformance suite caught it on first contact, asserting that a
-      // fresh sign-in comes back ahead of a session the world seeded earlier.
+      // written. Dropping `order` here is not a harmless simplification: a
+      // caller that asks for an order is making a promise in its own name —
+      // `SessionService.listActive` promises "newest first" — and a fake that
+      // answered in insertion order makes every such promise unfalsifiable. It
+      // did once, and 392 tests passed over it; the core conformance suite
+      // caught it on first contact, asserting that a fresh sign-in comes back
+      // ahead of a session the world seeded earlier. Several callers ask for an
+      // order now, which only widens what dropping the clause would hide.
       find: async (options) => {
         await yieldTurn();
         const found = this.match(entity, options?.where ?? {});
@@ -286,7 +297,20 @@ export class FakeDataSource {
     values: Row,
     journal?: (() => void)[],
   ): { identifiers: { id: string }[] } {
-    const id = `fake-${entity.name}-${this.nextId++}`;
+    // An explicitly supplied `id` wins; otherwise one is minted. Most seeds do
+    // not care what their id is and take the minted one, whose `fake-<Entity>-<n>`
+    // shape long predates this branch and is not a UUID — several suites name
+    // ids in that form deliberately, and one leans on how they sort.
+    //
+    // A seed that DOES care names its own, because the code under test may judge
+    // the shape of an id a caller supplies: `MfaVerificationService` refuses a
+    // `methodId` that is not a UUID before it looks anything up, so a method row
+    // holding a minted id would be refused on shape rather than found. This
+    // store still checks no column type — see limitation (5), and (10) for what
+    // honouring an `id` costs.
+    const id = typeof values.id === 'string' && values.id.length > 0
+      ? values.id
+      : `fake-${entity.name}-${this.nextId++}`;
     const row: Row = { ...values, id };
     this.tables.set(entity.name, [...this.all(entity), row]);
     journal?.push(() => {
@@ -403,15 +427,37 @@ export class FakeEntityManager {
     private readonly journal: (() => void)[] = [],
   ) {}
 
+  /**
+   * `order` is honoured because the real `findOne` honours it and one caller
+   * asks for it: `MfaChallengeService.consumePendingFor` selects an account's
+   * *newest* pending challenge. A double that silently dropped the clause
+   * would be answering a different query from the one the service wrote, and
+   * every later reader would take the insertion-order answer for the ordered
+   * one.
+   *
+   * **No test turns on the ordering, and this double could not carry one
+   * anyway.** Nothing in the suite starts a second enrollment ceremony, so
+   * "the newest row is the one completed" is unasserted; and `sortRows` is a
+   * stable JS sort (item 8), so two challenges minted inside the same
+   * millisecond — which `mint`, stamping `new Date()`, readily produces — tie
+   * on `created_at` and fall back to insertion order regardless. The property
+   * belongs to Postgres and to a `created_at` with real resolution. This
+   * clause is here so the double asks what the service asks, not as evidence
+   * about what either answers.
+   */
   public async findOne(
     entity: EntityClass,
-    options: { where: Criteria; lock?: { mode: string } },
+    options: {
+      where: Criteria;
+      order?: Record<string, 'ASC' | 'DESC'>;
+      lock?: { mode: string };
+    },
   ): Promise<Row | null> {
     // Yield BEFORE reading. This is what lets a second transaction interleave,
     // and so what makes the concurrency assertion in D8 able to fail at all.
     await yieldTurn();
 
-    const found = this.source.match(entity, options.where)[0] ?? null;
+    const found = sortRows(this.source.match(entity, options.where), options.order)[0] ?? null;
     if (options.lock?.mode !== 'pessimistic_write' || found === null) return detach(found);
 
     this.source.lockedRows.push(`${entity.name}:${String(found.id)}`);
@@ -423,7 +469,13 @@ export class FakeEntityManager {
     // re-evaluates the row after the lock is granted, so the waiter sees what the
     // winner committed rather than the snapshot it took before waiting. A fake
     // that returned `found` here would hide exactly the bug the lock prevents.
-    return detach(this.source.match(entity, options.where)[0] ?? null);
+    //
+    // **The row, singular**: the re-read is narrowed to the id that was locked,
+    // so a waiter whose row stopped matching gets `null` rather than a
+    // *different* row it never locked. Postgres would go on scanning; this
+    // fake refuses, which is the fail-closed half of that behaviour and the
+    // only half it can honestly offer while holding one lock.
+    return detach(this.source.match(entity, { ...options.where, id: found.id })[0] ?? null);
   }
 
   public async find(entity: EntityClass, options: { where: Where }): Promise<Row[]> {
@@ -494,7 +546,12 @@ function matches(row: Row, criteria: Criteria): boolean {
         case 'moreThan':
           return (value as Date).getTime() > (expected.value as Date).getTime();
         case 'lessThan':
-          return (value as Date).getTime() < (expected.value as Date).getTime();
+          // A `bigint` column arrives as a string, and SQL compares it as a
+          // number; a `NULL` is neither less nor greater than anything, so a
+          // row holding one never matches — as `NULL < x` is not true.
+          if (value === null || value === undefined) return false;
+          if (value instanceof Date) return value.getTime() < (expected.value as Date).getTime();
+          return BigInt(value as string) < BigInt(expected.value as string);
         case 'lessThanOrEqual':
           // Inclusive, which is what `AuditQuery.asOf` means: a bound taken from
           // an entry's own instant has to include that entry.
@@ -515,6 +572,21 @@ function matches(row: Row, criteria: Criteria): boolean {
           // semantics for a plain value list, which is the only shape this
           // backend ever passes here.
           return (expected.value as unknown[]).includes(value);
+        case 'not':
+          // Recursed rather than special-cased, so `Not(IsNull())` — the only
+          // shape this backend passes today, in every read that narrows
+          // `mfa_methods` to the confirmed rows, `SecondFactorSettled`'s own
+          // (`auth/session/second-factor-settled.ts`) first among them — costs
+          // nothing beyond the negation, and
+          // `Not(<plain value>)` works for free because the branch below this
+          // switch handles a plain value already.
+          //
+          // **The nested operator is on `child`, not on `value`.** TypeORM
+          // leaves `value` `undefined` for a wrapping operator, so reading it
+          // here negates a comparison against `undefined` — which quietly
+          // matched every row rather than throwing, and let a suite assert that
+          // unconfirmed rows were filtered out while they were all still there.
+          return !matches(row, { [name]: expected.child ?? expected.value });
         default:
           // Loudly, rather than by quietly matching everything: a criterion this
           // fake does not understand would otherwise silently widen a test's

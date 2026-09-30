@@ -8,6 +8,13 @@ import { AuthIdentityRecord } from '../identities/auth-identity-record.entity';
 import { IdentitiesController } from '../identities/identities.controller';
 import { IdentitiesModule } from '../identities/identities.module';
 import { MailModule } from '../mail';
+import { MfaChallengeRecord } from '../mfa/entities/mfa-challenge-record.entity';
+import { MfaMethodRecord } from '../mfa/entities/mfa-method-record.entity';
+import { MfaRecoveryCodeRecord } from '../mfa/entities/mfa-recovery-code-record.entity';
+import { MfaChallengeService } from '../mfa/mfa-challenge.service';
+import { MfaVerificationService } from '../mfa/mfa-verification.service';
+import { RecoveryCodes } from '../mfa/recovery/recovery-codes';
+import { TotpVerifier } from '../mfa/totp/TotpVerifier';
 import { UserRecord } from '../users/user-record.entity';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -54,6 +61,26 @@ export const OAUTH_PROVIDER_REGISTRY_PROVIDER: Provider = {
   useFactory: (providers: IOAuthProvider[]): OAuthProviderRegistry =>
     new OAuthProviderRegistry(providers),
   inject: [OAUTH_PROVIDERS],
+};
+
+/**
+ * The TOTP verifier, as an explicit factory.
+ *
+ * `TotpVerifier` carries no `@Injectable()` — every spec constructs it with
+ * `new` — and its one constructor parameter is a `number` with a default,
+ * which Nest cannot resolve from the container at all. An explicit factory is
+ * therefore the only way it is provided, and it is a named export for the
+ * reason {@link accessTokenSigningOptions} is one: `composition-root.spec.ts`
+ * can pin that this module uses this value rather than an inlined copy.
+ *
+ * No argument, so the instance runs at {@link PRODUCTION_TOTP_DIGITS}. The
+ * only other digit count constructed anywhere in this codebase is eight, by
+ * `TotpVerifier`'s own RFC-vector suite; see that class's TSDoc for why that
+ * stays test-only.
+ */
+export const TOTP_VERIFIER_PROVIDER: Provider = {
+  provide: TotpVerifier,
+  useFactory: (): TotpVerifier => new TotpVerifier(),
 };
 
 /**
@@ -104,13 +131,32 @@ export function accessTokenSigningOptions(config: ConfigService): JwtModuleOptio
  * **`OAuthService`, `OAuthController` and the `OAUTH_PROVIDERS` factory live
  * here too.** This module already owns `SessionService` and the
  * refresh cookie both `OAuthService.complete` and `AuthController.login` share,
- * and `OAuthService`'s own eight-dependency constructor
+ * and `OAuthService`'s own ten-dependency constructor
  * (`Repository<OAuthAuthorizationRequestRecord>`, `Repository<UserRecord>`,
  * `OAuthProviderRegistry`, `IdentitiesService`, `SessionService`, `AuditService`,
- * `DataSource`, `ConfigService`) is satisfiable entirely from what this module
+ * `DataSource`, `ConfigService`, `Repository<MfaMethodRecord>`,
+ * `MfaChallengeService`) is satisfiable entirely from what this module
  * already imports or provides — `OAuthAuthorizationRequestRecord` is the one
- * entity this task adds to the `TypeOrmModule.forFeature` list below, and
+ * entity it adds to the `TypeOrmModule.forFeature` list below, and
  * `OAuthProviderRegistry` is what `OAUTH_PROVIDER_REGISTRY_PROVIDER` builds.
+ *
+ * The last two are the federated path's own half of two-phase login (spec
+ * §8.4): both endings under `OAuthService.completeSignIn` ask the policy
+ * through `SecondFactorSettled` and mint a `LOGIN` challenge before either may
+ * issue a session, exactly as `AuthService.signIn` does — `MfaMethodRecord`
+ * because that is the table the policy reads, `MfaChallengeService` because
+ * that is what mints the challenge. Both were already registered here for
+ * `AuthService`, which is the reason this cost no new import.
+ *
+ * **The MFA services live here too, rather than in a module of their own**, and
+ * the reason is a cycle that a separate `MfaModule` cannot avoid. `AuthService`
+ * needs `MfaChallengeService` — `signIn` mints the challenge — and
+ * `MfaVerificationService` needs `SessionService`, which is this module's. Two
+ * modules each needing a provider of the other is resolvable in Nest only with
+ * `forwardRef` on both sides; this module avoids it the same way it already
+ * avoids the `IdentitiesModule` cycle below, by hosting what it needs where the
+ * things it needs already are. The `mfa/` folder still owns the code; only the
+ * registration is here.
  *
  * **`IdentitiesController` is registered here too, not by `IdentitiesModule`.**
  * See that controller's own doc and `identities.module.ts`'s: its new
@@ -136,6 +182,9 @@ export function accessTokenSigningOptions(config: ConfigService): JwtModuleOptio
       EmailVerificationTokenRecord,
       PasswordResetTokenRecord,
       OAuthAuthorizationRequestRecord,
+      MfaMethodRecord,
+      MfaChallengeRecord,
+      MfaRecoveryCodeRecord,
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -153,7 +202,26 @@ export function accessTokenSigningOptions(config: ConfigService): JwtModuleOptio
     OAuthService,
     OAUTH_PROVIDERS_PROVIDER,
     OAUTH_PROVIDER_REGISTRY_PROVIDER,
+    MfaChallengeService,
+    MfaVerificationService,
+    RecoveryCodes,
+    TOTP_VERIFIER_PROVIDER,
   ],
-  exports: [AuthService, SessionService, RefreshTokenService, JwtAuthGuard, OAuthService],
+  exports: [
+    AuthService,
+    SessionService,
+    RefreshTokenService,
+    JwtAuthGuard,
+    OAuthService,
+    MfaChallengeService,
+    // For `MfaModule`'s enrollment service, which confirms a method with the
+    // same verifier a sign-in checks and issues codes with the same service a
+    // sign-in spends them through.
+    RecoveryCodes,
+    TotpVerifier,
+    // For `MfaModule`'s removal and regeneration, which judge a proof through
+    // the very method a sign-in does rather than through a copy of it.
+    MfaVerificationService,
+  ],
 })
 export class AuthModule {}

@@ -28,6 +28,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 interface ConfigShape {
   modules?: string[];
   components?: { path: string }[];
+  routeRules?: Record<string, { ssr?: boolean; headers?: Record<string, string> }>;
 }
 
 /**
@@ -76,5 +77,24 @@ describe('nuxt.config.ts', () => {
       '~/components/organisms',
       '~/components/templates',
     ]);
+  });
+
+  // Nuxt puts the request URL — query string included — into the payload of any
+  // page it renders on the server (`payload.path`), whether or not the page
+  // reads it. The challenge page can be reached with a single-use token in its
+  // query, so it is rendered by the browser alone; this entry is the only thing
+  // that says so, and it has no behaviour under the runner to assert instead.
+  // Confirmed against a real build: with the rule, a request carrying a
+  // sentinel token comes back with no trace of it; without, the sentinel is in
+  // `__NUXT_DATA__`.
+  it('renders the challenge page on the client only', () => {
+    expect(config.routeRules?.['/mfa/challenge']?.ssr).toBe(false);
+  });
+
+  // The referrer policy is a response header on the route, not a tag the page
+  // adds: the page's own `<meta>` would arrive after the requests it is meant to
+  // cover. Only the header is there for the first of them.
+  it('serves the challenge page with a no-referrer policy as a header', () => {
+    expect(config.routeRules?.['/mfa/challenge']?.headers?.['referrer-policy']).toBe('no-referrer');
   });
 });

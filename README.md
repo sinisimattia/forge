@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="forge-logo.png" alt="Forge" width="360">
+</p>
+
 # Forge
 
 Forge generates new application projects from **one template**: an NX/npm-workspaces

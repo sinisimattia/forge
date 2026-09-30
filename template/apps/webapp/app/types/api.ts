@@ -1,9 +1,12 @@
+import type { AuthenticationStatus } from '__FORGE_SCOPE__/core/auth/enums';
 import type { SessionJSON } from '__FORGE_SCOPE__/core/auth/types';
 import type {
   PrincipalMembership,
   ResourceGrantJSON,
 } from '__FORGE_SCOPE__/core/authorization/types';
 import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/types';
+import type { MfaMethodType } from '__FORGE_SCOPE__/core/mfa/enums';
+import type { MfaMethodJSON } from '__FORGE_SCOPE__/core/mfa/types';
 import type { PlatformRole } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId, UserJSON } from '__FORGE_SCOPE__/core/users/types';
 
@@ -100,8 +103,14 @@ export const API_ERROR_CODES = [
   'LAST_IDENTITY_REMOVAL',
   'LAST_OWNER',
   'MEMBERSHIP_NOT_FOUND',
+  'MFA_LABEL_REQUIRED',
+  'MFA_METHOD_ALREADY_CONFIRMED',
+  'MFA_METHOD_NOT_FOUND',
+  'MFA_REAUTHENTICATION_REQUIRED',
+  'MFA_VERIFICATION_FAILED',
   'ORGANIZATION_NAME_REQUIRED',
   'ORGANIZATION_NOT_FOUND',
+  'RECOVERY_CODE_ALREADY_CONSUMED',
   'SERIALIZATION_CONFLICT',
   'SESSION_NOT_FOUND',
   'TOKEN_CONSUMED',
@@ -281,6 +290,88 @@ export interface AuthResponseBody {
 }
 
 /**
+ * One second factor a person may finish a sign-in with, as `POST /auth/login`
+ * describes it to somebody who has proven a password and nothing else.
+ *
+ * The backend's `MfaChallengeMethodDto`, restated for the reason
+ * {@link AuthResponseBody} gives. Three fields and not core's `MfaMethodJSON`:
+ * the account history that shape carries is not something this caller has been
+ * shown, so there is nothing to render it from.
+ */
+export interface MfaChallengeMethodBody {
+  /** What to send back as `methodId`. */
+  id: string;
+  /** Which kind of proof to produce. */
+  type: MfaMethodType;
+  /** The name the person gave it, so two of a kind can be told apart. */
+  label: string;
+}
+
+/**
+ * What `POST /auth/login` answers when the password was right and is not
+ * enough: the backend's `MfaChallengeResponseDto`.
+ *
+ * **Nothing here opens anything.** No `accessToken`, no `user`, and no renewal
+ * cookie behind it either. `challengeToken` proves only that the server saw a
+ * correct password moments ago, and the one request that presents it spends it.
+ */
+export interface MfaChallengeResponseBody {
+  /** The discriminant against {@link AuthResponseBody}. */
+  status: AuthenticationStatus.MFA_REQUIRED;
+  /** What to present at `POST /auth/mfa/verify`, once, within minutes. */
+  challengeToken: string;
+  /** The confirmed methods this account may finish the attempt with. */
+  methods: MfaChallengeMethodBody[];
+}
+
+/**
+ * Everything `POST /auth/login` can answer with on a `200`.
+ *
+ * **A union discriminated on `status`, and the success arm's `status` is
+ * `undefined` rather than absent from the type.** The wire's success body has
+ * no `status` (it is {@link AuthResponseBody}); writing that as
+ * `status?: undefined` is what lets a check against `MFA_REQUIRED` narrow both
+ * ways. A caller that reads `body.user` or `body.accessToken` without first
+ * ruling the second arm out does not compile. When this was typed as
+ * `AuthResponseBody` alone, a caller that never handled the challenge
+ * compiled, ran, and read `undefined` out of a body that had no user in it.
+ *
+ * Only sign-in has a second arm. `POST /auth/refresh`, `/auth/change-password`
+ * and `/auth/mfa/verify` answer `AuthResponseBody` and nothing else.
+ */
+export type LoginResponseBody
+  = | (AuthResponseBody & { status?: undefined })
+    | MfaChallengeResponseBody;
+
+/**
+ * The proof `POST /auth/mfa/verify` takes, beside the challenge: **a method and
+ * the code it produced, or a recovery code — never both.**
+ *
+ * Two arms whose other fields are `?: never`, so a caller holding a `code` and
+ * a `recoveryCode` at once cannot build one. The backend dispatches on which
+ * fields are *present*, never on what a value looks like, and answers the same
+ * `401` for a request that fits neither shape.
+ */
+export type MfaVerifyProof
+  = | { methodId: string; code: string; recoveryCode?: never }
+    | { recoveryCode: string; methodId?: never; code?: never };
+
+/**
+ * What `POST /mfa/webauthn/options` answers for a login: the ceremony's options
+ * and the challenge token to present next.
+ *
+ * `publicKey` is `@simplewebauthn/browser`'s to interpret and is typed there;
+ * it is `unknown` here so that this file, which every other file imports, does
+ * not import a browser library.
+ */
+export interface WebAuthnOptionsResponseBody {
+  /** The options to hand to `navigator.credentials.get`, in the library's JSON shape. */
+  publicKey: unknown;
+  /** The token to present at `POST /mfa/webauthn/verify`. The one presented to `options` is spent. */
+  challengeToken: string | null;
+}
+
+/**
  * The credential a sign-in or a password change issued, on its way out of
  * `AuthHttpService` to whoever will hold it.
  *
@@ -329,4 +420,42 @@ export interface PrincipalResponseBody {
   memberships: readonly PrincipalMembership[];
   /** The record-level exceptions they hold, live as of the instant this was served. */
   grants: readonly ResourceGrantJSON[];
+}
+
+/**
+ * A proof of the second factor, in the body of a request that asks for one: a
+ * method and the code it produced, **or** a recovery code, never both. The
+ * backend's `MfaProofDto`; the same two-arm shape as {@link MfaVerifyProof}, and
+ * for the same reason.
+ */
+export type MfaProofBody = MfaVerifyProof;
+
+/**
+ * What `POST /mfa/totp/enroll` answers: the backend's `TotpEnrollmentOffer`.
+ *
+ * **Shared-secret material, three ways** — inside `otpauthUri`, inside `qrSvg`,
+ * and bare in `secret`. It is shown once and must be held by nothing longer-lived
+ * than the panel showing it: no store, no `useState`, no storage.
+ */
+export interface TotpEnrollmentBody {
+  methodId: string;
+  otpauthUri: string;
+  qrSvg: string;
+  secret: string;
+}
+
+/** What `POST /mfa/totp/confirm` answers. `recoveryCodes` is the plaintext batch on the first confirmation, else `null`. */
+export interface TotpConfirmationBody {
+  recoveryCodes: string[] | null;
+}
+
+/** What `POST /mfa/recovery-codes` answers: the new batch, in the clear, once. */
+export interface RecoveryCodesBody {
+  recoveryCodes: string[];
+}
+
+/** What `POST /mfa/webauthn/verify` answers for an enrollment. */
+export interface WebAuthnEnrollmentBody {
+  method: MfaMethodJSON;
+  recoveryCodes: string[] | null;
 }

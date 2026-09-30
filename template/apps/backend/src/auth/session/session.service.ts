@@ -9,6 +9,7 @@ import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { generateOpaqueToken } from '../../common/crypto';
 import { RefreshTokenRecord } from '../entities/refresh-token-record.entity';
 import { SessionRecord } from '../entities/session-record.entity';
+import type { SecondFactorSettled } from './second-factor-settled';
 
 /**
  * How long an access credential stands on its own, in seconds.
@@ -87,12 +88,30 @@ export class SessionService {
    * ended by its owner, so committing one without the other produces a row that
    * is neither usable nor reachable.
    *
+   * ## `settled` is required, and that is ADR-0012 made structural
+   *
+   * A second factor is a property of the account rather than of the way its
+   * owner arrived, so **every** path that opens a session has to have settled
+   * it first. That rule used to be held by comments beside the call sites; it
+   * is now held by this parameter, whose type has no public constructor and a
+   * closed set of named factories. {@link SecondFactorSettled} is where that
+   * set lives, along with the argument for why a type rather than a convention
+   * and what premise each factory asserts — deliberately not restated here,
+   * because a copy of an enumeration is the thing this change exists to stop
+   * maintaining. Nothing in this class reads the value; its presence *is* the
+   * check.
+   *
    * @param userId - the account signing in
    * @param client - what could be told about where the attempt came from
+   * @param settled - evidence the second factor is not still owed
    * @returns the session and the two credentials that stand for it
    */
-  public async begin(userId: UserId, client: ClientContext): Promise<IssuedCredentials> {
-    return this.dataSource.transaction((manager) => this.beginIn(manager, userId, client));
+  public async begin(
+    userId: UserId,
+    client: ClientContext,
+    settled: SecondFactorSettled,
+  ): Promise<IssuedCredentials> {
+    return this.dataSource.transaction((manager) => this.beginIn(manager, userId, client, settled));
   }
 
   /**
@@ -108,12 +127,20 @@ export class SessionService {
    * @param manager - the caller's transaction
    * @param userId - the account signing in
    * @param client - what could be told about where the attempt came from
+   * @param _settled - evidence the second factor is not still owed; see
+   *   {@link SessionService.begin}. Nothing in this body reads it — its
+   *   presence *is* the check — so it costs an underscore for
+   *   `noUnusedParameters` and a disable directive for `no-unused-vars`. That
+   *   pair of suppressions is the entire price of the rule being structural,
+   *   and it buys the compile error a new call site gets for free.
    * @returns the session and the two credentials that stand for it
    */
   public async beginIn(
     manager: EntityManager,
     userId: UserId,
     client: ClientContext,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- deliberately unread; see the `@param`
+    _settled: SecondFactorSettled,
   ): Promise<IssuedCredentials> {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000);

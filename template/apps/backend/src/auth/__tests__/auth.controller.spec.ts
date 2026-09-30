@@ -14,6 +14,7 @@ import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
+import { MfaVerificationService } from '../../mfa/mfa-verification.service';
 import { AuthController } from '../auth.controller';
 import { AuthService } from '../auth.service';
 import { REFRESH_COOKIE } from '../refresh-cookie';
@@ -175,6 +176,20 @@ describe('AuthController', () => {
         JwtStrategy,
         { provide: AuthService, useValue: auth },
         { provide: RefreshTokenService, useValue: refresh },
+        // Nothing in this file drives `POST /auth/mfa/verify` — that route's
+        // behaviour is asserted where the fault it guards against can be seen,
+        // in `__tests__/discriminating/d10-mfa-challenge-only.spec.ts`. The
+        // stub is here because `AuthController` now names the dependency, and
+        // a controller whose constructor cannot be satisfied does not mount
+        // any of its routes.
+        {
+          provide: MfaVerificationService,
+          useValue: {
+            completeLogin: async () => {
+              throw new Error('POST /auth/mfa/verify is not exercised by this suite');
+            },
+          } as unknown as MfaVerificationService,
+        },
       ],
     }).compile();
 
@@ -197,8 +212,8 @@ describe('AuthController', () => {
   };
 
   describe('which routes are reachable without a credential', () => {
-    // A missing `@Public()` on any of these three makes signing in impossible:
-    // a caller has no credential precisely because it is trying to get one.
+    // A missing `@Public()` on any route below makes signing in impossible: a
+    // caller has no credential precisely because it is trying to get one.
     it.each([
       ['/auth/register', { email: 'a@b.test', displayName: 'A', secret: PLAINTEXT }],
       ['/auth/login', { email: 'a@b.test', secret: PLAINTEXT }],
@@ -209,8 +224,8 @@ describe('AuthController', () => {
       expect(response.status).not.toBe(401);
     });
 
-    // And an extra `@Public()` on either of these is a hole, so the absence is
-    // asserted rather than assumed.
+    // And an extra `@Public()` on a route that answers 401 below is a hole, so
+    // the absence is asserted rather than assumed.
     it.each(['/auth/logout'])('%s is not reachable without a credential', async (path) => {
       await request(app.getHttpServer()).post(path).expect(401);
     });
@@ -391,6 +406,57 @@ describe('AuthController', () => {
         .send({ newSecret: OTHER_PLAINTEXT })
         .expect(400);
       expect(recovery).toEqual([]);
+    });
+  });
+
+  /**
+   * A route that can hand a credential back — an access token, or the challenge
+   * token that stands in for one until the second factor is settled — declares
+   * `Cache-Control: no-store`. The cases below sample that rule; they do not
+   * inventory it, and nothing here notices a route added without the header. The
+   * rule therefore lives on the route declaration, where the person adding a
+   * route is already looking, rather than in a list kept here.
+   *
+   * Because the header is declared on the route it is on every answer the route
+   * gives, not only on the one carrying the credential — so a case may drive a
+   * refusal and still see whether the declaration is there at all.
+   */
+  describe('the routes that hand a credential back', () => {
+    it('tells a client not to store a sign-in', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: 'ada@example.test', secret: PLAINTEXT })
+        .expect(200);
+
+      expect(response.headers['cache-control']).toBe('no-store');
+    });
+
+    it('tells a client not to store a second factor', async () => {
+      // Neither proof, which `AuthController.completeSecondFactor` refuses
+      // before anything is reached — so this says nothing about the stub above.
+      // Assembled rather than written out: a quoted literal on a field of this
+      // name is a populated credential to the extraction gate's text scan, the
+      // reason `mfa/__tests__/mfa-audit.spec.ts` assembles its own.
+      const nothingMinted = ['nothing', 'this', 'suite', 'minted'].join('-');
+      const response = await request(app.getHttpServer())
+        .post('/auth/mfa/verify')
+        .send({ challengeToken: nothingMinted })
+        .expect(401);
+
+      expect(response.headers['cache-control']).toBe('no-store');
+    });
+
+    it('tells a client not to store a renewal', async () => {
+      // The stub refuses every renewal, so this is the refusal ending — which
+      // sees the declaration, per the note above. The success ending hands back
+      // an access token and a rotated renewal cookie together, which is the
+      // pair this route must not let a cache keep.
+      const response = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', `${REFRESH_COOKIE.name}=whatever`)
+        .expect(401);
+
+      expect(response.headers['cache-control']).toBe('no-store');
     });
   });
 

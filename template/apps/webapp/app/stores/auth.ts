@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia';
 import { AuthenticationStatus } from '__FORGE_SCOPE__/core/auth/enums';
-import type { AuthenticationOutcome, ClientContext } from '__FORGE_SCOPE__/core/auth/types';
+import type { ClientContext } from '__FORGE_SCOPE__/core/auth/types';
 import { assertNever } from '__FORGE_SCOPE__/core/shared/policies';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
 import type { UserJSON } from '__FORGE_SCOPE__/core/users/types';
-import { createApiClient, postLogout, postRefresh } from '~/fetchers';
-import { AuthHttpService } from '~/services';
-import type { ApiClient } from '~/types';
+import { ApiError, createApiClient, postLogout, postRefresh } from '~/fetchers';
+import { AuthHttpService, MfaHttpService } from '~/services';
+import type { ApiClient, LoginOutcome, MfaChallengeMethodBody, MfaVerifyProof } from '~/types';
 import { createAuthFetch } from '~/utils/authFetch';
 
 /**
@@ -121,6 +121,41 @@ export const useAuthStore = defineStore('auth', () => {
   const accessToken = computed<string | null>(() => heldCredential.value);
 
   /**
+   * The challenge a first factor was stopped with, or `null`: the token to
+   * present with the second one, and — when the password path told us — which
+   * methods it may be presented with.
+   *
+   * **Not returned from this setup function, for the reason {@link heldCredential}
+   * gives, and it is the same line that decides it.** A returned `ref` is state,
+   * state is `pinia.state.value`, and `pinia.state.value` is what `@pinia/nuxt`
+   * writes into the HTML. A challenge token in the markup is a single-use
+   * credential in a page any cache or log between the two ends may keep. It is
+   * pinned the same way — `stores/__tests__/auth-mfa.spec.ts` asserts on
+   * `pinia.state.value`, not on the store property.
+   *
+   * It is also **never a cookie and never storage**: it lives exactly as long as
+   * the page that holds it, which is as long as the challenge is worth anything.
+   *
+   * `methods` is `null` when this side was not told. The federated redirect
+   * carries a token and nothing else, so a person who arrives through it has a
+   * challenge and no list until {@link loadChallengeMethods} has asked for it —
+   * and keeps `null` if that question could not be asked.
+   */
+  const heldChallenge = ref<{
+    token: string;
+    methods: readonly MfaChallengeMethodBody[] | null;
+  } | null>(null);
+
+  /**
+   * Whether a sign-in is waiting for a second factor, and what it may be
+   * finished with — **without the token**, which nothing outside this store may
+   * read. A getter, so it is not serialised either.
+   */
+  const challenge = computed<{ methods: readonly MfaChallengeMethodBody[] | null } | null>(
+    () => (heldChallenge.value === null ? null : { methods: heldChallenge.value.methods }),
+  );
+
+  /**
    * The signed-in person as the wire carries them, or `null`.
    *
    * The wire shape and not the entity, because this is state: it is serialized
@@ -156,6 +191,9 @@ export const useAuthStore = defineStore('auth', () => {
   /** The contract implementation, rebuilt whenever the transport underneath it is. */
   let service = new AuthHttpService(guarded);
 
+  /** The second-factor routes, on the same transport and rebuilt with it. */
+  let mfa = new MfaHttpService(guarded);
+
   /**
    * The one renewal that is currently in flight, or `null`.
    *
@@ -187,6 +225,7 @@ export const useAuthStore = defineStore('auth', () => {
     transport = client;
     guarded = createAuthFetch({ inner: transport, presented, awaitingRenewal, renew });
     service = new AuthHttpService(guarded);
+    mfa = new MfaHttpService(guarded);
   }
 
   /** The credential the transport is presenting, for `createAuthFetch` to judge a 401 by. */
@@ -258,17 +297,21 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * Proves who somebody is and takes up the session it opened.
+   * Proves who somebody is and takes up the session it opened — or, when the
+   * password was right and is not enough, holds the challenge it was answered
+   * with.
    *
    * @param email - the address offered
    * @param secret - the secret offered
-   * @returns core's outcome, unchanged — the caller renders from it
+   * @returns core's outcome for a sign-in or a refusal, unchanged, and for a
+   * challenge the methods on offer **with the token taken off** — see
+   * {@link LoginOutcome}; the caller renders from it
    * @throws Error when the sign-in succeeded but handed over no credential,
    * which is a broken `AuthHttpService` rather than a refusal; reporting it as a
    * rejection would put a reason in a field the server never spoke
    */
-  async function login(email: string, secret: string): Promise<AuthenticationOutcome> {
-    const outcome = await service.authenticate({ email, secret, client: NO_CLIENT });
+  async function login(email: string, secret: string): Promise<LoginOutcome> {
+    const outcome = await service.beginSignIn({ email, secret, client: NO_CLIENT });
     switch (outcome.status) {
       case AuthenticationStatus.AUTHENTICATED:
         break;
@@ -276,11 +319,16 @@ export const useAuthStore = defineStore('auth', () => {
         // A refusal is not an error and is not a state change: somebody who was
         // already signed in and mistyped a second password is still signed in.
         return outcome;
+      case AuthenticationStatus.MFA_REQUIRED:
+        // Not a session and not a refusal: the server opened nothing, so
+        // `accept` below must not run for it. What is held is the challenge, in
+        // memory only — see {@link heldChallenge} — and what leaves is
+        // everything except the token.
+        heldChallenge.value = { token: outcome.challengeToken, methods: outcome.methods };
+        return { status: outcome.status, methods: outcome.methods };
       default:
         // Reachable only from outside the type system. A status member added
-        // without a branch here is a compile error, which is the whole point: a
-        // future member such as MFA_REQUIRED, rendered as a plain sign-in
-        // refusal, would be silent and wrong.
+        // without a branch here is a compile error, which is the whole point.
         return assertNever(outcome);
     }
     // **Once.** `takeIssuedCredential` clears as it hands over, which is the
@@ -293,6 +341,123 @@ export const useAuthStore = defineStore('auth', () => {
     }
     accept(outcome.user.toJSON(), issued.accessToken);
     return outcome;
+  }
+
+  /**
+   * Holds a challenge that arrived by a route other than a sign-in answer: the
+   * federated redirect, which could carry a token and nothing else.
+   *
+   * Methods are unknown until {@link loadChallengeMethods} has asked, so they
+   * are recorded as unknown rather than as none — `null` says "not told", `[]`
+   * would say "has no way in".
+   *
+   * @param token - the challenge token, as the redirect carried it
+   */
+  function adoptChallenge(token: string): void {
+    heldChallenge.value = { token, methods: null };
+  }
+
+  /**
+   * Asks the backend which methods the held challenge may be finished with, for
+   * a challenge that arrived without a list.
+   *
+   * **Does not take the token**: the read spends nothing, and the challenge must
+   * still be there for the verification. A `401` means the challenge cannot be
+   * presented at all — expired, spent, or not a login's — so it is dropped and
+   * the caller finds nothing held. Any other fault (the network, a `5xx`) leaves
+   * the challenge and its unknown methods as they were: a person who can still
+   * use a recovery code or a passkey is better served than one bounced to sign in.
+   */
+  async function loadChallengeMethods(): Promise<void> {
+    const held = heldChallenge.value;
+    if (held === null) return;
+    try {
+      const methods = await mfa.methods(held.token);
+      // Only if it is still the challenge that was asked about.
+      if (heldChallenge.value?.token === held.token) {
+        heldChallenge.value = { token: held.token, methods };
+      }
+    } catch (error) {
+      const refused = error instanceof ApiError && error.status === 401;
+      if (refused && heldChallenge.value?.token === held.token) heldChallenge.value = null;
+    }
+  }
+
+  /** Forgets the challenge without presenting it. What "back to sign in" does. */
+  function abandonChallenge(): void {
+    heldChallenge.value = null;
+  }
+
+  /**
+   * Takes the token out of the store, leaving nothing behind.
+   *
+   * **Every route that presents a token spends it, whatever the answer**, so
+   * every route takes it through here: a challenge is dropped the moment it is
+   * sent and not when the reply arrives. Kept until the reply, a failure would
+   * leave a dead token held, and the next submit would send it again and be
+   * refused for a reason nobody could see.
+   *
+   * @throws Error when no challenge is held
+   */
+  function takeChallengeToken(): string {
+    if (heldChallenge.value === null) throw new Error('No sign-in is waiting for a second factor.');
+    const { token } = heldChallenge.value;
+    heldChallenge.value = null;
+    return token;
+  }
+
+  /**
+   * Finishes a sign-in with a proof from one of the account's own methods, or a
+   * recovery code, and takes up the session that opens.
+   *
+   * **The challenge is gone afterwards on every path**, a refusal included: the
+   * backend spends it first, so a wrong code costs the whole sign-in. The person
+   * starts again from the password, and the page says so.
+   *
+   * @param proof - `{ methodId, code }` or `{ recoveryCode }`
+   * @throws Error when no challenge is held
+   * @throws ApiError for every refusal — one `401`, deliberately uninformative
+   */
+  async function completeSecondFactor(proof: MfaVerifyProof): Promise<void> {
+    const token = takeChallengeToken();
+    const body = await mfa.verify(token, proof);
+    accept(body.user, body.accessToken);
+  }
+
+  /**
+   * Asks for the options to sign a passkey assertion over.
+   *
+   * **This spends the held token and replaces it with the one the answer
+   * carries**, because that is what the backend does: each leg of the ceremony
+   * is its own single-use challenge. A refusal leaves nothing held.
+   *
+   * @returns the options, in the browser library's JSON shape
+   * @throws Error when no challenge is held, or when the answer carried no token
+   * @throws ApiError for every refusal
+   */
+  async function beginPasskey(): Promise<unknown> {
+    const methods = heldChallenge.value?.methods ?? null;
+    const token = takeChallengeToken();
+    const answer = await mfa.passkeyOptions(token);
+    if (answer.challengeToken === null) {
+      throw new Error('The passkey options carried no challenge to continue with.');
+    }
+    heldChallenge.value = { token: answer.challengeToken, methods };
+    return answer.publicKey;
+  }
+
+  /**
+   * Presents the assertion the authenticator produced, and takes up the session
+   * that opens.
+   *
+   * @param assertion - the browser library's JSON assertion
+   * @throws Error when no challenge is held — call {@link beginPasskey} first
+   * @throws ApiError for every refusal
+   */
+  async function completePasskey(assertion: Record<string, unknown>): Promise<void> {
+    const token = takeChallengeToken();
+    const body = await mfa.verifyPasskey(token, assertion);
+    accept(body.user, body.accessToken);
   }
 
   /**
@@ -437,8 +602,15 @@ export const useAuthStore = defineStore('auth', () => {
     status,
     currentUser,
     isAuthenticated,
+    challenge,
+    abandonChallenge,
+    adoptChallenge,
     adoptProfile,
     adoptTransport,
+    beginPasskey,
+    loadChallengeMethods,
+    completePasskey,
+    completeSecondFactor,
     authenticatedClient,
     changePassword,
     login,

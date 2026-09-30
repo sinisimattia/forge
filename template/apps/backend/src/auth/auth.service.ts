@@ -21,12 +21,14 @@ import type {
 import type { IBreachedPasswordRegistry } from '__FORGE_SCOPE__/core/identities/contracts';
 import { WeakPasswordError } from '__FORGE_SCOPE__/core/identities/errors';
 import { DEFAULT_PASSWORD_POLICY, evaluatePassword } from '__FORGE_SCOPE__/core/identities/policies';
+import { MfaStep } from '__FORGE_SCOPE__/core/mfa/enums';
 import { normalizeEmail } from '__FORGE_SCOPE__/core/shared/policies';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import { UserNotFoundError } from '__FORGE_SCOPE__/core/users/errors';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { AuditService } from '../audit/audit.service';
+import { recordUserAudit } from './record-user-audit';
 import { generateOpaqueToken, hashOpaqueToken } from '../common/crypto';
 import { BREACHED_PASSWORD_REGISTRY } from '../identities/breached-passwords';
 import { IdentitiesService } from '../identities/identities.service';
@@ -37,10 +39,14 @@ import {
   buildVerifyEmailMessage,
   type IMailer,
 } from '../mail';
+import { MfaMethodRecord } from '../mfa/entities/mfa-method-record.entity';
+import { MfaChallengePurpose } from '../mfa/enums/MfaChallengePurpose';
+import { MfaChallengeService } from '../mfa/mfa-challenge.service';
 import { toUserEntity } from '../users/to-user';
 import { UserRecord } from '../users/user-record.entity';
 import { EmailVerificationTokenRecord } from './entities/email-verification-token-record.entity';
 import { PasswordResetTokenRecord } from './entities/password-reset-token-record.entity';
+import { SecondFactorSettled } from './session/second-factor-settled';
 import { IssuedCredentials, SessionService } from './session/session.service';
 
 /** How long a verification credential stands, in seconds. */
@@ -63,12 +69,29 @@ export const PASSWORD_RESET_TTL_SECONDS = 60 * 60;
  * its own comment. An implementation that also has to hand a caller something to
  * present later carries it beside that shape and takes it out before returning,
  * which is exactly what {@link AuthService.authenticate} does with this type.
+ *
+ * {@link SignInResult.challengeToken} joins it the same way and for the same
+ * reason: `MFA_REQUIRED` is an outcome the domain models and a challenge token
+ * is a transport value, so it rides beside the outcome rather than inside it.
+ * **Exactly one of the two fields is ever set**, and which one is decided by
+ * `outcome.status`: `AUTHENTICATED` has credentials, `MFA_REQUIRED` has a
+ * challenge, `REJECTED` has neither. They are two fields and not one union
+ * because a caller switching on the status already knows which to read.
  */
 export interface SignInResult {
   /** What the domain is told. */
   outcome: AuthenticationOutcome;
   /** What the transport is given, present only when the attempt succeeded. */
   credentials: IssuedCredentials | null;
+  /**
+   * What the transport is given when a second factor is owed, and `null`
+   * otherwise.
+   *
+   * It is not a credential and opens nothing: it proves only that this server
+   * saw a correct password moments ago. See `MfaChallengeService` for its
+   * lifetime and its single use.
+   */
+  challengeToken: string | null;
 }
 
 /**
@@ -98,6 +121,9 @@ export class AuthService implements IAuthService {
     private readonly dataSource: DataSource,
     @Inject(MAILER) private readonly mailer: IMailer,
     @Inject(BREACHED_PASSWORD_REGISTRY) private readonly breached: IBreachedPasswordRegistry,
+    @InjectRepository(MfaMethodRecord)
+    private readonly mfaMethods: Repository<MfaMethodRecord>,
+    private readonly challenges: MfaChallengeService,
     config: ConfigService,
   ) {
     // Read once, at construction, with no default. `getOrThrow` here means a
@@ -147,7 +173,13 @@ export class AuthService implements IAuthService {
       // place this event exists, and an entry that misnames it is worse than no
       // entry at all in a table nothing may correct.
       const owner = existing.id as UserId;
-      await this.record(AuditAction.DUPLICATE_REGISTRATION_ATTEMPTED, owner, {}, now);
+      await recordUserAudit(
+        this.audit,
+        AuditAction.DUPLICATE_REGISTRATION_ATTEMPTED,
+        owner,
+        {},
+        now,
+      );
       return;
     }
 
@@ -186,12 +218,18 @@ export class AuthService implements IAuthService {
       // the winning insert is not necessarily ours to look up, and this branch
       // must not spend a query establishing whose it was.
       const lost = { lostRace: true };
-      await this.record(AuditAction.DUPLICATE_REGISTRATION_ATTEMPTED, null, lost, now);
+      await recordUserAudit(
+        this.audit,
+        AuditAction.DUPLICATE_REGISTRATION_ATTEMPTED,
+        null,
+        lost,
+        now,
+      );
       return;
     }
 
     await this.sendVerification(created.id as UserId, email, now);
-    await this.record(AuditAction.USER_REGISTERED, created.id as UserId, {}, now);
+    await recordUserAudit(this.audit, AuditAction.USER_REGISTERED, created.id as UserId, {}, now);
   }
 
   /**
@@ -247,7 +285,7 @@ export class AuthService implements IAuthService {
       return row.userId as UserId;
     });
 
-    await this.record(AuditAction.EMAIL_VERIFIED, userId, {}, now);
+    await recordUserAudit(this.audit, AuditAction.EMAIL_VERIFIED, userId, {}, now);
   }
 
   /**
@@ -273,7 +311,13 @@ export class AuthService implements IAuthService {
     if (user === null || user.emailVerifiedAt !== null || user.deletedAt !== null) return;
 
     await this.sendVerification(user.id as UserId, normalized, now);
-    await this.record(AuditAction.EMAIL_VERIFICATION_REQUESTED, user.id as UserId, {}, now);
+    await recordUserAudit(
+      this.audit,
+      AuditAction.EMAIL_VERIFICATION_REQUESTED,
+      user.id as UserId,
+      {},
+      now,
+    );
   }
 
   // -------------------------------------------------------------- authentication
@@ -364,8 +408,56 @@ export class AuthService implements IAuthService {
     await this.identities.rehashIfNeeded(identity, attempt.secret);
     await this.identities.markUsed(identity.id, now);
 
-    const credentials = await this.sessions.begin(user.id, attempt.client);
-    await this.record(
+    // The second factor, decided before a session exists and not after.
+    //
+    // **`sessions.begin` is below this branch and is not reached by it.** That
+    // is not a thing to remember; it is where the branch returns from. The
+    // whole of `MFA_REQUIRED` is that a correct password buys a challenge and
+    // nothing else, and the assertion that catches an implementation which
+    // opens the session anyway and merely declines to mention it is a count of
+    // `sessions` rows — `__tests__/discriminating/d10-mfa-challenge-only.spec.ts`,
+    // third assertion.
+    //
+    // `decideAuthenticationStep` counts only CONFIRMED methods, so an
+    // abandoned enrollment costs nothing: it is not a weaker gate than a
+    // confirmed one, it is no gate at all, and gating on it would lock out the
+    // one person who cannot produce the proof it demands. That argument is the
+    // policy's own, at length, in `core/mfa/policies`; the query that narrows
+    // to confirmed rows, and the second reason it has to, are
+    // `SecondFactorSettled.confirmedMethodsOf`'s.
+    //
+    // The evidence this produces is what `sessions.begin` below will not open a
+    // session without — see {@link SecondFactorSettled}.
+    const decision = await SecondFactorSettled.settle(this.mfaMethods, user.id);
+    if (decision.step === MfaStep.REQUIRE_SECOND_FACTOR) {
+      // Minted here, where the purpose is known, and never taken from
+      // anything the request that later spends it sends — the discipline
+      // `MfaChallengePurpose`'s own TSDoc sets out.
+      const challengeToken = await this.challenges.mint(user.id, MfaChallengePurpose.LOGIN, null);
+      // A challenge issued and never answered would otherwise leave no trace.
+      // This says only that one was demanded; see the action's own TSDoc.
+      await recordUserAudit(
+        this.audit,
+        AuditAction.MFA_CHALLENGE_ISSUED,
+        user.id,
+        {},
+        now,
+        attempt.client,
+      );
+      return {
+        outcome: {
+          status: AuthenticationStatus.MFA_REQUIRED,
+          user,
+          methods: decision.methods,
+        },
+        credentials: null,
+        challengeToken,
+      };
+    }
+
+    const credentials = await this.sessions.begin(user.id, attempt.client, decision.settled);
+    await recordUserAudit(
+      this.audit,
       AuditAction.LOGIN_SUCCEEDED,
       user.id,
       { sessionId: credentials.session.id },
@@ -376,6 +468,7 @@ export class AuthService implements IAuthService {
     return {
       outcome: { status: AuthenticationStatus.AUTHENTICATED, user, session: credentials.session },
       credentials,
+      challengeToken: null,
     };
   }
 
@@ -445,7 +538,13 @@ export class AuthService implements IAuthService {
         webappUrl: this.webappUrl,
       }),
     );
-    await this.record(AuditAction.PASSWORD_RESET_REQUESTED, user.id as UserId, {}, now);
+    await recordUserAudit(
+      this.audit,
+      AuditAction.PASSWORD_RESET_REQUESTED,
+      user.id as UserId,
+      {},
+      now,
+    );
   }
 
   /**
@@ -521,7 +620,7 @@ export class AuthService implements IAuthService {
 
     await this.identities.replaceSecret(identityId, newSecret);
     await this.sessions.revokeAll(userId);
-    await this.record(AuditAction.PASSWORD_RESET_COMPLETED, userId, {}, now);
+    await recordUserAudit(this.audit, AuditAction.PASSWORD_RESET_COMPLETED, userId, {}, now);
   }
 
   /**
@@ -595,7 +694,23 @@ export class AuthService implements IAuthService {
       // After, never before. Re-issuing first would have the new session revoked
       // along with the old ones, and a wrong current secret would leave a
       // session row behind for an attempt that failed.
-      return this.sessions.beginIn(manager, actorId, client);
+      //
+      // **The one path that opens a session without asking ADR-0012's policy,
+      // and it is not a bypass.** `POST /auth/change-password` carries no
+      // `@Public()`, so the global `JwtAuthGuard` has already accepted an access
+      // token for `actorId` — and an access token for that account cannot exist
+      // unless the policy was satisfied when the session behind it was opened.
+      // The call has also just proven the current secret. The reissued session
+      // is therefore no stronger than the one that asked for it. The factory's
+      // own TSDoc carries the argument in full, and the warning about what must
+      // *not* reach for it; a reader enumerating these does not have to
+      // re-derive either.
+      return this.sessions.beginIn(
+        manager,
+        actorId,
+        client,
+        SecondFactorSettled.becauseTheCallerAlreadyHoldsAnAccessToken(),
+      );
     });
   }
 
@@ -662,7 +777,13 @@ export class AuthService implements IAuthService {
    */
   public async revokeSession(actorId: UserId, sessionId: SessionId): Promise<void> {
     await this.sessions.revoke(actorId, sessionId);
-    await this.record(AuditAction.SESSION_REVOKED, actorId, { sessionId }, new Date());
+    await recordUserAudit(
+      this.audit,
+      AuditAction.SESSION_REVOKED,
+      actorId,
+      { sessionId },
+      new Date(),
+    );
   }
 
   /**
@@ -672,7 +793,13 @@ export class AuthService implements IAuthService {
    */
   public async revokeAllSessions(actorId: UserId): Promise<void> {
     const ended = await this.sessions.revokeAll(actorId);
-    await this.record(AuditAction.ALL_SESSIONS_REVOKED, actorId, { ended }, new Date());
+    await recordUserAudit(
+      this.audit,
+      AuditAction.ALL_SESSIONS_REVOKED,
+      actorId,
+      { ended },
+      new Date(),
+    );
   }
 
   /**
@@ -684,7 +811,7 @@ export class AuthService implements IAuthService {
    */
   public async logout(actorId: UserId, sessionId: SessionId): Promise<void> {
     await this.sessions.revoke(actorId, sessionId);
-    await this.record(AuditAction.LOGGED_OUT, actorId, { sessionId }, new Date());
+    await recordUserAudit(this.audit, AuditAction.LOGGED_OUT, actorId, { sessionId }, new Date());
   }
 
   /**
@@ -769,32 +896,12 @@ export class AuthService implements IAuthService {
     client: ClientContext,
     now: Date,
   ): Promise<SignInResult> {
-    await this.record(AuditAction.LOGIN_FAILED, actorId, { reason }, now, client);
+    await recordUserAudit(this.audit, AuditAction.LOGIN_FAILED, actorId, { reason }, now, client);
     return {
       outcome: { status: AuthenticationStatus.REJECTED, reason },
       credentials: null,
+      challengeToken: null,
     };
-  }
-
-  /** One audit write, with this phase's fixed `organizationId` of `null`. */
-  private record(
-    action: AuditAction,
-    actorId: UserId | null,
-    metadata: Record<string, unknown>,
-    occurredAt: Date,
-    client: ClientContext = { address: null, label: null },
-  ): Promise<void> {
-    return this.audit.record({
-      organizationId: null,
-      actorId,
-      action,
-      resourceType: 'user',
-      resourceId: actorId,
-      metadata,
-      clientAddress: client.address,
-      clientLabel: client.label,
-      occurredAt,
-    });
   }
 
   /**

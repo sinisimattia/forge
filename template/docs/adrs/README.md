@@ -35,7 +35,8 @@ __FORGE_TITLE__, along with their context and consequences.
 | [0009](0009-two-database-roles.md) | Two Database Roles | Accepted |
 | [0010](0010-organization-invitations.md) | Organization Invitations Are Single-Use, Expiring, Hashed and Address-Checked | Accepted |
 | [0011](0011-federated-identity-never-auto-links.md) | A Federated Address Links Nothing | Accepted |
+| [0012](0012-a-second-factor-is-a-property-of-the-account.md) | A Second Factor Belongs to the Account, Not to the Way In | Accepted |
 
-ADRs 0001–0011 are Forge template defaults — inherited from the template, not decisions
+ADRs 0001–0012 are Forge template defaults — inherited from the template, not decisions
 this project made for itself. Supersede any of them with a new, higher-numbered ADR if
 this project needs something different; do not edit them in place.

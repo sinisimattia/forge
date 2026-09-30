@@ -18,7 +18,7 @@
       "register": "Create account",
       "signOut": "Sign out",
       "profile": "Profile",
-      "security": "Password",
+      "security": "Security",
       "sessions": "Where you are signed in",
       "identities": "Ways to sign in"
     }
@@ -92,6 +92,23 @@
       "endsEverySession": "Setting a new password signs you out everywhere, including any device you left signed in.",
       "done": "Your password is set, and every session has ended. Sign in again to continue."
     },
+    "mfa": {
+      "title": "One more step",
+      "subtitle": "Confirm it is you.",
+      "failed": "We could not verify that. Sign in again to try another way.",
+      "noCodeMethod": "Use a recovery code, or a passkey if you have one.",
+      "fields": {
+        "method": "Authenticator",
+        "code": "Code from your authenticator",
+        "recoveryCode": "Recovery code"
+      },
+      "actions": {
+        "verify": "Verify",
+        "usePasskey": "Use a passkey",
+        "useRecoveryCode": "Use a recovery code instead",
+        "useCode": "Use an authenticator code instead"
+      }
+    },
     "oauthCallback": {
       "title": "Signing you in",
       "failed": "We could not complete that sign-in just now. Please try again.",
@@ -114,7 +131,8 @@
       "nameRequired": "Tell us what to call you."
     },
     "security": {
-      "title": "Password",
+      "title": "Security",
+      "passwordHeading": "Password",
       "changed": "Your password is changed.",
       "wrongCurrent": "That is not your current password.",
       "failed": "We could not change your password just now. Please try again.",
@@ -152,6 +170,63 @@
       "providerGoogle": "Google",
       "providerGithub": "GitHub",
       "providerOidc": "Single sign-on"
+    },
+    "mfa": {
+      "title": "Two-step verification",
+      "subtitle": "Ask for a second proof when you sign in, so a stolen password is not enough.",
+      "empty": "You have not set up a second step yet.",
+      "failed": "We could not do that just now. Please try again.",
+      "passkeyDismissed": "The passkey prompt was closed or timed out, so nothing was added. Try again when you are ready.",
+      "labelMissing": "Give it a name, so you can tell it from another.",
+      "columnName": "Name",
+      "columnType": "Kind",
+      "columnStatus": "Status",
+      "columnLastUsed": "Last used",
+      "columnActions": "Actions",
+      "typeTotp": "Authenticator app",
+      "typeWebauthn": "Passkey",
+      "unconfirmed": "Setup not finished",
+      "confirmedOn": "Added {date}",
+      "neverUsed": "Never",
+      "remove": "Remove",
+      "addTotpLabel": "Name for a new authenticator app",
+      "addTotp": "Add an authenticator app",
+      "addPasskeyLabel": "Name for a new passkey",
+      "addPasskey": "Add a passkey",
+      "regenerate": "Get new recovery codes",
+      "enroll": {
+        "title": "Set up your authenticator app",
+        "scan": "Scan this code with your authenticator app.",
+        "qrAlt": "QR code to scan with your authenticator app",
+        "manual": "Cannot scan it? Type this secret into your app instead.",
+        "codeLabel": "Code from your authenticator",
+        "confirm": "Turn on",
+        "wrongCode": "That code is not right. Check the time on your device and try the next one."
+      },
+      "recovery": {
+        "title": "Your recovery codes",
+        "showOnce": "These codes will not be shown again. Save them now: nobody, including us, can get them back for you.",
+        "explain": "Each code works once, in place of a code from your authenticator, if you lose access to it. Keep them somewhere other than this device.",
+        "copy": "Copy codes",
+        "download": "Download codes",
+        "copied": "Copied.",
+        "copyFailed": "We could not copy them. Download them instead.",
+        "saved": "I have saved these codes somewhere safe",
+        "done": "Done",
+        "leaveWarning": "Your recovery codes will not be shown again. Leave without saving them?"
+      },
+      "proof": {
+        "title": "Confirm it is you",
+        "requiredRemove": "This is your last second step. Removing it turns two-step verification off, so we need a code from it, or one of your recovery codes, first.",
+        "requiredRegenerate": "New recovery codes replace the ones you have now, so we need a code from your authenticator, or one of your current recovery codes, first.",
+        "wrong": "That code did not work. Try a fresh code, or a recovery code you have not used.",
+        "method": "Authenticator",
+        "code": "Code from your authenticator",
+        "recoveryCode": "Recovery code",
+        "submit": "Continue",
+        "useRecovery": "Use a recovery code instead",
+        "useCode": "Use an authenticator code instead"
+      }
     }
   },
   "organizations": {

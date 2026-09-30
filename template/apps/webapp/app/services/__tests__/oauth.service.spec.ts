@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AuthenticationStatus } from '__FORGE_SCOPE__/core/auth/enums';
 import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId, UserJSON } from '__FORGE_SCOPE__/core/users/types';
@@ -66,6 +67,11 @@ function clientWithCredential(backend: StubBackend, credential: string | null): 
 /** Signs a seeded user in and returns the credential the world actually issued. */
 async function signIn(backend: StubBackend, email: string): Promise<string> {
   const response = await postLogin(backend.client, { email, secret: PLAINTEXT });
+  // The seeded users hold no second factor, so a challenge here is a fixture
+  // that has changed underneath this helper, and the honest answer is to stop.
+  if (response.status === AuthenticationStatus.MFA_REQUIRED) {
+    throw new Error(`${email} answered with a second-factor challenge; this helper signs in one that has none.`);
+  }
   return response.accessToken;
 }
 

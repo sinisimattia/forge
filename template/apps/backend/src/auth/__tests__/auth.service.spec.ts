@@ -24,6 +24,9 @@ import { ARGON2ID, Argon2PasswordHasher, CURRENT_PARAMS } from '../../identities
 import type { IPasswordHasher, StoredSecret } from '../../identities/hashing';
 import { DUMMY_STORED_SECRET, IdentitiesService } from '../../identities/identities.service';
 import type { IMailer, OutboundMessage } from '../../mail';
+import { MfaChallengeRecord } from '../../mfa/entities/mfa-challenge-record.entity';
+import { MfaMethodRecord } from '../../mfa/entities/mfa-method-record.entity';
+import { MfaChallengeService } from '../../mfa/mfa-challenge.service';
 import { UserRecord } from '../../users/user-record.entity';
 import {
   AuthService,
@@ -144,6 +147,11 @@ describe('AuthService', () => {
       source as unknown as DataSource,
       mailer,
       breached,
+      repo<MfaMethodRecord>(MfaMethodRecord),
+      new MfaChallengeService(
+        repo<MfaChallengeRecord>(MfaChallengeRecord),
+        source as unknown as DataSource,
+      ),
       new ConfigService({ PUBLIC_WEBAPP_URL: WEBAPP_URL }),
     );
   };

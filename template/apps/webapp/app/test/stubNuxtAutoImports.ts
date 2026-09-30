@@ -1,6 +1,7 @@
 import {
   computed,
   nextTick,
+  onBeforeUnmount,
   onMounted,
   onUnmounted,
   reactive,
@@ -31,6 +32,7 @@ export function stubNuxtAutoImports(): void {
   vi.stubGlobal('watch', watch);
   vi.stubGlobal('watchEffect', watchEffect);
   vi.stubGlobal('onMounted', onMounted);
+  vi.stubGlobal('onBeforeUnmount', onBeforeUnmount);
   vi.stubGlobal('onUnmounted', onUnmounted);
   vi.stubGlobal('nextTick', nextTick);
   // Echoes the key AND its interpolation params (rather than the bare key), so a spec

@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import type { DataSource, ObjectLiteral, Repository } from 'typeorm';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import type { RecordAuditEntryInput } from '__FORGE_SCOPE__/core/audit/types';
+import { MfaStep } from '__FORGE_SCOPE__/core/mfa/enums';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import { DisplayNameRequiredError, UserNotFoundError } from '__FORGE_SCOPE__/core/users/errors';
@@ -11,7 +12,9 @@ import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { FakeDataSource, recordingAudit } from '../../common/testing';
 import { RefreshTokenRecord } from '../../auth/entities/refresh-token-record.entity';
 import { SessionRecord } from '../../auth/entities/session-record.entity';
+import { SecondFactorSettled } from '../../auth/session/second-factor-settled';
 import { SessionService } from '../../auth/session/session.service';
+import { MfaMethodRecord } from '../../mfa/entities/mfa-method-record.entity';
 import { UserRecord } from '../user-record.entity';
 import { UsersService } from '../users.service';
 
@@ -62,12 +65,15 @@ describe('UsersService', () => {
   let sessions: SessionService;
   let recorded: RecordAuditEntryInput[];
 
+  // Reads `source` when called rather than when defined, so it can live out
+  // here where `signIn` below also needs it, and still hand back the repository
+  // belonging to whichever store the current `beforeEach` built.
+  const repo = <T extends ObjectLiteral>(entity: { name: string }): Repository<T> =>
+    source.getRepository(entity) as unknown as Repository<T>;
+
   beforeEach(() => {
     source = new FakeDataSource();
     recorded = [];
-
-    const repo = <T extends ObjectLiteral>(entity: { name: string }): Repository<T> =>
-      source.getRepository(entity) as unknown as Repository<T>;
 
     const audit = recordingAudit(recorded);
 
@@ -91,9 +97,24 @@ describe('UsersService', () => {
     ]);
   });
 
-  /** Opens a session for somebody, so a revocation has something to revoke. */
+  /**
+   * Opens a session for somebody, so a revocation has something to revoke.
+   *
+   * The evidence `SessionService.begin` now requires comes from the real
+   * policy over this same store rather than being manufactured here: these
+   * fixtures seed no `mfa_methods` row, so it answers `ISSUE_SESSION`, and if
+   * one were ever seeded this helper would say so rather than opening a session
+   * the application would have withheld.
+   */
   const signIn = async (userId: string): Promise<void> => {
-    await sessions.begin(userId as UserId, { address: null, label: null });
+    const decision = await SecondFactorSettled.settle(
+      repo<MfaMethodRecord>(MfaMethodRecord),
+      userId as UserId,
+    );
+    if (decision.step !== MfaStep.ISSUE_SESSION) {
+      throw new Error(`the policy owes ${userId} a second factor; no session is opened here`);
+    }
+    await sessions.begin(userId as UserId, { address: null, label: null }, decision.settled);
   };
 
   /** Every session row for somebody that is still usable. */

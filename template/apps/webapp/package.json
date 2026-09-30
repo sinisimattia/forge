@@ -21,6 +21,7 @@
     "start:prod": "node .output/server/index.mjs"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^14.0.0",
     "__FORGE_SCOPE__/core": "*",
     "nuxt": "^4.3.1",
     "pinia": "^4.0.3",

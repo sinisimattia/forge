@@ -28,6 +28,9 @@ import { AuthIdentityRecord } from '../../identities/auth-identity-record.entity
 import { Argon2PasswordHasher } from '../../identities/hashing';
 import { IdentitiesController } from '../../identities/identities.controller';
 import { IdentitiesService } from '../../identities/identities.service';
+import { MfaChallengeRecord } from '../../mfa/entities/mfa-challenge-record.entity';
+import { MfaMethodRecord } from '../../mfa/entities/mfa-method-record.entity';
+import { MfaChallengeService } from '../../mfa/mfa-challenge.service';
 import { MembershipRecord } from '../../organizations/membership-record.entity';
 import { UserRecord } from '../../users/user-record.entity';
 
@@ -248,6 +251,11 @@ describe('D11 — a provider-asserted address links nothing', () => {
       audit,
       source as unknown as DataSource,
       new ConfigService({ PUBLIC_API_URL }),
+      repo<MfaMethodRecord>(MfaMethodRecord),
+      new MfaChallengeService(
+        repo<MfaChallengeRecord>(MfaChallengeRecord),
+        source as unknown as DataSource,
+      ),
     );
 
     const moduleRef = await Test.createTestingModule({
@@ -341,6 +349,7 @@ describe('D11 — a provider-asserted address links nothing', () => {
       expect(identitiesOf(ADA)).toHaveLength(2);
       const federated = identitiesOf(ADA)
         .find((row) => row.provider === AuthProvider.GOOGLE);
+      expect(federated).toBeDefined();
       expect(federated?.providerAccountId).toBe(CONTESTED_SUBJECT);
 
       const entries = auditOf(AuditAction.IDENTITY_LINKED);

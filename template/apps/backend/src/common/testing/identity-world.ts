@@ -7,6 +7,7 @@ import { Session } from '__FORGE_SCOPE__/core/auth/entities';
 import type { ClientContext, SessionId } from '__FORGE_SCOPE__/core/auth/types';
 import { AuthIdentity } from '__FORGE_SCOPE__/core/identities/entities';
 import type { AuthIdentityId } from '__FORGE_SCOPE__/core/identities/types';
+import { MfaStep } from '__FORGE_SCOPE__/core/mfa/enums';
 import type { OrganizationId } from '__FORGE_SCOPE__/core/organizations/types';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
@@ -17,12 +18,16 @@ import { EmailVerificationTokenRecord } from '../../auth/entities/email-verifica
 import { PasswordResetTokenRecord } from '../../auth/entities/password-reset-token-record.entity';
 import { RefreshTokenRecord } from '../../auth/entities/refresh-token-record.entity';
 import { SessionRecord } from '../../auth/entities/session-record.entity';
-import { SessionService } from '../../auth/session/session.service';
+import { SecondFactorSettled } from '../../auth/session/second-factor-settled';
+import { IssuedCredentials, SessionService } from '../../auth/session/session.service';
 import { AuthIdentityRecord } from '../../identities/auth-identity-record.entity';
 import { NoOpBreachedPasswordRegistry } from '../../identities/breached-passwords';
 import { Argon2PasswordHasher } from '../../identities/hashing';
 import { IdentitiesService } from '../../identities/identities.service';
 import type { IMailer, OutboundMessage } from '../../mail';
+import { MfaChallengeRecord } from '../../mfa/entities/mfa-challenge-record.entity';
+import { MfaMethodRecord } from '../../mfa/entities/mfa-method-record.entity';
+import { MfaChallengeService } from '../../mfa/mfa-challenge.service';
 import { MembershipRecord } from '../../organizations/membership-record.entity';
 import { UsersService } from '../../users/users.service';
 import { UserRecord } from '../../users/user-record.entity';
@@ -134,6 +139,26 @@ export interface IdentityWorld {
   credentialFromLastLink(): string;
 
   /**
+   * Opens a session for somebody who is already registered, the way the
+   * application opens one: by asking ADR-0012's policy first.
+   *
+   * `SessionService.begin` will not open one without
+   * {@link SecondFactorSettled}, and a harness that manufactured that evidence
+   * would be the one caller in the codebase allowed to skip the policy — in the
+   * file whose whole purpose is that suites run against the real paths. So this
+   * asks {@link SecondFactorSettled.settle} over the same store, and **throws**
+   * if the answer is `REQUIRE_SECOND_FACTOR` rather than quietly opening a
+   * session the application would have withheld. A driver that seeds a
+   * confirmed method and then expects a session gets told so here instead of
+   * being handed credentials that prove nothing.
+   *
+   * @param userId - the account to open a session for
+   * @param client - what to record about where the attempt came from
+   * @returns the session and its two credentials
+   */
+  openSession(userId: UserId, client: ClientContext): Promise<IssuedCredentials>;
+
+  /**
    * One stored user, as a domain entity, read straight from the store.
    *
    * Built here rather than through `UsersService`, because these entities are
@@ -230,6 +255,11 @@ export function makeIdentityWorld(): IdentityWorld {
     source as unknown as DataSource,
     mailer,
     new NoOpBreachedPasswordRegistry(),
+    repo<MfaMethodRecord>(MfaMethodRecord),
+    new MfaChallengeService(
+      repo<MfaChallengeRecord>(MfaChallengeRecord),
+      source as unknown as DataSource,
+    ),
     new ConfigService({ PUBLIC_WEBAPP_URL: WEBAPP_URL }),
   );
 
@@ -274,6 +304,20 @@ export function makeIdentityWorld(): IdentityWorld {
     sent,
     credentialFromLastLink,
     registerOnly,
+
+    openSession: async (userId, client) => {
+      const decision = await SecondFactorSettled.settle(
+        repo<MfaMethodRecord>(MfaMethodRecord),
+        userId,
+      );
+      if (decision.step !== MfaStep.ISSUE_SESSION) {
+        throw new Error(
+          `openSession: the policy owes ${userId} a second factor, so the application `
+          + 'would not open a session here. Drive the challenge instead of asking for one.',
+        );
+      }
+      return sessions.begin(userId, client, decision.settled);
+    },
 
     registerAndVerify: async (email, displayName, secret) => {
       const { userId, verification } = await registerOnly(email, displayName, secret);

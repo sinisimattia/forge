@@ -6,7 +6,7 @@
 
 **Architecture:** A new `mfa` domain in `libs/core` holds `MfaMethod` (no secret material) and two pure policies. `AuthenticationOutcome` gains an `MFA_REQUIRED` **variant**. The backend adds three tables and mints a single-use `mfa_challenges` row — Phase 4's `oauth_authorization_requests` machinery, second implementation — whose purpose is fixed by the endpoint that minted it and read with explicit per-value equality and a refusing fallthrough. Both the password path and the federated path consult the same policy, so neither can issue a session the other would have gated.
 
-**Tech Stack:** TypeScript, NestJS 11, TypeORM 0.3, Postgres, Nuxt 4 / Vue 3, jest (backend), vitest (webapp/core), `otplib`, `@simplewebauthn/server`, `@simplewebauthn/browser`, `qrcode`.
+**Tech Stack:** TypeScript, NestJS 11, TypeORM 0.3, Postgres, Nuxt 4 / Vue 3, jest (backend and libs/core), vitest (webapp), `otplib`, `@simplewebauthn/server`, `@simplewebauthn/browser`, `qrcode`.
 
 **Spec:** `docs/superpowers/specs/2026-09-28-forge-phase-5-mfa-design.md` — read it first. Its parent is `docs/superpowers/specs/2026-09-17-forge-template-design.md` §9.3, §9.7, §9.8, §13 (D10).
 
@@ -25,13 +25,16 @@ Every task's requirements implicitly include all of these. Exact values, copied 
 5. **Never add a foreign key to `audit_entries`**, in either direction. A referential action runs with the table owner's privileges and voids D13.
 6. **`libs/core` stays framework-agnostic and transport-free, in prose as well as imports.** `grep -riE "\bjwt\b|cookie|http" template/libs/core/src` must return zero hits (D14). Never name a consuming app or framework in a comment or TSDoc there either.
 7. **Docker headroom is checked with `docker run --rm alpine df -h /`, never `docker system df`.** Floor is 3 GB before starting any compose build.
+7b. **`libs/core`'s jest config enforces 100% statements, branches, functions and lines over `src/**/*.ts`** (excluding `index.ts`, `types/`, `contracts/` and two testing helpers). Every generated project's CI runs that `coverage` target; **Forge's own `generated-project` gate does not** — it runs lint/typecheck/test/build/purity/layers only. So an uncovered symbol in `libs/core` reddens every generated project's CI and nothing in this repository notices. **Do not add a symbol to `libs/core/src` that nothing in the same task exercises.**
+7a. **`npm test` at the repo root runs the UNIT tier only (`tests/unit/**`), and `FORGE_E2E` is read nowhere in it.** The Docker walk lives in `tests/integration/docker.test.mjs` and runs only under `FORGE_E2E=1 npm run test:integration`. A command that names `FORGE_E2E` alongside `npm test` runs no Docker test at all and still exits 0 — a gate that cannot run, reporting green.
 8. **Probe cleanup form:** `PROBE_ROOT=$(mktemp -d)`, `PROBE="$PROBE_ROOT/probe"`, clean up with `rm -rf "$PROBE_ROOT"` — the directory you created, named directly. Never a path derived from another by taking its parent, and never `$TMPDIR`.
 9. **Every new `AuditAction` member is added to the hand-written pinning map** in `template/libs/core/tests/audit/enums/AuditAction.spec.ts`. That map is transcribed, never derived. A failure there is the guard working.
 10. **`AuthenticationStatus` members and `AuthenticationOutcome` variants are added together.** A bare enum member adds no variant, so `assertNever` still receives `never` and the exhaustiveness injection fails nothing, anywhere.
 11. **On a security branch the safe default is refuse, not proceed.** Every dispatch on a value the database does not constrain uses explicit equality per modelled value and an unconditional refusing fallthrough. Never a ternary, never a default that proceeds.
 12. **Derive every expectation from the requirement, and write the test before the code.** A test written to match code already written asserts the code, not the requirement — and it passes, which is what makes it worse than no test.
 13. **Every assertion in this plan must be observed to fail** when its fault is injected, and the report says what was observed. A green suite is not evidence.
-14. **Commit messages end with:**
+14. **`libs/core` and `apps/backend` both run jest; only `apps/webapp` runs vitest.** Core's specs import through the `__FORGE_SCOPE__/core/<domain>/<folder>` subpath barrels — `STANDARDS.md` forbids relative paths into `src/`, and every existing spec obeys it.
+15. **Commit messages end with:**
     ```
     Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
     ```
@@ -188,12 +191,11 @@ MSG
 
 ```ts
 // template/libs/core/tests/mfa/entities/MfaMethod.spec.ts
-import { describe, expect, it } from 'vitest';
-import { MfaMethod } from '../../../src/mfa/entities/MfaMethod';
-import { MfaMethodType } from '../../../src/mfa/enums/MfaMethodType';
-import { MfaLabelRequiredError } from '../../../src/mfa/errors/MfaLabelRequiredError';
-import type { MfaMethodId } from '../../../src/mfa/types/MfaMethodId';
-import type { UserId } from '../../../src/users/types/UserId';
+import { MfaMethod } from '__FORGE_SCOPE__/core/mfa/entities';
+import { MfaMethodType } from '__FORGE_SCOPE__/core/mfa/enums';
+import { MfaLabelRequiredError } from '__FORGE_SCOPE__/core/mfa/errors';
+import type { MfaMethodId } from '__FORGE_SCOPE__/core/mfa/types';
+import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 
 const base = {
   id: 'm-1' as MfaMethodId,
@@ -241,7 +243,7 @@ describe('MfaMethod', () => {
 - [ ] **Step 2: Run it and watch it fail**
 
 ```bash
-cd template/libs/core && npx vitest run tests/mfa/entities/MfaMethod.spec.ts
+cd template/libs/core && npx jest tests/mfa/entities/MfaMethod.spec.ts
 ```
 
 Expected: FAIL — cannot resolve `../../../src/mfa/entities/MfaMethod`.
@@ -295,12 +297,12 @@ In `template/libs/core/package.json`, add `./mfa/*` subpaths exactly as `./ident
 
 - [ ] **Step 7: Ban the four new packages from core, before anything can import one**
 
-Spec §14. Add `otplib`, `@simplewebauthn/server`, `@simplewebauthn/browser` and `qrcode` to the `no-restricted-imports` list in `template/libs/core/eslint.config.mjs`, beside `typeorm` and `@nestjs/*`. The ban lands in the task that creates the domain they would be imported into, not in the task that installs them — a ban added after the import it forbids is a ban that has already failed once.
+Spec §14. **Read the existing list first: `otplib` and `@simplewebauthn/**` have been banned since Phase 1.** Only `qrcode` is missing — add `qrcode` and `qrcode/**` to both the pattern list and the dynamic-import selector regex, and leave the rest alone. The ban lands in the task that creates the domain they would be imported into, not in the task that installs them — a ban added after the import it forbids is a ban that has already failed once.
 
 - [ ] **Step 8: Run the test, the purity gate, and lint**
 
 ```bash
-cd template/libs/core && npx vitest run tests/mfa/ && npm run lint && npm run typecheck
+cd template/libs/core && npx jest tests/mfa/ && npm run lint && npm run typecheck
 cd ../.. && grep -riE "\bjwt\b|cookie|http" template/libs/core/src && echo "D14 VIOLATION" || echo "D14 clean"
 ```
 
@@ -357,13 +359,12 @@ Jest and vitest both abort an `it` at the first failing `expect`, so a second as
 
 ```ts
 // template/libs/core/tests/mfa/policies/decideAuthenticationStep.spec.ts
-import { describe, expect, it } from 'vitest';
-import { MfaMethod } from '../../../src/mfa/entities/MfaMethod';
-import { MfaMethodType } from '../../../src/mfa/enums/MfaMethodType';
-import { MfaStep } from '../../../src/mfa/enums/MfaStep';
-import { decideAuthenticationStep } from '../../../src/mfa/policies/decideAuthenticationStep';
-import type { MfaMethodId } from '../../../src/mfa/types/MfaMethodId';
-import type { UserId } from '../../../src/users/types/UserId';
+import { MfaMethod } from '__FORGE_SCOPE__/core/mfa/entities';
+import { MfaMethodType } from '__FORGE_SCOPE__/core/mfa/enums';
+import { MfaStep } from '__FORGE_SCOPE__/core/mfa/enums';
+import { decideAuthenticationStep } from '__FORGE_SCOPE__/core/mfa/policies';
+import type { MfaMethodId } from '__FORGE_SCOPE__/core/mfa/types';
+import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 
 const method = (confirmed: boolean, type = MfaMethodType.TOTP): MfaMethod =>
   new MfaMethod({
@@ -417,7 +418,7 @@ describe('decideMfaRemoval', () => {
 - [ ] **Step 2: Run both and watch them fail**
 
 ```bash
-cd template/libs/core && npx vitest run tests/mfa/policies/
+cd template/libs/core && npx jest tests/mfa/policies/
 ```
 
 Expected: FAIL — module not found.
@@ -438,12 +439,12 @@ Its TSDoc argues the one thing that is not obvious: **an unconfirmed method is n
 
 - [ ] **Step 4: Write `decideMfaRemoval`**
 
-Confirmed methods other than the one being removed → `ALLOWED`. Otherwise `validProofPresented ? ALLOWED : REAUTHENTICATION_REQUIRED`. Its TSDoc records spec §16.1: re-authentication here means re-proving the **second factor**, not the password, because an OAuth-only account has no password to present and the threat is a session already hijacked.
+**A method that was never confirmed is never a gate, so removing it is always `ALLOWED`** — check that first. Otherwise: confirmed methods other than the one being removed → `ALLOWED`; failing that, `validProofPresented ? ALLOWED : REAUTHENTICATION_REQUIRED`. The order matters: without the first check, an account whose only method is an abandoned enrollment is asked for a proof it cannot produce — it has no confirmed method to generate a code from and no recovery codes, since those are issued at the first confirmation. The spec's rule (§4.2, §11.2) is about the last *confirmed* method, and this encodes exactly that. Its TSDoc records spec §16.1: re-authentication here means re-proving the **second factor**, not the password, because an OAuth-only account has no password to present and the threat is a session already hijacked.
 
 - [ ] **Step 5: Run the tests, then inject a fault and watch one fail**
 
 ```bash
-cd template/libs/core && npx vitest run tests/mfa/policies/
+cd template/libs/core && npx jest tests/mfa/policies/
 ```
 Expected: PASS.
 
@@ -459,8 +460,10 @@ docker run --rm alpine df -h /
 Confirm ≥ 3 GB available before continuing.
 
 ```bash
-cd /Users/sinisimattia/Progetti/forge && npm test
-FORGE_E2E=1 npm test 2>&1 | tail -40
+cd /Users/sinisimattia/Progetti/forge
+npm test                                  # unit tier only — tests/unit/**
+npm run test:integration                  # integration tier, Docker tests SKIPPED
+FORGE_E2E=1 npm run test:integration      # the Docker tier actually runs
 ```
 
 Expected: both green. **If either fails, that failure is Task 3's problem and is fixed here**, before any MFA code depends on the tier being trustworthy. Record what was found in `docs/superpowers/phase-5-decision-log.md`.
@@ -508,10 +511,9 @@ The member and the variant land together. A bare enum member adds no variant, `a
 
 ```ts
 // template/libs/core/tests/auth/types/AuthenticationOutcome.spec.ts
-import { describe, expect, it } from 'vitest';
-import { AuthenticationStatus } from '../../../src/auth/enums/AuthenticationStatus';
-import type { AuthenticationOutcome } from '../../../src/auth/types/AuthenticationOutcome';
-import { assertNever } from '../../../src/shared/policies/assertNever';
+import { AuthenticationStatus } from '__FORGE_SCOPE__/core/auth/enums';
+import type { AuthenticationOutcome } from '__FORGE_SCOPE__/core/auth/types';
+import { assertNever } from '__FORGE_SCOPE__/core/shared/policies';
 
 describe('AuthenticationOutcome', () => {
   it('has a variant for every AuthenticationStatus member', () => {
@@ -538,7 +540,7 @@ describe('AuthenticationOutcome', () => {
 - [ ] **Step 2: Run it and watch it fail**
 
 ```bash
-cd template/libs/core && npx vitest run tests/auth/types/AuthenticationOutcome.spec.ts
+cd template/libs/core && npx jest tests/auth/types/AuthenticationOutcome.spec.ts
 ```
 
 Expected: FAIL — `MFA_REQUIRED` does not exist on `AuthenticationStatus`.
@@ -554,19 +556,13 @@ and in `AuthenticationOutcome`, the third branch with `user` and `methods`. Exte
 
 - [ ] **Step 4: Fix every switch the compiler names**
 
-```bash
-cd /Users/sinisimattia/Progetti/forge && npm run typecheck
-```
+**There is no `typecheck` script at the repo root, and `template/` cannot be `npm install`ed in place** — its `package.json` files carry `__FORGE_SCOPE__` tokens. Typecheck each workspace where it is installable, and for anything that only a real build sees (`.vue` files are invisible to bare `tsc`), generate a scratch project with `npm run create`, install it, and run `nuxt typecheck` there. Delete the scratch project afterwards; commit nothing from it.
 
-Every error is a `switch` that must now handle `MFA_REQUIRED`. **In this task, `auth.controller.ts` handles it by throwing `UnauthorizedException` — a placeholder that is replaced in Task 9.** That is deliberate: it keeps the compiler green without inventing a transport shape three tasks before the transport exists, and it fails closed in the interim.
+Every compiler error is a `switch` that must now handle `MFA_REQUIRED`. **In this task, `auth.controller.ts` handles it by throwing `UnauthorizedException` — a placeholder that is replaced in Task 9.** That is deliberate: it keeps the compiler green without inventing a transport shape three tasks before the transport exists, and it fails closed in the interim.
 
 - [ ] **Step 5: Run everything**
 
-```bash
-npm run typecheck && npm test
-```
-
-Expected: PASS. Note which files the compiler forced you to touch and write the count into the report — that count is the exhaustiveness property working.
+Run each workspace's own `typecheck` and `test`, plus the scratch-project `nuxt typecheck` described in Step 4. Expected: PASS. Note which files the compiler forced you to touch and write the count into the report — that count is the exhaustiveness property working.
 
 - [ ] **Step 6: Commit**
 
@@ -593,7 +589,7 @@ MSG
 - Create: `template/apps/backend/src/mfa/enums/MfaChallengePurpose.ts`
 - Create: `template/apps/backend/src/mfa/mapMfaMethodRecord.ts`
 - Test: `template/apps/backend/src/mfa/__tests__/mapMfaMethodRecord.spec.ts`
-- Modify: `template/apps/backend/src/db/__tests__/schema-drift.spec.ts` (the expected-table list) — **find it first**; the roadmap records that this list went stale for a phase and a half
+- **Do NOT touch the schema-drift expected-table list.** It lives in Forge's own `tests/integration/docker.test.mjs`, and it asserts the tables **TypeORM maps**, not the tables the migrations create. Nothing registers these records until Task 12's module exists, so adding the names here would make the gate red for seven tasks. Task 12 owns that edit
 
 **Read first, before writing a line of SQL:** `template/apps/backend/src/db/__tests__/migration-sql.spec.ts`. It is a **fail-closed static guard over every migration's SQL**, so a construct it does not whitelist is rejected even when it is correct Postgres. Read its whitelist and write SQL that satisfies it. Also read `1758000004000-OAuthAuthorizationRequests.ts` for the TSDoc voice and the named-constraint convention.
 
@@ -674,9 +670,9 @@ Following `email-verification-token-record.entity.ts` in structure and TSDoc voi
 
 Explicit equality per modelled `MfaMethodType` member, each branch asserting its own material, and an unconditional throwing fallthrough. Never a ternary. Never a default that proceeds.
 
-- [ ] **Step 6: Update the schema-drift expectations**
+- [ ] **Step 6: Leave the schema-drift list alone**
 
-Add `mfa_methods`, `mfa_recovery_codes`, `mfa_challenges` to the expected-table list. Then run that spec and watch it pass — and note in the report that you ran it, because the roadmap records this exact list going stale for a phase and a half while nobody ran the tier that reads it.
+It is in `tests/integration/docker.test.mjs` and asserts `ds.entityMetadatas.map((m) => m.tableName)` — what TypeORM **maps**, not what the migrations create. Nothing maps these records until the MFA module registers them, so a name added here now is a false claim that sits red for seven tasks, and a gate expected to be red is a gate people stop reading. Task 12 adds the three names and runs the probe in the same task.
 
 - [ ] **Step 7: Run the tests and the migration guard**
 
@@ -750,9 +746,11 @@ describe('MfaChallengeService', () => {
     await expect(service.consume(token, MfaChallengePurpose.LOGIN)).rejects.toThrow();
   });
 
-  // Review Focus 5. A double-clicked button sends two verifications for one
-  // challenge; exactly one may win. The write lock is the mechanism, and this
-  // is the assertion that it is actually held.
+  // Review Focus 5. `FakeDataSource` implements row-level locking on purpose
+  // (see its own TSDoc: "pessimistic_write is a real mutex, held to the end of
+  // the transaction"), exposes `lockedRows`, and takes `honourLocks` so a suite
+  // can build a second world where the lock is accepted and ignored.
+  // `auth/__tests__/refresh-rotation.spec.ts` is the precedent — copy its shape.
   it('lets exactly one of two concurrent consumptions win', async () => {
     const token = await service.mint(userId, MfaChallengePurpose.LOGIN, null);
     const results = await Promise.allSettled([
@@ -760,7 +758,17 @@ describe('MfaChallengeService', () => {
       service.consume(token, MfaChallengePurpose.LOGIN),
     ]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
-    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    expect(source.lockedRows).toHaveLength(1);
+  });
+
+  // The second mechanism, isolated. With the lock ignored, only the
+  // `consumedAt: IsNull()` predicate and the `affected !== 1` re-check stand
+  // between two racing callers and two sessions. Without this world, removing
+  // the lock fails nothing and removing the predicate fails nothing either.
+  it('still admits exactly one when the lock is ignored', async () => {
+    const world = new FakeDataSource(false);
+    // …build the service over `world`, mint, then race as above.
+    expect(world.honoursLocks).toBe(false);
   });
 
   it('refuses an expired challenge', async () => { /* seed expiresAt in the past */ });
@@ -892,21 +900,31 @@ MSG
 
 - [ ] **Step 1: Write the conformance suite**
 
-Shared assertions (any implementation must satisfy honestly): listing returns only the actor's methods; confirming an already-confirmed method throws `MfaMethodAlreadyConfirmedError`; removing an unknown method throws `MfaMethodNotFoundError`; the first confirmation returns a batch and a later one returns `null`.
+**The DEC-1 criterion is narrower than "a server owns it".** `auth.security.conformance.spec.ts`'s own header states it: an assertion belongs in the security suite when it needs a **state no caller of the contract can produce** — a suspended account, a soft-deleted one, states with no API path to reach. Anything a client can build by making ordinary contract calls belongs in the shared suite, or a transport-backed implementation escapes a property it genuinely owes.
 
-Server-only assertions (DEC-1 — move these to the backend security suite): a method belonging to another user is indistinguishable from one that does not exist; recovery codes are stored as digests.
+Shared assertions: listing returns only the actor's methods; confirming an already-confirmed method throws `MfaMethodAlreadyConfirmedError`; removing an unknown method throws `MfaMethodNotFoundError`; the first confirmation returns a batch and a later one returns `null`; **and a method belonging to another user is indistinguishable from one that does not exist** — build the foreign method through `beginTotpEnrollment`/`confirmTotpEnrollment` for `otherUserId`, exactly as the `listMethods` test does. `runIAuthServiceContract.ts:395-444` is the precedent: the structurally identical session assertion lives in the *shared* suite, and the webapp drives it honestly today.
+
+Server-only assertions (DEC-1): recovery codes are stored as digests. That one qualifies because no `IMfaService` method returns a persisted value — reading it needs a store-peeking capability no client over the wire could honestly have.
 
 - [ ] **Step 2: Wire the suite's runner**
 
 Follow `template/libs/core/src/identities/testing/` exactly — same `ConformanceRunner`/`ConformanceExpect` shape.
 
-- [ ] **Step 3: Typecheck and lint**
+- [ ] **Step 3: Close the coverage gap this domain already has — `libs/core` is RED on this branch**
+
+`libs/core`'s jest config is `testMatch: ['<rootDir>/tests/**/*.spec.ts']` and enforces 100% statements, branches, functions and lines. **Coverage is measured by core's own suite only** — a backend service throwing a core error contributes nothing. Measured on this branch: `mfa/errors` at 10% functions, `mfa/entities` at 80%. Nine of the ten error constructors are never called by any core test, and `MfaMethod.fromJSON` is uncovered.
+
+Add `template/libs/core/tests/mfa/errors/` covering every error class — each one constructed, its `message` asserted, and its `instanceof DomainError` checked. **Assert the message text, not merely that construction does not throw**: an error message is the only part of an error a person ever reads, and a test that constructs without asserting is the check-that-cannot-fail this project bans. Add a `fromJSON` round-trip to `MfaMethod.spec.ts`.
+
+Then run coverage in a generated scratch project and paste the summary into the report. `MfaEnrollmentLimitError` has no thrower in any task of this plan — if that is still true, **delete it** rather than writing a test to cover a symbol nothing uses.
+
+- [ ] **Step 4: Typecheck and lint**
 
 ```bash
 cd template/libs/core && npm run typecheck && npm run lint
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add template/libs/core && git commit -m "$(cat <<'MSG'
@@ -1101,7 +1119,13 @@ cd template/apps/backend && npx cross-env NODE_ENV=test npx jest src/__tests__/d
 
 Expected: FAIL — login currently throws `UnauthorizedException` on `MFA_REQUIRED` (Task 4's placeholder).
 
-- [ ] **Step 4: Make `signIn` consult the policy**
+- [ ] **Step 4: Register all three records, and update the schema-drift list in the same breath**
+
+The drift probe in `tests/integration/docker.test.mjs` asserts the set of tables TypeORM **maps** equals an expected list. It therefore fails the moment *any* MFA record is registered without the list being updated — a partial registration is as red as a premature list entry. So this task registers **all three** records in `app.module.ts`'s `entities` array (they have all existed since the migration task), adds `mfa_challenges`, `mfa_methods` and `mfa_recovery_codes` to the expected list, and **runs the probe** — `FORGE_E2E=1 npm run test:integration` from the repo root. One registration, one list edit, one probe run, rather than the list drifting in and out of truth across three tasks.
+
+Check headroom first with `docker run --rm alpine df -h /`; if it is under 3 GB, `docker builder prune -f` is authorised (build cache and images only — never a container or volume you did not create).
+
+- [ ] **Step 5: Make `signIn` consult the policy**
 
 After credentials verify and before `sessions.begin`, load the user's methods, call `decideAuthenticationStep`, and on `REQUIRE_SECOND_FACTOR` return
 ```ts
@@ -1109,18 +1133,18 @@ After credentials verify and before `sessions.begin`, load the user's methods, c
 ```
 **`sessions.begin` is not reached on this branch.** That is D10's third assertion, and it is a structural property of where the branch returns, not a thing to remember.
 
-- [ ] **Step 5: Implement `POST /auth/mfa/verify`**
+- [ ] **Step 6: Implement `POST /auth/mfa/verify`**
 
 Consume the challenge (purpose `LOGIN`). **Look the method up scoped by the challenge row's `userId`** — `findOne({ where: { id: methodId, userId: row.userId } })` — so a method belonging to anyone else is simply not found. Dispatch on `MfaMethodType` with explicit equality and a refusing fallthrough. On success write `totp_last_step` and `last_used_at`, then issue the session.
 
-- [ ] **Step 6: Run everything, then inject two faults**
+- [ ] **Step 7: Run everything, then inject two faults**
 
 1. Drop `userId` from the method lookup → the cross-user test must fail.
 2. Let the `MFA_REQUIRED` branch fall through to `sessions.begin` → D10's third assertion must fail.
 
 Record both. Revert.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add -A && git commit -m "$(cat <<'MSG'
@@ -1414,6 +1438,9 @@ it.each([['false', null], ['0', null], ['', null], ['true', 'object']])(
 
 **The one thing to get right.** These two routes serve both enrollment and login — exactly the shape that produced Phase 4's fail-open. **They must not dispatch on caller input.** Enrollment is the call that arrived with a session; login is the call that arrived with a challenge token. The purpose is fixed by which credential the request carried, and **a request carrying both is refused** — that is a test, not a comment.
 
+> **This task adds a session-issuance call site, and §8.4 is currently enforced by prose.**
+> WebAuthn login ends in a session, so it becomes the sixth caller of `SessionService.begin`/`beginIn`. The five existing callers are: `AuthService.signIn`, `OAuthService.signInExisting`, `OAuthService.provisionAndSignIn`, `MfaVerificationService.completeLogin` (which *is* the second factor), and `AuthService.changePasswordAndReissue` (whose route already requires an access token that cannot exist without the policy). **Consult the policy or be the factor — and either way, add this call site to the enumeration in Task 20's caller-set test if that task has landed, or state in your report that it has not.** A sixth unguarded caller is the bypass Task 10 closed, re-opened.
+
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
@@ -1433,7 +1460,7 @@ it('refuses a credential id already registered to any account', async () => { /*
 
 ---
 
-### Task 16: Six audit members, and the hand-written map
+### Task 16: The audit members, and the hand-written map
 
 **Files:**
 - Modify: `template/libs/core/src/audit/enums/AuditAction.ts`
@@ -1441,20 +1468,22 @@ it('refuses a credential id already registered to any account', async () => { /*
 - Modify: `template/apps/backend/src/mfa/*.ts` (record the entries)
 
 **Interfaces:**
-- Produces: `AuditAction` at **39** members — `MFA_METHOD_ADDED`, `MFA_METHOD_REMOVED`, `MFA_CHALLENGE_SUCCEEDED`, `MFA_CHALLENGE_FAILED`, `RECOVERY_CODES_REGENERATED`, `RECOVERY_CODE_CONSUMED`.
+- Produces: `AuditAction` at **41** members — `MFA_METHOD_ADDED`, `MFA_METHOD_REMOVED`, `MFA_CHALLENGE_ISSUED`, `MFA_CHALLENGE_SUCCEEDED`, `MFA_CHALLENGE_FAILED`, `RECOVERY_CODES_REGENERATED`, `RECOVERY_CODE_CONSUMED`, `FEDERATED_AUTHORIZATION_CORRUPT`.
 
-- [ ] **Step 1: Add the six members, each with TSDoc saying who the actor is**
+This task was planned as six. `MFA_CHALLENGE_ISSUED` and `FEDERATED_AUTHORIZATION_CORRUPT` were added while building; the design's §13 carries the rule that admitted them.
+
+- [ ] **Step 1: Add the members, each with TSDoc saying who the actor is**
 
 For `MFA_CHALLENGE_FAILED` the actor is the account the challenge was minted for — the only account established at that point — and the **reason is recorded and never returned**, as `LOGIN_FAILED` already does.
 
-- [ ] **Step 2: Add all six to the hand-written pinning map, by hand**
+- [ ] **Step 2: Add every one of them to the hand-written pinning map, by hand**
 
 The map is transcribed, never derived. A derived expectation cannot fail for the reason the map exists. The compiler catches a rename; nothing but this catches a changed string *value*, and an append-only table written with a value that disagrees with every row already in it is not recoverable.
 
 - [ ] **Step 3: Run the pinning spec, then prove it can fail**
 
 ```bash
-cd template/libs/core && npx vitest run tests/audit/enums/AuditAction.spec.ts
+cd template/libs/core && npx jest tests/audit/enums/AuditAction.spec.ts
 ```
 
 Change one member's string value in `AuditAction.ts` (not the map), re-run, confirm it fails, revert. Record it.
@@ -1475,6 +1504,8 @@ Change one member's string value in `AuditAction.ts` (not the map), re-run, conf
 **Interfaces:**
 - Consumes: `POST /auth/login`'s `MFA_REQUIRED` body and `POST /auth/mfa/verify` (Task 9).
 - Produces: `/mfa/challenge`.
+
+**The challenge token arrives in a query parameter on the federated path**, and that is a deliberate, argued choice made where a browser redirect was the only channel available. It is safe only if this page contains it: **strip the parameter from the URL on mount** (`history.replaceState`, as the OAuth callback page already does) so it does not persist in browser history, and make sure the page loads nothing cross-origin that could carry it in a `Referer`. Assert the strip — a page that leaves a single-use credential in the address bar has moved the leak rather than closed it.
 
 **The meeting point is the point of this task.** Phase 4 shipped a callback page that rendered all seven refusal messages correctly while `landingUrl` sent the browser somewhere else entirely, so the message behind that phase's central security property was displayed nowhere — invisible because the page's spec asserted the page, the controller's spec asserted the redirect, and **nothing asserted they met**.
 
@@ -1532,6 +1563,10 @@ Beside `/` and `/login`, in the loop at `docker.test.mjs:372`. Nothing in this r
 
 - [ ] **Step 2: Add the Docker TOTP walk**
 
+Two concurrent `POST /auth/mfa/verify` calls presenting the **same** challenge token must yield exactly one session — asserted against **real Postgres** here, where the fast tier's double can only show that the implementation *asks* for a lock. Assert the `sessions` count, not the response codes.
+
+Then the sign-in walk itself:
+
 Against real Postgres: register → verify → enroll TOTP → confirm → log in → assert the response carries **no** access token and the `sessions` count is unchanged → complete the challenge → assert exactly one session now exists. Compute the TOTP code in the test from the secret the enrollment returned.
 
 - [ ] **Step 3: Write ADR-0012**
@@ -1547,9 +1582,9 @@ Go through the 41-item list in `phase-roadmap.md`. Any item living in a file a P
 ```bash
 cd /Users/sinisimattia/Progetti/forge
 npm run sanitize
-npm test
-docker run --rm alpine df -h /   # ≥ 3 GB before the next line
-FORGE_E2E=1 npm test
+npm test                                  # unit tier only
+docker run --rm alpine df -h /            # ≥ 3 GB before the next line
+FORGE_E2E=1 npm run test:integration      # the Docker tier
 git -C ~/Progetti/Voku status --porcelain   # must be empty
 git -C ~/Progetti/Voku rev-parse HEAD       # must be fdfdbdeae2891954dd1cac538a082d5837f281dd
 ```
@@ -1570,3 +1605,37 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
 )"
 ```
+
+
+---
+
+### Task 20: Make §8.4 structural, not prose
+
+**Why this exists.** Task 10 closed a bypass in which `OAuthService` reached `sessions.begin` without consulting `decideAuthenticationStep`. It added the two missing calls — and its reviewer observed that **nothing now stops a seventh call site from omitting one**. The rule is held by three near-identical comments and three near-identical four-line query-and-decide blocks. A future editor adding an impersonation endpoint, a magic-link sign-in or an invitation acceptance gets no compile error, no failing test, and no reason to read any of the comments. That is precisely the shape of the defect Task 10 closed: correct halves, unexamined join.
+
+**Files:**
+- Modify: `template/apps/backend/src/auth/session/session.service.ts`
+- Modify: `template/apps/backend/src/auth/auth.service.ts`, `src/auth/oauth/oauth.service.ts`, `src/mfa/mfa-verification.service.ts`
+- Test: a discriminating spec under `template/apps/backend/src/__tests__/`
+
+**Interfaces:**
+- Consumes: `decideAuthenticationStep` and `AuthenticationStepDecision` (Task 3).
+- Produces: whatever evidence type the first option below settles on, consumed by every caller of `begin`/`beginIn`.
+
+- [ ] **Step 1: Prefer the type-level fix**
+
+Make `SessionService.begin`/`beginIn` **require evidence that the second factor was settled** — a value only a `decideAuthenticationStep` result (or the verification path, which *is* the factor) can produce. Then the rule belongs to the compiler, the enumeration stops being something anybody has to maintain, and a seventh call site cannot be written without confronting it.
+
+- [ ] **Step 2: If the type-level fix does not fit, write the caller-set tripwire instead**
+
+Following the pattern Task 10 established: a test that reads `auth/` source text and asserts the set of callers of `begin`/`beginIn` is **exactly** the enumerated five (six after WebAuthn login), with a failure message naming §8.4 and telling the reader to either consult the policy or add themselves to the list. Cheaper, and it fails when the rule is broken rather than when somebody happens to read a comment.
+
+- [ ] **Step 3: Extract the duplicated query-and-decide half**
+
+Three copies now exist, and the third is what makes it worth doing: the `confirmedAt: Not(IsNull())` predicate is load-bearing for a reason that has nothing to do with the policy — `mapMfaMethodRecord` throws on a half-written row — and it is argued at length in two of the three comments. That is exactly the kind of thing "simplified" at one site and not the others. Only the query-and-decide half extracts cleanly; the three sites genuinely differ in what they return. Extract that half, carry the predicate's argument once.
+
+- [ ] **Step 4: Document the one literal counterexample**
+
+`AuthService.changePasswordAndReissue` reaches `beginIn` with no policy call. It is **not** a bypass: `POST /auth/change-password` carries no `@Public()`, so the caller already holds an access token that cannot exist without the policy having run, and must also prove the current secret. Say so at the call site, so the next person enumerating these does not have to re-derive it.
+
+- [ ] **Step 5: Run the backend suite and commit**

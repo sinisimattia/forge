@@ -124,10 +124,10 @@ runIAuthServiceContract({
 
     const actorId = await world.registerAndVerify(ACTOR_EMAIL_AS_GIVEN, 'Ada', PLAINTEXT);
     // First, so everything below ages it. See the note above.
-    const actorCredentials = await world.sessions.begin(actorId, HARNESS_CLIENT);
+    const actorCredentials = await world.openSession(actorId, HARNESS_CLIENT);
 
     const otherUserId = await world.registerAndVerify('grace@example.test', 'Grace', PLAINTEXT);
-    const otherCredentials = await world.sessions.begin(otherUserId, HARNESS_CLIENT);
+    const otherCredentials = await world.openSession(otherUserId, HARNESS_CLIENT);
 
     const pendingEmail = 'pending@example.test';
     const pending = await world.registerOnly(pendingEmail, 'Pending', OTHER_PLAINTEXT);

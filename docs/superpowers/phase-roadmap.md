@@ -280,12 +280,18 @@ glob still matches real files, because that assumption is the one this job canno
 itself. The sharpest evidence is not the passing build: with a broken story, `lint`,
 `typecheck`, `test` and `build` **all passed** and only `build-storybook` failed.
 
-## Triage: forty-one minors open
+## Triage: forty-one minors open — dispositioned by Phase 5
 
 Ledgered rather than looped, per the standing rule. **Phase 4 closed two of Phase 3's
 thirteen and deferred thirty of its own**, so eleven carry forward and thirty are new. Full
 evidence is in `phase-3-decision-log.md` §8 and `phase-4-decision-log.md` §8; this is the
 actionable list.
+
+> **Phase 5 dispositioned all forty-one**, item by item: **11 drained** (those in files it
+> opened), **3 closed with no change needed**, **27 still ledgered** (all in files no phase has
+> reopened since). The per-item table, with the file and the reason for each, is
+> `phase-5-decision-log.md` §7. The list below is retained as written; read it with that table
+> beside it.
 
 **Weigh these first**, across both phases:
 
@@ -446,8 +452,40 @@ Phase 4 added two more, both about tests and gates that exist and still prove no
   e2e broken six tasks earlier) before a single assertion of the new work got a chance to run.
   **Run the slow tiers early in a phase, not at the end.**
 
-The rulings behind all six, and everything else decided along the way, are in
-`phase-1-decision-log.md`, `phase-2-decision-log.md`, `phase-3-decision-log.md` and
-`phase-4-decision-log.md`. Read the second one's opening five before touching the identity
-foundation, the third's before touching authorization, tenancy or the migration guards, and
-**the fourth's opening six before touching authentication, the OAuth flow or any gate.**
+Phase 5 added one, and it is a refinement of Phase 3's prose clause rather than a new
+territory — because Phase 3's rule existed, was quoted in every brief, and did not stop the
+defect recurring more than fifteen times:
+
+- **A claim that enumerates will go false, however carefully it was checked.** "Both callers
+  hold the lock", "eight call sites", "the one place that reads them" — each was *true when
+  written*, and each rotted the next time somebody added a caller, silently, in a file no diff
+  touches. Care is not the remedy; three authors in a row wrote one `ADR-0012` sentence false,
+  each having read the code first, because the enumeration ran three deep across three files.
+  **State the invariant, not the enumeration** — "every caller holds a write lock, and nothing
+  here enforces that" survives a fourth caller and says more. Correcting a count merely resets
+  the clock.
+
+The rulings behind all seven, and everything else decided along the way, are in
+`phase-1-decision-log.md` through `phase-5-decision-log.md`. Read the second one's opening five
+before touching the identity foundation, the third's before touching authorization, tenancy or
+the migration guards, **the fourth's opening six before touching authentication, the OAuth flow
+or any gate**, and **the fifth's opening section before writing any comment that counts
+something.**
+
+---
+
+## What Phase 6 inherits, already built
+
+| | Where |
+|---|---|
+| TOTP enrollment and verification, WebAuthn/passkeys as a second factor, and single-use recovery codes — all three answering one `mfa_challenges` challenge, with the purpose allowlist held separate from the `purpose !== expected` comparison so an unmodelled purpose stays refused when a third member joins the enum | `apps/backend/src/mfa/` |
+| `SecondFactorSettled` — a session cannot be opened without it, enforced by a private member and a private constructor, with **five `@ts-expect-error` directives that fail the build on exactly the change that would reopen the hole**. Live in one tier: `npm run typecheck` and CI's `nx affected -t typecheck`, **not** under jest (`isolatedModules` means ts-jest transpiles without checking) | `apps/backend/src/auth/session/second-factor-settled.ts` |
+| `decideAuthenticationStep` and `decideMfaRemoval` as pure core policy — counting **confirmed** methods only, so an unconfirmed method is no gate at all | `libs/core/src/mfa/policies/` |
+| `mfa_methods`, `mfa_recovery_codes`, `mfa_challenges` — `type` and `purpose` plain `text` with no CHECK, deliberately; single-use enforced by one conditional `UPDATE` under a pessimistic write lock | `apps/backend/src/db/migrations/1758000005000-Mfa.ts` |
+| `AuditAction` at **41 members** — Phase 5 added eight, including `MFA_CHALLENGE_ISSUED` and `FEDERATED_AUTHORIZATION_CORRUPT` — with every string value still pinned by a **hand-written** map | `libs/core/src/audit/enums/AuditAction.ts` |
+| the challenge page (`ssr: false`, URL stripped via `replaceState`, `no-referrer`), the security screen, and the recovery-codes panel | `apps/webapp/app/pages/mfa/`, `app/pages/account/security.vue`, `app/components/organisms/` |
+| **ADR-0012** — a second factor belongs to the account, not to the road in; the federated callback asks too | `template/docs/adrs/0012-…` |
+
+**What Phase 5 knowingly did not close** is `phase-5-decision-log.md` §8. Weigh **throttling**
+first: nothing anywhere limits code submission or challenge minting, and a 6-digit TOTP code
+with unlimited attempts is a 6-digit code.

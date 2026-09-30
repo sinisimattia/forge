@@ -50,6 +50,35 @@ import { OAuthService } from './oauth.service';
 const OAUTH_CALLBACK_PATH = '/oauth/callback';
 
 /**
+ * Where a federated sign-in goes when the account still owes a second factor.
+ *
+ * The same cross-application literal {@link OAUTH_CALLBACK_PATH} is, with the
+ * same trade and the same cross-check in `oauth.controller.spec.ts`: Nuxt's
+ * file-based routing turns `apps/webapp/app/pages/mfa/challenge.vue` into
+ * exactly this path, and nothing on this side fails to build if the two
+ * drift. **That page does not exist yet** — it belongs to the change that
+ * builds the webapp half of two-phase login. Landing here is still the
+ * correct destination now: the alternative is landing on the ordinary
+ * callback page, which would show somebody who owes a factor a page saying
+ * their sign-in is complete.
+ *
+ * ## Why the challenge token travels in this URL, where the access credential must not
+ *
+ * This file's R5 note keeps the refresh credential out of a redirect URL
+ * because a query string lands in browser history, in the `Referer` of
+ * whatever the webapp loads next, and in every proxy log on the way. All of
+ * that is equally true of this token, and it is carried here anyway, because
+ * what the two are worth to whoever reads them differs completely: a refresh
+ * credential is a session, while this token is *permission to attempt* a
+ * second factor for a five-minute window, single-use, and worth nothing
+ * without a proof its holder does not have — which is the entire premise of
+ * the account having enrolled one. A browser redirect is also the only
+ * channel this callback has to the webapp; there is no response body to put
+ * it in.
+ */
+const MFA_CHALLENGE_PATH = '/mfa/challenge';
+
+/**
  * The federated flow on the wire — signing in and completing a sign-in.
  *
  * Every route here is `@Public()`, and the reason differs per route, which is
@@ -183,9 +212,24 @@ export class OAuthController {
       const result = await this.oauth.complete(provider, code, state, clientContextOf(request));
 
       switch (result.status) {
-        case 'SIGNED_IN':
+        case 'SIGNED_IN': {
+          // The destination is judged before the cookie is set, so a destination
+          // that is refused leaves no credential behind on the response. Deliberate,
+          // and behaviour-preserving on every reachable path: `landingUrl` does not
+          // throw for a validated `redirectTo`, so no test pins the order. Do not
+          // "simplify" it back to setting the cookie first.
+          const landing = this.landingUrl(result.redirectTo, null);
           REFRESH_COOKIE.set(response, result.credentials.refreshToken);
-          return this.landingUrl(result.redirectTo, null);
+          return landing;
+        }
+        case 'MFA_REQUIRED':
+          // **No `REFRESH_COOKIE.set` on this branch, and nothing to set it
+          // from** — `CompletedAuthorization`'s `MFA_REQUIRED` member has no
+          // `credentials` field, so a copy of the line above would not
+          // compile. The session is `POST /auth/mfa/verify`'s to issue once
+          // the factor this redirect goes to collect has actually been
+          // produced.
+          return this.challengeUrl(result.redirectTo, result.challengeToken);
         case 'LINKED':
           return this.landingUrl(result.redirectTo, null);
         case 'REFUSED':
@@ -230,6 +274,27 @@ export class OAuthController {
     const target = new URL(OAUTH_CALLBACK_PATH, this.webappUrl);
     if (path !== null) target.searchParams.set('redirectTo', path);
     if (error !== null) target.searchParams.set('error', error);
+    return target.toString();
+  }
+
+  /**
+   * Builds the URL a sign-in that still owes a second factor ends at:
+   * {@link MFA_CHALLENGE_PATH}, carrying the challenge token to present at
+   * `POST /auth/mfa/verify` and the authorization's own destination to
+   * continue to once it has been.
+   *
+   * Separate from {@link OAuthController.landingUrl} rather than a parameter
+   * on it, because the two differ in the one way that matters: `landingUrl`
+   * describes a finished authorization, and this one describes a half-done
+   * one that is going somewhere specific to be finished. `redirectTo` is
+   * carried the same way and for the same reason — including being omitted
+   * rather than sent empty when nothing was recorded, which is how the
+   * webapp tells "nowhere" from a destination.
+   */
+  private challengeUrl(path: string | null, challengeToken: string): string {
+    const target = new URL(MFA_CHALLENGE_PATH, this.webappUrl);
+    target.searchParams.set('challengeToken', challengeToken);
+    if (path !== null) target.searchParams.set('redirectTo', path);
     return target.toString();
   }
 }

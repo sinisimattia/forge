@@ -1,12 +1,29 @@
 <script setup lang="ts">
+import { onBeforeRouteLeave } from 'vue-router';
 import { InvalidCredentialsError } from '__FORGE_SCOPE__/core/auth/errors';
 import { WeakPasswordError } from '__FORGE_SCOPE__/core/identities/errors';
 import type { PasswordPolicyViolation } from '__FORGE_SCOPE__/core/identities/types';
 
 /**
- * Changing the secret the person holds.
+ * Changing the secret the person holds, and managing the second factor on top of it.
  *
- * ## It goes through the store, not through a service
+ * ## The second factor
+ *
+ * Everything below `useMfaMethods()` is the second-factor half: the list, an
+ * enrollment, the recovery codes, and the proof form.
+ *
+ * **Where the secrets go.** The TOTP secret and the recovery codes pass through
+ * this page. They live in refs inside `useMfaMethods` — never in a Pinia store,
+ * `useState`, `useAsyncData` or storage — and are set only by a request the
+ * person makes after the page is already running in their browser, so no server
+ * render can have them. `pages/__tests__/security-mfa.spec.ts` asserts none of it
+ * reaches the store's state or `history.state`, and that a fresh mount of the
+ * page has no way to show a batch that was dismissed.
+ *
+ * A failure with no name of its own (`account.mfa.failed`) is rendered above the
+ * branch chain, so it is visible whichever step raised it.
+ *
+ * ## The password goes through the store, not through a service
  *
  * The backend ends every session the user holds and opens a fresh one for the
  * request it is serving, so the answer carries a new access credential — exactly
@@ -25,6 +42,7 @@ definePageMeta({
 });
 
 const { changePassword } = useAuth();
+const mfa = useMfaMethods();
 const { t } = useI18n();
 
 useHead({ title: t('account.security.title') });
@@ -36,6 +54,47 @@ const changed = ref(false);
 const wrongCurrent = ref(false);
 const failed = ref(false);
 const reportedViolations = ref<readonly PasswordPolicyViolation[]>([]);
+
+/** Whether the person has said they kept the recovery codes now on screen. */
+const codesKept = ref(false);
+
+watch(mfa.recoveryCodes, () => {
+  codesKept.value = false;
+});
+
+/**
+ * Following a link in the application while the recovery codes are on screen and
+ * unkept drops ten codes that exist nowhere else. Ask first; a "no" stays here.
+ * Here and not in the panel because a route guard needs a route component.
+ */
+onBeforeRouteLeave(
+  () => mfa.recoveryCodes.value === null
+    || codesKept.value
+    || window.confirm(t('account.mfa.recovery.leaveWarning')),
+);
+
+const totpLabel = ref('');
+const passkeyLabel = ref('');
+const passkeysAvailable = ref(false);
+
+onMounted(async () => {
+  void mfa.load();
+  passkeysAvailable.value = await mfa.passkeySupported();
+});
+
+const hasConfirmedMethod = computed(
+  () => mfa.methods.value.some((method) => method.confirmedAt !== null),
+);
+
+async function startTotp(): Promise<void> {
+  await mfa.beginTotp(totpLabel.value);
+  if (mfa.enrollment.value !== null) totpLabel.value = '';
+}
+
+async function startPasskey(): Promise<void> {
+  await mfa.enrollPasskey(passkeyLabel.value);
+  if (!mfa.labelMissing.value && !mfa.failed.value) passkeyLabel.value = '';
+}
 
 async function submit(): Promise<void> {
   pending.value = true;
@@ -62,36 +121,117 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <AppCard variant="elevated">
-    <AppStack gap="lg">
-      <AppHeading as="h1" size="lg">{{ t('account.security.title') }}</AppHeading>
-      <AppAlert v-if="changed" variant="success">{{ t('account.security.changed') }}</AppAlert>
-      <AppAlert v-if="wrongCurrent" variant="error">
-        {{ t('account.security.wrongCurrent') }}
-      </AppAlert>
-      <AppAlert v-if="failed" variant="error">{{ t('account.security.failed') }}</AppAlert>
-      <AppAlert variant="info">{{ t('account.security.endsOtherSessions') }}</AppAlert>
-      <AppStack as="form" gap="md" @submit.prevent="submit">
-        <PasswordField
-          id="security-current"
-          v-model="currentSecretInput"
-          :label="t('auth.fields.currentPassword')"
-          :disabled="pending"
-          autocomplete="current-password"
-        />
-        <PasswordField
-          id="security-new"
-          v-model="newSecretInput"
-          :label="t('auth.fields.newPassword')"
-          :disabled="pending"
-          :reported-violations="reportedViolations"
-          autocomplete="new-password"
-          check-policy
-        />
-        <AppButton type="submit" :loading="pending">
-          {{ t('auth.actions.setPassword') }}
-        </AppButton>
+  <AppStack gap="xl">
+    <AppCard variant="elevated">
+      <AppStack gap="lg">
+        <AppHeading as="h1" size="lg">{{ t('account.security.title') }}</AppHeading>
+        <AppHeading as="h2" size="md">{{ t('account.security.passwordHeading') }}</AppHeading>
+        <AppAlert v-if="changed" variant="success">{{ t('account.security.changed') }}</AppAlert>
+        <AppAlert v-if="wrongCurrent" variant="error">
+          {{ t('account.security.wrongCurrent') }}
+        </AppAlert>
+        <AppAlert v-if="failed" variant="error">{{ t('account.security.failed') }}</AppAlert>
+        <AppAlert variant="info">{{ t('account.security.endsOtherSessions') }}</AppAlert>
+        <AppStack as="form" gap="md" @submit.prevent="submit">
+          <PasswordField
+            id="security-current"
+            v-model="currentSecretInput"
+            :label="t('auth.fields.currentPassword')"
+            :disabled="pending"
+            autocomplete="current-password"
+          />
+          <PasswordField
+            id="security-new"
+            v-model="newSecretInput"
+            :label="t('auth.fields.newPassword')"
+            :disabled="pending"
+            :reported-violations="reportedViolations"
+            autocomplete="new-password"
+            check-policy
+          />
+          <AppButton type="submit" :loading="pending">
+            {{ t('auth.actions.setPassword') }}
+          </AppButton>
+        </AppStack>
       </AppStack>
-    </AppStack>
-  </AppCard>
+    </AppCard>
+
+    <AppCard variant="elevated">
+      <AppStack gap="lg">
+        <!--
+          Above the branch chain, not inside its last branch: a failure with no
+          name can come from the confirmation form and the proof form as well as
+          from the list, and the last branch alone left those two silent.
+        -->
+        <AppAlert v-if="mfa.failed.value" variant="error">{{ t('account.mfa.failed') }}</AppAlert>
+        <RecoveryCodesPanel
+          v-if="mfa.recoveryCodes.value !== null"
+          v-model:saved="codesKept"
+          :codes="mfa.recoveryCodes.value"
+          @dismiss="mfa.dismissRecoveryCodes"
+        />
+        <MfaProofForm
+          v-else-if="mfa.proofRequest.value !== null"
+          :action="mfa.proofRequest.value.action"
+          :reason="mfa.proofRequest.value.reason"
+          :methods="mfa.methods.value"
+          :busy="mfa.loading.value"
+          @submit="mfa.submitProof"
+          @cancel="mfa.cancelProof"
+        />
+        <TotpEnrollment
+          v-else-if="mfa.enrollment.value !== null"
+          :offer="mfa.enrollment.value"
+          :busy="mfa.loading.value"
+          :wrong-code="mfa.wrongCode.value"
+          @confirm="mfa.confirmTotp"
+          @cancel="mfa.cancelEnrollment"
+        />
+        <template v-else>
+          <AppHeading as="h2" size="md">{{ t('account.mfa.title') }}</AppHeading>
+          <AppText color="muted">{{ t('account.mfa.subtitle') }}</AppText>
+          <AppAlert v-if="mfa.passkeyDismissed.value" variant="warning">
+            {{ t('account.mfa.passkeyDismissed') }}
+          </AppAlert>
+          <AppAlert v-if="mfa.labelMissing.value" variant="error">
+            {{ t('account.mfa.labelMissing') }}
+          </AppAlert>
+          <AppText v-if="mfa.loading.value && mfa.methods.value.length === 0">
+            {{ t('common.states.loading') }}
+          </AppText>
+          <AppText v-else-if="mfa.methods.value.length === 0">{{ t('account.mfa.empty') }}</AppText>
+          <MfaMethodList
+            v-else
+            :methods="mfa.methods.value"
+            :busy="mfa.loading.value"
+            @remove="(methodId) => mfa.remove(methodId)"
+          />
+          <AppStack as="form" gap="md" @submit.prevent="startTotp">
+            <FormField id="totp-label" :label="t('account.mfa.addTotpLabel')">
+              <AppInput id="totp-label" v-model="totpLabel" :disabled="mfa.loading.value" />
+            </FormField>
+            <AppButton type="submit" variant="secondary" :disabled="mfa.loading.value">
+              {{ t('account.mfa.addTotp') }}
+            </AppButton>
+          </AppStack>
+          <AppStack v-if="passkeysAvailable" as="form" gap="md" @submit.prevent="startPasskey">
+            <FormField id="passkey-label" :label="t('account.mfa.addPasskeyLabel')">
+              <AppInput id="passkey-label" v-model="passkeyLabel" :disabled="mfa.loading.value" />
+            </FormField>
+            <AppButton type="submit" variant="secondary" :disabled="mfa.loading.value">
+              {{ t('account.mfa.addPasskey') }}
+            </AppButton>
+          </AppStack>
+          <AppButton
+            v-if="hasConfirmedMethod"
+            variant="ghost"
+            :disabled="mfa.loading.value"
+            @click="mfa.beginRegeneration"
+          >
+            {{ t('account.mfa.regenerate') }}
+          </AppButton>
+        </template>
+      </AppStack>
+    </AppCard>
+  </AppStack>
 </template>

@@ -132,10 +132,12 @@ both in one file.
 - **Configuration this package refuses to boot without:** `DATABASE_URL`, `JWT_SECRET`
   (the key access credentials are signed with), `PUBLIC_WEBAPP_URL` (the origin every
   mail link is built from — verification, password reset **and** invitation) and
-  `PUBLIC_API_URL` (the origin every federated provider redirect URI is built from).
-  `OAuthService` is an ordinary provider of `AuthModule`, so `PUBLIC_API_URL` is required
-  at construction whether or not any federated provider is actually configured. All four
-  are `getOrThrow` with no default, deliberately — see `.env.example`.
+  `PUBLIC_API_URL` (the origin every federated provider redirect URI is built from) and
+  `MFA_ISSUER` (the name an authenticator app shows beside the code, in the enrollment
+  URI). `OAuthService` is an ordinary provider of `AuthModule`, so `PUBLIC_API_URL` is
+  required at construction whether or not any federated provider is actually configured,
+  and `MfaService` reads `MFA_ISSUER` at construction likewise. All five are `getOrThrow`
+  with no default in the code, deliberately — see `.env.example`.
 - `nest-cli.json` carries `"entryFile": "apps/backend/src/main"` **and**
   `"outDir": "dist/apps/backend/src"` on its `assets` entry, and both are load-bearing.
   `tsconfig.json` pins `rootDir` to the workspace root, so `nest build` emits

@@ -1,3 +1,4 @@
+import { LessThan } from 'typeorm';
 import { FakeDataSource } from '../fake-data-source';
 
 /**
@@ -162,5 +163,68 @@ describe('FakeDataSource rollback', () => {
     ).rejects.toThrow();
 
     expect(row().a).toBe('A_OUTSIDE');
+  });
+});
+
+/**
+ * `LessThan`, which the double models for three kinds of column.
+ *
+ * - A `Date`, which is what the sessions, challenges and OAuth requests compare.
+ * - A `bigint`, which the Postgres driver returns as a **string** and SQL
+ *   compares as a number — `'9' < '10'` is false as text and true as a number.
+ *   `mfa_methods.totp_last_step` is one.
+ * - A `NULL`, which is neither less nor greater than anything: `NULL < x` is not
+ *   true, so a row holding one never matches.
+ *
+ * The NULL case is **not reachable from any caller today**: the one caller that
+ * compares a nullable column, `MfaVerificationService.claimStep`, runs its
+ * `IsNull()` statement first and only reaches `LessThan` for rows that are not
+ * null. The branch exists so that the next caller does not inherit a double
+ * that answers `NULL < x` with a `TypeError` or, worse, with `0 < x` — and it is
+ * tested for the same reason, because an unexercised branch in the double every
+ * backend spec leans on is an accident waiting for a caller.
+ */
+describe('FakeDataSource LessThan', () => {
+  const TABLE = { name: 'Comparable' };
+  let source: FakeDataSource;
+
+  beforeEach(() => {
+    source = new FakeDataSource();
+  });
+
+  const idsBelow = (column: string, bound: unknown): string[] =>
+    source.match(TABLE, { [column]: LessThan(bound) }).map((row) => String(row.id));
+
+  it('compares a bigint held as a string as a number, not as text', () => {
+    source.seed(TABLE, [
+      { id: 'nine', step: '9' },
+      { id: 'ten', step: '10' },
+      { id: 'hundred', step: '100' },
+    ]);
+
+    // As text '10' < '9', so a text comparison would answer differently here.
+    expect(idsBelow('step', '10')).toEqual(['nine']);
+    expect(idsBelow('step', '101')).toEqual(['nine', 'ten', 'hundred']);
+    expect(idsBelow('step', '9')).toEqual([]);
+  });
+
+  it('never matches a NULL, or a missing value', () => {
+    source.seed(TABLE, [
+      { id: 'null', step: null },
+      { id: 'missing' },
+      { id: 'three', step: '3' },
+    ]);
+
+    expect(idsBelow('step', '1000')).toEqual(['three']);
+  });
+
+  it('compares Dates by instant', () => {
+    source.seed(TABLE, [
+      { id: 'early', at: new Date('2026-01-01T00:00:00Z') },
+      { id: 'late', at: new Date('2026-03-01T00:00:00Z') },
+    ]);
+
+    expect(idsBelow('at', new Date('2026-02-01T00:00:00Z'))).toEqual(['early']);
+    expect(idsBelow('at', new Date('2026-01-01T00:00:00Z'))).toEqual([]);
   });
 });

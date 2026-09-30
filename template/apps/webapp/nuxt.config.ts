@@ -39,6 +39,26 @@ export default defineNuxtConfig({
     },
   },
 
+  // The one page that is rendered on the client only.
+  //
+  // `/mfa/challenge` can be reached with a single-use credential in its query
+  // string — the federated sign-in's redirect had no other channel to carry it
+  // — and Nuxt writes the request URL, query included, into the payload of every
+  // page it renders on the server (`payload.path`), whether or not the page ever
+  // reads the parameter. Server-rendered, the token would be in the HTML the
+  // response returns and in whatever caches or logs sit in front of it. With
+  // `ssr: false` the server answers with an empty shell and the token is read,
+  // and taken out of the address bar, by the browser alone.
+  //
+  // It is also served with `Referrer-Policy: no-referrer`, as a header: a `<meta>`
+  // tag the page adds exists only after the shell, its scripts and its styles
+  // have been requested, so it cannot cover them.
+  // `app/test/nuxt-config.spec.ts` pins both entries; `pages/__tests__/mfa-challenge.spec.ts`
+  // says why they matter.
+  routeRules: {
+    '/mfa/challenge': { ssr: false, headers: { 'referrer-policy': 'no-referrer' } },
+  },
+
   i18n: {
     restructureDir: 'app',
     langDir: 'locales',

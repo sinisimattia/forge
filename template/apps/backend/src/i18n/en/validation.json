@@ -12,6 +12,7 @@
   "IS_INT": "{property} must be an integer",
   "IS_BOOLEAN": "{property} must be a boolean value",
   "IS_ARRAY": "{property} must be an array",
+  "IS_OBJECT": "{property} must be an object",
   "ARRAY_NOT_EMPTY": "{property} should not be empty",
   "ARRAY_MIN_SIZE": "{property} must contain at least {constraints.0} items",
   "IS_DATE": "{property} must be a valid date",

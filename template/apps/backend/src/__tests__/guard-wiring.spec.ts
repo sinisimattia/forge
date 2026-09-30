@@ -215,15 +215,22 @@ describe('every module whose controllers name a guard can construct it', () => {
    * finding nothing than the single-class version did — an empty guard list, an
    * empty host list, or a `self:paramtypes` read that quietly returns nothing
    * would each make every assertion below vacuously true. All three are closed
-   * here, and the two guards are named rather than counted so that *losing* one
+   * here, and the guards are named rather than counted so that *losing* one
    * is red rather than merely a smaller number.
+   *
+   * `OptionalJwtAuthGuard` injects nothing, so it never reaches `demanding`
+   * and the walk below cannot fail on it. It is named here anyway, because
+   * this list is also what says which guards this application has: a route
+   * quietly dropping the one that makes `POST /mfa/webauthn/*` check a
+   * presented session would leave that list shorter, and a count would not
+   * say so.
    */
-  it('discovers both guards, their hosts, and their requirements — rather than passing by finding none', () => {
+  it('discovers every guard, its hosts and its requirements — rather than passing by finding none', () => {
     expect(modules.length).toBeGreaterThan(1);
     expect(declarations.length).toBeGreaterThan(1);
 
     expect(guards.map((guard) => guard.name).sort())
-      .toEqual(['PermissionsGuard', 'PlatformAdminGuard']);
+      .toEqual(['OptionalJwtAuthGuard', 'PermissionsGuard', 'PlatformAdminGuard']);
 
     // Requirements actually read, not merely an empty array per guard. These are
     // the two repositories the boot failure was about, one each.

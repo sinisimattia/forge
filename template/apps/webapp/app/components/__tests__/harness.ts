@@ -9,6 +9,8 @@ import { useGrants } from '~/composables/useGrants';
 import { useIdentities } from '~/composables/useIdentities';
 import { useInvitations } from '~/composables/useInvitations';
 import { useMembers } from '~/composables/useMembers';
+import { useMfa } from '~/composables/useMfa';
+import { useMfaMethods } from '~/composables/useMfaMethods';
 import { useOAuthProviders } from '~/composables/useOAuthProviders';
 import { useOrganization } from '~/composables/useOrganization';
 import { useProfile } from '~/composables/useProfile';
@@ -127,6 +129,8 @@ export function stubAutoImports(): void {
   vi.stubGlobal('useOrganization', useOrganization);
   vi.stubGlobal('useInvitations', useInvitations);
   vi.stubGlobal('useMembers', useMembers);
+  vi.stubGlobal('useMfa', useMfa);
+  vi.stubGlobal('useMfaMethods', useMfaMethods);
   vi.stubGlobal('useGrants', useGrants);
   vi.stubGlobal('useAudit', useAudit);
   vi.stubGlobal('useCan', useCan);

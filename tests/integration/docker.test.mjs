@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import net from 'node:net';
+import { createHmac } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -369,7 +370,11 @@ test(
       // routes, not one, because the defect was in a globally-registered server
       // plugin (`app/plugins/auth-init.server.ts`) and hit every route identically;
       // `/` and `/login` are enough to show it isn't one page's problem.
-      for (const route of ['/', '/login']) {
+      // `/mfa/challenge` joins them because it is the one page with its own render
+      // rule (client-only, `nuxt.config.ts`), so "the shell is served" is a separate
+      // fact from "the other pages are". No challenge is presented: the page is
+      // asked for as a person who arrived with nothing would ask for it.
+      for (const route of ['/', '/login', '/mfa/challenge']) {
         const page = await call(webappBase, 'GET', route);
         assert.equal(
           page.status, 200,
@@ -383,7 +388,14 @@ test(
 
       await walkTheIdentityFlow(base, target);
       await walkFederatedSignIn(base);
+      // A WARNING FOR WHOEVER ADDS AN OAUTH-TOUCHING ASSERTION AFTER THIS LINE: the walk
+      // below rewrites `apps/backend/.env` and force-recreates `backend`, and it does not
+      // put either back. From here on the dev provider asserts the collision address, not
+      // `DEV_OAUTH_INITIAL_EMAIL`, and the file on disk agrees with the running container.
+      // A walk that needs the original address has to rewrite the file and recreate the
+      // backend itself, as that function does.
       await walkTheFederatedRefusal(compose, projectName, base, target);
+      await walkTheSecondFactor(compose, base, target);
       await walkTheTenancyFlow(base, target);
       await proveTheAuditLogIsAppendOnly(compose, projectName, target);
       await proveWhatTheFakeCannotExpress(compose, base, target);
@@ -1212,6 +1224,7 @@ async function proveWhatTheFakeCannotExpress(compose, base, target) {
     [...report.tables].sort(),
     [
       'audit_entries', 'auth_identities', 'email_verification_tokens', 'memberships',
+      'mfa_challenges', 'mfa_methods', 'mfa_recovery_codes',
       'oauth_authorization_requests', 'organization_invitations', 'organizations',
       'password_reset_tokens', 'refresh_tokens', 'resource_grants', 'sessions', 'users',
     ],
@@ -1269,6 +1282,308 @@ async function proveWhatTheFakeCannotExpress(compose, base, target) {
     'deleting the account took its audit history with it. That is what a foreign key on '
     + 'audit_entries does, and it happens with the table owner\'s privileges, so the '
     + 'REVOKE that makes this log append-only does not apply to it.',
+  );
+}
+
+/**
+ * The base32 alphabet's value for each character, RFC 4648.
+ */
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+/**
+ * Decodes the Base32 shared secret the enrollment returned into bytes.
+ *
+ * Written here, from the RFC, rather than imported from the backend's own
+ * `otplib`: the code this test computes has to come from an implementation that
+ * shares nothing with the one being checked, or a mistake in the backend's
+ * algorithm parameters would be reproduced by the test and pass.
+ *
+ * @param text - the Base32 secret, padding optional
+ * @returns the raw key
+ */
+function base32Decode(text) {
+  let bits = 0;
+  let value = 0;
+  const bytes = [];
+  for (const character of text.replace(/=+$/, '').toUpperCase()) {
+    const index = BASE32_ALPHABET.indexOf(character);
+    assert.notEqual(index, -1, `the enrollment secret is not Base32: ${character}`);
+    value = (value << 5) | index;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push((value >>> bits) & 0xff);
+    }
+  }
+  return Buffer.from(bytes);
+}
+
+/** The RFC 6238 time-step counter for a moment: 30-second steps since the epoch. */
+function totpStepNow() {
+  return Math.floor(Date.now() / 30_000);
+}
+
+/**
+ * The six-digit code an authenticator would show at `step`. RFC 4226 HOTP over
+ * RFC 6238's counter: HMAC-SHA1, dynamic truncation, six digits — the
+ * parameters the enrollment's own `otpauth://` URI states.
+ *
+ * @param secret - the Base32 secret from the enrollment
+ * @param step - the time-step counter
+ * @returns the code, zero-padded
+ */
+function totpAt(secret, step) {
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(step));
+  const digest = createHmac('sha1', base32Decode(secret)).update(counter).digest();
+  const offset = digest[digest.length - 1] & 0x0f;
+  const binary = digest.readUInt32BE(offset) & 0x7fffffff;
+  return String(binary % 1_000_000).padStart(6, '0');
+}
+
+/**
+ * Registers and verifies an account and signs it in once, so it holds a session
+ * to enrol with. Returns the address's access token and user id.
+ */
+async function registerAndSignIn(base, target, email) {
+  return registerVerifyLogin(base, target, email, 'Second Factor');
+}
+
+/**
+ * Enrols and confirms a TOTP method for an account that is signed in.
+ *
+ * @returns the secret the enrollment returned, the method's id, and the
+ *   plaintext recovery codes the first confirmation returned
+ */
+async function enrolTotp(base, token) {
+  const offer = await call(base, 'POST', '/mfa/totp/enroll', { token, body: { label: 'Phone' } });
+  assert.equal(offer.status, 201, offer.text);
+  assert.ok(offer.json.secret && offer.json.methodId, `the offer lacks a secret or a method: ${offer.text}`);
+  assert.match(offer.json.otpauthUri, /^otpauth:\/\/totp\//);
+
+  // Unconfirmed, the method gates nothing. Proven by the sign-in below only
+  // once it is confirmed; here, that the wrong code does not confirm it.
+  const wrong = await call(base, 'POST', '/mfa/totp/confirm', {
+    token, body: { methodId: offer.json.methodId, code: '000000' },
+  });
+  assert.ok(wrong.status >= 400 && wrong.status < 500, `a wrong code confirmed the method: ${wrong.text}`);
+
+  const confirmed = await call(base, 'POST', '/mfa/totp/confirm', {
+    token,
+    body: { methodId: offer.json.methodId, code: totpAt(offer.json.secret, totpStepNow()) },
+  });
+  assert.equal(confirmed.status, 200, confirmed.text);
+  assert.ok(
+    Array.isArray(confirmed.json.recoveryCodes) && confirmed.json.recoveryCodes.length > 0,
+    `the first confirmation returned no recovery codes: ${confirmed.text}`,
+  );
+  return {
+    secret: offer.json.secret,
+    methodId: offer.json.methodId,
+    recoveryCodes: confirmed.json.recoveryCodes,
+  };
+}
+
+/**
+ * Signs in with a password an account whose second factor is enrolled, and
+ * hands back the challenge — asserting on the way that a password alone opened
+ * nothing: no access token, no renewal cookie, and no new `sessions` row.
+ */
+async function signInToTheChallenge(compose, owner, base, email, userId) {
+  const before = Number(await psqlValue(compose, owner, `SELECT count(*) FROM sessions WHERE user_id = '${userId}'`));
+  const login = await call(base, 'POST', '/auth/login', {
+    body: { email, secret: 'correct-horse-battery-staple-42' },
+  });
+  assert.equal(login.status, 200, login.text);
+  assert.equal(login.json.status, 'MFA_REQUIRED', `a correct password did not ask for the second factor: ${login.text}`);
+  assert.equal(login.json.accessToken, undefined, 'an access token was issued before the second factor');
+  assert.equal(refreshCookie(login), undefined, 'a renewal cookie was set before the second factor');
+  assert.deepEqual(login.setCookie, [], 'a cookie was set before the second factor');
+  assert.ok(login.json.challengeToken, `no challenge token: ${login.text}`);
+  const after = Number(await psqlValue(compose, owner, `SELECT count(*) FROM sessions WHERE user_id = '${userId}'`));
+  assert.equal(after, before, 'the password half of a sign-in created a session row');
+  return { challengeToken: login.json.challengeToken, methods: login.json.methods };
+}
+
+/**
+ * The second factor, against real Postgres.
+ *
+ * Three properties, none of which the fast tier can show because each rests on
+ * what a database does under concurrency or across a real `UPDATE`:
+ *
+ * 1. **The TOTP sign-in.** register, verify, enrol, confirm, log in — and that
+ *    login carries no access token, no cookie and no new `sessions` row — then
+ *    complete the challenge and find exactly one session. The confirmation ran
+ *    `manager.update` with an `IsNull()` criterion and read `affected`, which
+ *    until this walk had only ever run against a double.
+ * 2. **One challenge, one session, whatever the callers race.** Two concurrent
+ *    `POST /auth/mfa/verify` presenting the *same* challenge and the *same*
+ *    code; and, separately, presenting the same challenge with two *different*
+ *    valid proofs (a code and a recovery code), which claim different rows and
+ *    so are serialised by nothing but the challenge's own lock. Asserted as the
+ *    `sessions` count, never as which response was which.
+ * 3. **A recovery code opens one session.** Two concurrent verifies on two
+ *    different challenges, both presenting the same recovery code, yield one
+ *    session; a later attempt with it is refused; an unspent one still works.
+ *
+ * The body runs them in the order 1, 3, 2a, 2b: the recovery-code walk uses the
+ * account the sign-in walk created, and the two races (2a the same proof twice, 2b
+ * two different valid proofs) then use accounts of their own.
+ *
+ * @param compose - the project-scoped compose runner
+ * @param base - the stack's base URL
+ * @param target - the generated project directory, for the outbox
+ */
+async function walkTheSecondFactor(compose, base, target) {
+  const { owner } = await connectionUrlsFrom(target);
+  const sessionCount = async (userId) => Number(
+    await psqlValue(compose, owner, `SELECT count(*) FROM sessions WHERE user_id = '${userId}'`),
+  );
+
+  // ---- 1. the sign-in walk ----
+  const emailA = 'second-factor-a@example.com';
+  const a = await registerAndSignIn(base, target, emailA);
+  assert.equal(await sessionCount(a.userId), 1);
+  const methodA = await enrolTotp(base, a.token);
+
+  const challengeA = await signInToTheChallenge(compose, owner, base, emailA, a.userId);
+  assert.equal(challengeA.methods.length, 1);
+  assert.equal(challengeA.methods[0].id, methodA.methodId);
+  assert.equal(await sessionCount(a.userId), 1, 'a session appeared between the password and the code');
+
+  // One step ahead of the step the confirmation was accepted for: a code already
+  // accepted is refused (that is the replay rule), and the verifier allows one
+  // step of drift each way.
+  const completed = await call(base, 'POST', '/auth/mfa/verify', {
+    body: {
+      challengeToken: challengeA.challengeToken,
+      methodId: methodA.methodId,
+      code: totpAt(methodA.secret, totpStepNow() + 1),
+    },
+  });
+  assert.equal(completed.status, 200, completed.text);
+  assert.ok(completed.json.accessToken, 'completing the challenge issued no access token');
+  assert.ok(refreshCookie(completed), 'completing the challenge set no renewal cookie');
+  assert.equal(await sessionCount(a.userId), 2, 'completing the challenge did not create exactly one session');
+  const me = await call(base, 'GET', '/users/me', { token: completed.json.accessToken });
+  assert.equal(me.status, 200, me.text);
+
+  const spent = await call(base, 'POST', '/auth/mfa/verify', {
+    body: {
+      challengeToken: challengeA.challengeToken,
+      methodId: methodA.methodId,
+      code: totpAt(methodA.secret, totpStepNow() + 1),
+    },
+  });
+  assert.equal(spent.status, 401, `a spent challenge was accepted: ${spent.text}`);
+  assert.equal(await sessionCount(a.userId), 2);
+
+  // ---- 3. recovery-code single use (account A holds the codes) ----
+  const [spentCode, unspentCode] = methodA.recoveryCodes;
+  const first = await signInToTheChallenge(compose, owner, base, emailA, a.userId);
+  const second = await signInToTheChallenge(compose, owner, base, emailA, a.userId);
+  const beforeRace = await sessionCount(a.userId);
+  await Promise.all([first, second].map((challenge) => call(base, 'POST', '/auth/mfa/verify', {
+    body: { challengeToken: challenge.challengeToken, recoveryCode: spentCode },
+  })));
+  assert.equal(
+    await sessionCount(a.userId) - beforeRace,
+    1,
+    'one recovery code, presented on two challenges at once, did not yield exactly one session',
+  );
+  const third = await signInToTheChallenge(compose, owner, base, emailA, a.userId);
+  const reuse = await call(base, 'POST', '/auth/mfa/verify', {
+    body: { challengeToken: third.challengeToken, recoveryCode: spentCode },
+  });
+  assert.equal(reuse.status, 401, `a spent recovery code was accepted again: ${reuse.text}`);
+  assert.equal(await sessionCount(a.userId) - beforeRace, 1);
+  const fresh = await signInToTheChallenge(compose, owner, base, emailA, a.userId);
+  const other = await call(base, 'POST', '/auth/mfa/verify', {
+    body: { challengeToken: fresh.challengeToken, recoveryCode: unspentCode },
+  });
+  assert.equal(other.status, 200, `an unspent recovery code was refused: ${other.text}`);
+  assert.equal(await sessionCount(a.userId) - beforeRace, 2);
+
+  // ---- 2a. one challenge, the same proof twice ----
+  const emailB = 'second-factor-b@example.com';
+  const b = await registerAndSignIn(base, target, emailB);
+  const methodB = await enrolTotp(base, b.token);
+  const challengeB = await signInToTheChallenge(compose, owner, base, emailB, b.userId);
+  const sameProof = {
+    challengeToken: challengeB.challengeToken,
+    methodId: methodB.methodId,
+    code: totpAt(methodB.secret, totpStepNow() + 1),
+  };
+  const beforeB = await sessionCount(b.userId);
+  await Promise.all([
+    call(base, 'POST', '/auth/mfa/verify', { body: sameProof }),
+    call(base, 'POST', '/auth/mfa/verify', { body: sameProof }),
+  ]);
+  assert.equal(
+    await sessionCount(b.userId) - beforeB,
+    1,
+    'two concurrent verifies of one challenge did not yield exactly one session',
+  );
+
+  // ---- 2b. one challenge, two different valid proofs ----
+  // A code and a recovery code claim different rows, so the only thing left
+  // between them is the challenge's own single-use claim.
+  const emailC = 'second-factor-c@example.com';
+  const c = await registerAndSignIn(base, target, emailC);
+  const methodC = await enrolTotp(base, c.token);
+  const challengeC = await signInToTheChallenge(compose, owner, base, emailC, c.userId);
+  const beforeC = await sessionCount(c.userId);
+  await Promise.all([
+    call(base, 'POST', '/auth/mfa/verify', {
+      body: {
+        challengeToken: challengeC.challengeToken,
+        methodId: methodC.methodId,
+        code: totpAt(methodC.secret, totpStepNow() + 1),
+      },
+    }),
+    call(base, 'POST', '/auth/mfa/verify', {
+      body: { challengeToken: challengeC.challengeToken, recoveryCode: methodC.recoveryCodes[0] },
+    }),
+  ]);
+  assert.equal(
+    await sessionCount(c.userId) - beforeC,
+    1,
+    'two different valid proofs raced on one challenge and did not yield exactly one session',
+  );
+}
+
+/**
+ * A backend told to serve WebAuthn with no relying-party identifier must
+ * refuse to start.
+ *
+ * `MfaModule`'s `WEBAUTHN_CONFIG` factory throws while the application is being
+ * assembled, which is only true of a running app if `AppModule` imports
+ * `MfaModule` — a fact no unit test of either can establish. Here the shipped
+ * production image is started with `MFA_WEBAUTHN_ENABLED=true` and nothing
+ * else, and its own exit status and message answer both.
+ *
+ * `run --rm --no-deps`, for the reasons {@link proveProductionRefusesTheDevProvider}
+ * gives.
+ *
+ * @param prod - the project-scoped, `compose.prod.yaml`-pinned compose runner
+ */
+async function proveWebAuthnWithoutARelyingPartyRefuses(prod) {
+  const attempt = await prod(
+    'run', '--rm', '--no-deps', '-e', 'MFA_WEBAUTHN_ENABLED=true', 'backend',
+  ).then(
+    (result) => ({ ok: true, out: `${result.stdout}${result.stderr}` }),
+    (error) => ({ ok: false, out: `${error.stdout ?? ''}${error.stderr ?? ''}${error.message}` }),
+  );
+
+  assert.equal(
+    attempt.ok,
+    false,
+    `the production backend booted with MFA_WEBAUTHN_ENABLED=true and no relying party:\n${attempt.out}`,
+  );
+  assert.match(
+    attempt.out,
+    /MFA_WEBAUTHN_RP_ID/,
+    `the backend exited, but not for the reason this test is about:\n${attempt.out}`,
   );
 }
 
@@ -1394,9 +1709,26 @@ test(
     // that is worth asserting rather than assuming: a default would be a
     // credential shared by every project generated from this template. Checked
     // before anything is built, because `config` needs no image.
-    for (const missing of [
-      'JWT_SECRET', 'POSTGRES_PASSWORD', 'APP_DB_ROLE', 'PUBLIC_WEBAPP_URL', 'PUBLIC_API_URL',
-    ]) {
+    //
+    // The variables are READ from `compose.prod.yaml`, not listed here: a hand-written
+    // list is how this test came to check five names while the file required eight.
+    // A variable the file starts requiring that `env` above does not supply fails the
+    // first `config` below with its own name, which is the right way round.
+    const composeProd = await fs.readFile(path.join(target, 'compose.prod.yaml'), 'utf8');
+    const required = [...new Set(
+      [...composeProd.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*):\?/g)].map((match) => match[1]),
+    )];
+    // The floor is the number of names the file required when this was written (eight), so a
+    // parse that silently lost a few still fails. It is a floor, not a comparison: a ninth
+    // requirement raises nothing here, and this regex reads only `${NAME:?…}` — the
+    // colon-less `${NAME?…}` form (which refuses an unset variable but accepts an empty one)
+    // is not read, so a variable moved to that form would drop out of the list silently.
+    assert.ok(
+      required.length >= 8,
+      `compose.prod.yaml names only ${required.length} required variables (${required.join(', ')}); `
+      + 'either it stopped requiring its credentials or this parse no longer reads it',
+    );
+    for (const missing of required) {
       await fs.writeFile(
         path.join(target, '.env'),
         env.split('\n').filter((line) => !line.startsWith(`${missing}=`)).join('\n'),
@@ -1557,6 +1889,7 @@ test(
       assert.equal(health.status, 200, `the production backend that R10 is checked against never came up healthy: ${health.text}`);
 
       await proveProductionRefusesTheDevProvider(prod);
+      await proveWebAuthnWithoutARelyingPartyRefuses(prod);
     } finally {
       await prod('down', '-v', '--rmi', 'local').catch((error) => {
         process.stderr.write(`warning: production refusal down -v failed: ${error.message}\n`);

@@ -40,6 +40,14 @@ import { PrincipalService } from '../authorization/principal.service';
 import { ResourceGrantRecord } from '../authorization/resource-grant-record.entity';
 import { HealthModule } from '../health/health.module';
 import { AuthIdentityRecord } from '../identities/auth-identity-record.entity';
+import { MfaChallengeRecord } from '../mfa/entities/mfa-challenge-record.entity';
+import { MfaMethodRecord } from '../mfa/entities/mfa-method-record.entity';
+import { MfaRecoveryCodeRecord } from '../mfa/entities/mfa-recovery-code-record.entity';
+import { MfaController } from '../mfa/mfa.controller';
+import { MfaModule } from '../mfa/mfa.module';
+import { MfaService } from '../mfa/mfa.service';
+import { RecoveryCodes } from '../mfa/recovery/recovery-codes';
+import { TotpVerifier } from '../mfa/totp/TotpVerifier';
 import { IdentitiesController } from '../identities/identities.controller';
 import { IdentitiesModule } from '../identities/identities.module';
 import { IdentitiesService } from '../identities/identities.service';
@@ -111,6 +119,11 @@ import { UsersModule } from '../users/users.module';
  * | `auth.module.ts`: `OAuthController`/`IdentitiesController` from `controllers` | `AuthModule › registers OAuthController and IdentitiesController` — without either, its routes exist nowhere; this is the fault an earlier revision shipped: `OAuthService` was registered in no module at all |
  * | `auth.module.ts`: `OAuthService` from `providers` | `AuthModule › provides OAuthService, which OAuthController and IdentitiesController resolve` |
  * | `auth.module.ts`: `OAuthAuthorizationRequestRecord` from its own `TypeOrmModule.forFeature` | `AuthModule › registers the table OAuthService reads and writes` — a `Repository<OAuthAuthorizationRequestRecord>` Nest cannot resolve, on top of the one already caught in the app-wide entity list above (that one is for the database *connection*; this one is for *this module's own* repository provider, which `OAuthService`'s `@InjectRepository` actually resolves from) |
+ * | `auth.module.ts`: `MfaMethodRecord`, `MfaChallengeRecord` or `MfaRecoveryCodeRecord` from its own `TypeOrmModule.forFeature` | `AuthModule › registers the table MfaVerificationService, MfaChallengeService and RecoveryCodes read` (one case per record) — a `Repository` Nest cannot resolve, at start-up rather than at compile time; `MfaRecoveryCodeRecord` was in the app-wide entity list and in no `forFeature` until `RecoveryCodes` first injected it |
+ * | `auth.module.ts`: `RecoveryCodes` from `providers` | `AuthModule › provides RecoveryCodes, which MfaVerificationService resolves` |
+ * | `app.module.ts`: `MfaModule` from `imports` | `AppModule › imports MfaModule` — without it `/mfa/*` exists nowhere |
+ * | `mfa.module.ts`: `MfaController`/`MfaService`, its `forFeature` tables, `AuthModule` from `imports` | `MfaModule › …` (four cases) |
+ * | `auth.module.ts`: `RecoveryCodes`/`TotpVerifier` from `exports` | `AuthModule › exports RecoveryCodes and TotpVerifier, which MfaService resolves` |
  * | `identities.module.ts`: `IdentitiesController` left in `controllers` (i.e. not moved to `AuthModule`) | `identities/__tests__/identities.controller.spec.ts › who wires it › AuthModule registers the controller` — `beginLink` needs `OAuthService`, which only `AuthModule` can resolve without a module cycle |
  *
  * What is still beyond reach: the single line `configureApp(app)` in `main.ts`.
@@ -220,6 +233,7 @@ describe('the composition root', () => {
       ['AuditModule', AuditModule],
       ['IdentitiesModule', IdentitiesModule],
       ['AuthModule', AuthModule],
+      ['MfaModule', MfaModule],
       ['UsersModule', UsersModule],
       ['OrganizationsModule', OrganizationsModule],
     ])('imports %s', (_name, imported) => {
@@ -311,6 +325,9 @@ describe('the composition root', () => {
         MembershipRecord,
         InvitationRecord,
         ResourceGrantRecord,
+        MfaMethodRecord,
+        MfaChallengeRecord,
+        MfaRecoveryCodeRecord,
       ]);
     });
 
@@ -401,6 +418,61 @@ describe('the composition root', () => {
         (provider) => provider.provide,
       );
       expect(tokens).toContain(getRepositoryToken(OAuthAuthorizationRequestRecord));
+    });
+
+    describe.each([
+      ['MfaMethodRecord', MfaMethodRecord],
+      ['MfaChallengeRecord', MfaChallengeRecord],
+      ['MfaRecoveryCodeRecord', MfaRecoveryCodeRecord],
+    ])('registers the table %s', (_name, entity) => {
+      it('so the service that injects its repository can be resolved', () => {
+        const registered = dynamicImport(AuthModule, TypeOrmModule);
+        const tokens = ((registered?.providers ?? []) as { provide?: unknown }[]).map(
+          (provider) => provider.provide,
+        );
+        expect(tokens).toContain(getRepositoryToken(entity));
+      });
+    });
+
+    it('provides RecoveryCodes, which MfaVerificationService resolves', () => {
+      expect(moduleProviders(AuthModule)).toContain(RecoveryCodes);
+    });
+
+    it('exports RecoveryCodes and TotpVerifier, which MfaService resolves', () => {
+      // Provided is not enough: `MfaModule` is a different module, and a provider
+      // another module needs and this one does not export is a start-up failure.
+      const exported = Reflect.getMetadata(MODULE_METADATA.EXPORTS, AuthModule);
+      expect(exported).toContain(RecoveryCodes);
+      expect(exported).toContain(TotpVerifier);
+    });
+  });
+
+  describe('MfaModule', () => {
+    it('registers MfaController, without which /mfa/* exists nowhere', () => {
+      expect(moduleControllers(MfaModule)).toContain(MfaController);
+    });
+
+    it('provides MfaService, which MfaController resolves', () => {
+      expect(moduleProviders(MfaModule)).toContain(MfaService);
+    });
+
+    it('gets RecoveryCodes and TotpVerifier from AuthModule rather than providing its own copies', () => {
+      expect(moduleImports(MfaModule)).toContain(AuthModule);
+      expect(moduleProviders(MfaModule)).not.toContain(RecoveryCodes);
+      expect(moduleProviders(MfaModule)).not.toContain(TotpVerifier);
+    });
+
+    describe.each([
+      ['MfaMethodRecord', MfaMethodRecord],
+      ['UserRecord', UserRecord],
+    ])('registers the table %s', (_name, entity) => {
+      it('so MfaService can be resolved', () => {
+        const registered = dynamicImport(MfaModule, TypeOrmModule);
+        const tokens = ((registered?.providers ?? []) as { provide?: unknown }[]).map(
+          (provider) => provider.provide,
+        );
+        expect(tokens).toContain(getRepositoryToken(entity));
+      });
     });
   });
 

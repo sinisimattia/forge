@@ -41,6 +41,11 @@ import { assertNever, normalizeEmail } from '__FORGE_SCOPE__/core/shared/policie
 const emit = defineEmits<{
   /** A session now exists. The page decides where the person goes. */
   authenticated: [];
+  /**
+   * The password was right and is not enough. The store holds the challenge;
+   * the page decides where the person finishes signing in.
+   */
+  challenged: [];
 }>();
 
 const { login } = useAuth();
@@ -68,11 +73,14 @@ async function submit(): Promise<void> {
         // A refusal. `outcome.reason` is deliberately not read — see above.
         failed.value = true;
         break;
+      case AuthenticationStatus.MFA_REQUIRED:
+        // Not a failure and not a session: the store is holding a challenge, and
+        // what happens next is the page's to say, like `authenticated`.
+        emit('challenged');
+        return;
       default:
         // Reachable only from outside the type system. A status member added
-        // without a branch here is a compile error, which is the whole point: a
-        // future member such as MFA_REQUIRED, rendered as a plain sign-in
-        // refusal, would be silent and wrong.
+        // without a branch here is a compile error, which is the whole point.
         return assertNever(outcome);
     }
   } catch {

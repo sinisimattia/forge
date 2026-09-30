@@ -98,6 +98,24 @@ services:
       # deployment refuses to boot without it regardless of whether any
       # federated provider is actually configured.
       PUBLIC_API_URL: ${PUBLIC_API_URL:?required}
+      # The name an authenticator app shows for this deployment's second factor.
+      # Has a default, unlike the origins above: a wrong value here is a label
+      # somebody can read, not a credential delivered to the wrong place. The
+      # API itself refuses to boot with none (`MfaService`, `getOrThrow`), so
+      # the default is what keeps a stack that never set one starting.
+      MFA_ISSUER: ${MFA_ISSUER:-__FORGE_TITLE__}
+      # WebAuthn is optional and absent unless MFA_WEBAUTHN_ENABLED is `true`. These
+      # pass through from the shell or the project's .env with an empty default, and
+      # empty means unset: the API boots without WebAuthn exactly as it does with none
+      # of them. Enabled without an RP ID or an origin it refuses to boot
+      # (`buildWebAuthnConfig`). These variables therefore reach the container ONLY from the
+      # shell or the project root's .env: setting them in apps/backend/.env has no effect,
+      # because these lines override that file even when they interpolate to empty, and the
+      # result is no WebAuthn and no error. Deliberately no `:?required` — that would make a
+      # feature most deployments do not use a precondition for starting.
+      MFA_WEBAUTHN_ENABLED: ${MFA_WEBAUTHN_ENABLED:-}
+      MFA_WEBAUTHN_RP_ID: ${MFA_WEBAUTHN_RP_ID:-}
+      MFA_WEBAUTHN_ORIGIN: ${MFA_WEBAUTHN_ORIGIN:-}
       # Where the dev mailer writes one JSON file per message. It has a default because a
       # wrong value costs a message nobody could have read anyway; the origin above does
       # not, because a wrong value there is a credential delivered to the wrong place.

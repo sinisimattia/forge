@@ -258,6 +258,33 @@ export interface StubBackend {
    * against a fresh one.
    */
   configureOAuthProviders: (providers: readonly AuthProvider[]) => void;
+  /**
+   * Makes `userId` an account that owes a second factor: a correct password now
+   * buys a challenge and nothing else, exactly as `POST /auth/login` answers
+   * for an account holding a confirmed method.
+   *
+   * @param factors.methods - the confirmed methods; a TOTP method's `code` is the
+   * one value the world will accept for it, and a WEBAUTHN method's is the `id` an
+   * assertion must carry
+   * @param factors.recoveryCodes - single-use codes that also finish a sign-in
+   */
+  requireSecondFactor: (userId: UserId, factors: StubSecondFactors) => void;
+  /**
+   * A challenge token this world minted for a login, as the federated redirect
+   * would carry it: a token and nothing else. Nothing was answered to a browser
+   * for it, which is how the federated arrival differs from a password sign-in.
+   */
+  mintChallenge: (userId: UserId) => string;
+  /** Every body `POST /auth/mfa/verify` was sent, oldest first, exactly as received. */
+  mfaVerifyBodies: () => readonly Record<string, unknown>[];
+  /** How many challenges this world has minted and not yet seen spent. */
+  liveChallenges: () => number;
+}
+
+/** What {@link StubBackend.requireSecondFactor} takes. */
+export interface StubSecondFactors {
+  methods: readonly { id: string; type: 'TOTP' | 'WEBAUTHN'; label: string; code: string }[];
+  recoveryCodes?: readonly string[];
 }
 
 /** The reason phrase the backend's filter derives from a status. */
@@ -351,6 +378,15 @@ export function stubBackend(): StubBackend {
   let cookie: string | null = null;
   /** How many renewals have been asked for. The number a concurrency test counts. */
   let refreshes = 0;
+  /** Accounts that owe a second factor, and what would satisfy it. */
+  const secondFactors = new Map<UserId, {
+    methods: StubSecondFactors['methods'];
+    recoveryCodes: Set<string>;
+  }>();
+  /** Login challenges: single-use, and gone from here the moment they are presented. */
+  const challenges = new Map<string, UserId>();
+  /** Every body the verify route was sent. */
+  const verifyBodies: Record<string, unknown>[] = [];
   /** Which providers this world's `/auth/oauth/providers` answers with. See `configureOAuthProviders`. */
   let availableProviders: readonly AuthProvider[] = [];
 
@@ -956,6 +992,47 @@ export function stubBackend(): StubBackend {
 
   const body = <T>(request: ApiRequest): T => request.body as T;
 
+  /** The success body a completed sign-in answers with, with its session opened. */
+  const signedIn = (userId: UserId): unknown => {
+    const stored = users.get(userId);
+    if (stored === undefined) refuse(401, 'errors.auth.mfa_verification_failed');
+    const opened = beginSession(userId, NO_CLIENT);
+    return {
+      user: stored.json,
+      accessToken: opened.credential,
+      expiresIn: STUB_ACCESS_LIFETIME_SECONDS,
+    };
+  };
+
+  /**
+   * The login half of `/mfa/webauthn/*`: a token in the body, no session, and one
+   * refusal for every way it can fail. `options` spends the token it is given and
+   * answers with a new one, as the backend does; `verify` accepts an assertion
+   * whose `id` is a passkey the account holds.
+   */
+  const webAuthnRoutes = (request: ApiRequest, tail: string): unknown => {
+    const refuseLogin = (): never => refuse(401, 'errors.auth.mfa_verification_failed');
+    const sent = body<{ challengeToken?: unknown; response?: { id?: unknown } }>(request);
+    const userId = typeof sent.challengeToken === 'string'
+      ? challenges.get(sent.challengeToken)
+      : undefined;
+    if (typeof sent.challengeToken === 'string') challenges.delete(sent.challengeToken);
+    if (userId === undefined) return refuseLogin();
+    const passkeys = (secondFactors.get(userId)?.methods ?? []).filter((one) => one.type === 'WEBAUTHN');
+    if (passkeys.length === 0) return refuseLogin();
+
+    if (request.method === 'POST' && tail === '/options') {
+      const next = nextId('challenge');
+      challenges.set(next, userId);
+      return { publicKey: { challenge: 'stub-assertion-nonce', rpId: 'localhost' }, challengeToken: next };
+    }
+    if (request.method === 'POST' && tail === '/verify') {
+      if (!passkeys.some((one) => one.code === sent.response?.id)) return refuseLogin();
+      return signedIn(userId);
+    }
+    return refuse(405, 'errors.http.bad_request');
+  };
+
   /**
    * One `/auth` request.
    *
@@ -1044,12 +1121,65 @@ export function stubBackend(): StubBackend {
       if (stored === undefined || stored.secret !== attempt.secret || !usable(stored)) {
         refuseCredentials();
       }
+      const owed = secondFactors.get(stored.json.id);
+      if (owed !== undefined) {
+        // No session, no renewal cookie, no credential: the challenge is all a
+        // correct password buys. Three fields per method and nothing else, as
+        // `MfaChallengeMethodDto` — never the code this world would accept.
+        const challengeToken = nextId('challenge');
+        challenges.set(challengeToken, stored.json.id);
+        return {
+          status: 'MFA_REQUIRED',
+          challengeToken,
+          methods: owed.methods.map(({ id, type, label }) => ({ id, type, label })),
+        };
+      }
       const opened = beginSession(stored.json.id, NO_CLIENT);
       return {
         user: stored.json,
         accessToken: opened.credential,
         expiresIn: STUB_ACCESS_LIFETIME_SECONDS,
       };
+    }
+
+    if (method === 'POST' && tail === '/mfa/methods') {
+      // Reads and spends nothing. One refusal for a token that answers to nothing,
+      // as the backend's; the list is three fields per method, never the code.
+      const { challengeToken } = body<{ challengeToken?: unknown }>(request);
+      const userId = typeof challengeToken === 'string' ? challenges.get(challengeToken) : undefined;
+      const owed = userId === undefined ? undefined : secondFactors.get(userId);
+      if (owed === undefined) return refuse(401, 'errors.auth.mfa_verification_failed');
+      return { methods: owed.methods.map(({ id, type, label }) => ({ id, type, label })) };
+    }
+
+    if (method === 'POST' && tail === '/mfa/verify') {
+      const sent = body<Record<string, unknown>>(request);
+      verifyBodies.push(sent);
+      const { challengeToken, methodId, code, recoveryCode } = sent;
+      const refuseVerification = (): never => refuse(401, 'errors.auth.mfa_verification_failed');
+      // Dispatch on which fields are PRESENT, never on what a value looks like —
+      // the backend's rule, and the only one under which a request carrying both
+      // proofs is refused rather than resolved in somebody's favour.
+      const withRecovery = recoveryCode !== undefined
+        && methodId === undefined
+        && code === undefined;
+      const withCode = recoveryCode === undefined && methodId !== undefined && code !== undefined;
+      // Spent first, whatever follows: a wrong code costs the whole sign-in.
+      const userId = typeof challengeToken === 'string' ? challenges.get(challengeToken) : undefined;
+      if (typeof challengeToken === 'string') challenges.delete(challengeToken);
+      if (userId === undefined || (!withRecovery && !withCode)) return refuseVerification();
+      const owed = secondFactors.get(userId);
+      if (owed === undefined) return refuseVerification();
+      if (withRecovery) {
+        if (typeof recoveryCode !== 'string' || !owed.recoveryCodes.delete(recoveryCode)) {
+          return refuseVerification();
+        }
+      } else if (!owed.methods.some((one) => (
+        one.id === methodId && one.type === 'TOTP' && one.code === code
+      ))) {
+        return refuseVerification();
+      }
+      return signedIn(userId);
     }
 
     if (method === 'POST' && tail === '/refresh') {
@@ -1377,6 +1507,9 @@ export function stubBackend(): StubBackend {
     if (request.path.startsWith('/auth')) {
       return auth(request, request.path.slice('/auth'.length), presented) as T;
     }
+    if (request.path.startsWith('/mfa/webauthn')) {
+      return webAuthnRoutes(request, request.path.slice('/mfa/webauthn'.length)) as T;
+    }
     if (request.path.startsWith('/users')) {
       return userRoutes(request, request.path.slice('/users'.length)) as T;
     }
@@ -1455,6 +1588,27 @@ export function stubBackend(): StubBackend {
 
     configureOAuthProviders(providers: readonly AuthProvider[]): void {
       availableProviders = providers;
+    },
+
+    requireSecondFactor(userId: UserId, factors: StubSecondFactors): void {
+      secondFactors.set(userId, {
+        methods: factors.methods,
+        recoveryCodes: new Set(factors.recoveryCodes ?? []),
+      });
+    },
+
+    mintChallenge(userId: UserId): string {
+      const challengeToken = nextId('challenge');
+      challenges.set(challengeToken, userId);
+      return challengeToken;
+    },
+
+    mfaVerifyBodies(): readonly Record<string, unknown>[] {
+      return [...verifyBodies];
+    },
+
+    liveChallenges(): number {
+      return challenges.size;
     },
   };
 }

@@ -13,7 +13,7 @@ const FRAMEWORK_PACKAGES = [
   'nuxt', 'nuxt/**', 'vue', 'vue/**', 'pinia',
   '@prisma/**',
   '@simplewebauthn/**',
-  'otplib', 'express', 'argon2', 'bcrypt', 'jsonwebtoken',
+  'otplib', 'express', 'argon2', 'bcrypt', 'jsonwebtoken', 'qrcode', 'qrcode/**',
 ];
 
 export default tseslint.config(
@@ -38,7 +38,7 @@ export default tseslint.config(
       // straight past it, and the "structurally unreachable" claim is false.
       'no-restricted-syntax': ['error',
         {
-          selector: 'ImportExpression[source.value=/^(typeorm|@nestjs|nuxt|vue|pinia|@prisma|@simplewebauthn|otplib|express|argon2|bcrypt|jsonwebtoken)($|\\u002f)/]',
+          selector: 'ImportExpression[source.value=/^(typeorm|@nestjs|nuxt|vue|pinia|@prisma|@simplewebauthn|otplib|express|argon2|bcrypt|jsonwebtoken|qrcode)($|\\u002f)/]',
           message: 'libs/core is framework-agnostic — no dynamic import of framework packages.',
         },
         {
