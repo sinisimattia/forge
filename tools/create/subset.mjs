@@ -17,7 +17,7 @@ import { substitute, findUnresolved } from './tokens.mjs';
  * they do not have. That is the whole test to apply: **would this ADR still be true in a
  * repository that took the agents and the standards and nothing else?**
  *
- * By that rule `0000`–`0004` are in and `0005`–`0008` are out, and a new ADR is out unless
+ * By that rule `0000`–`0004` are in and every platform ADR above them is out, and a new one is out unless
  * someone adds it here deliberately. The list stays an explicit enumeration rather than a
  * range or a glob precisely so that defaulting to "out" is what happens when nobody thinks
  * about it: a range would silently adopt the next platform ADR the day it is written.

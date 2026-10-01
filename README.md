@@ -1,68 +1,113 @@
 <p align="center">
-  <img src="forge-logo.png" alt="Forge" width="360">
+  <img src="forge-logo.png" alt="Forge" width="320">
 </p>
 
-# Forge
+<p align="center">
+  <strong>Stop building the same backend. Generate it, once, with the identity platform already finished.</strong>
+</p>
 
-Forge generates new application projects from **one template**: an NX/npm-workspaces
-monorepo with a NestJS + TypeORM + PostgreSQL backend, a Nuxt 4 / Vue 3 webapp, a
-framework-agnostic `libs/core` domain layer, and the full "how we work" layer — a
-consolidated agent roster, single-source standards docs, and ADRs.
+<p align="center">
+  One template. One command. A bootable NX monorepo with auth, tenancy, MFA and an append-only audit log — and the gates that keep them honest.
+</p>
 
-There is exactly one template and exactly one way to generate a project (no presets, no
-stack variants, no layer composition — see `docs/adrs/0001-single-template-not-layers.md`).
-The generator itself has zero runtime dependencies (`docs/adrs/0002-dependency-free-generator.md`)
-and was extracted once, read-only, from a real monorepo (`docs/adrs/0003-extraction-is-copy-out-only.md`).
+<p align="center">
+  <img src="https://img.shields.io/badge/Node-22-5FA04E?logo=node.js&logoColor=white" alt="Node 22">
+  <img src="https://img.shields.io/badge/NestJS-11-E0234E?logo=nestjs&logoColor=white" alt="NestJS 11">
+  <img src="https://img.shields.io/badge/Nuxt-4-00DC82?logo=nuxt&logoColor=white" alt="Nuxt 4">
+  <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL 16">
+  <img src="https://img.shields.io/badge/generator%20dependencies-0-success" alt="Zero dependencies">
+</p>
 
-## What exists today
+<p align="center">
+  <a href="#-quick-start">Quick start</a> ·
+  <a href="#-whats-in-the-box">What's in the box</a> ·
+  <a href="#-architecture">Architecture</a> ·
+  <a href="#-adopt-mode">Adopt mode</a> ·
+  <a href="#-the-gates">The gates</a> ·
+  <a href="#-known-limitations">Limitations</a>
+</p>
 
-The generator, and a template that is a working **identity foundation** rather than a
-skeleton. A generated project boots, signs people up, verifies their address, signs them in
-and out, lets them change a password, recover a forgotten one, manage their profile and see
-and revoke their own sessions — and it passes its own gates on the way out of the generator.
+---
 
-- **`libs/core`** — the framework-agnostic domain. Five domains (`users`, `identities`,
-  `auth`, `audit`, `authorization`) plus `shared`. `authorization/` is a pure function over
-  facts the caller passes in, never an ambient lookup
-  (`docs/adrs/0006-authorization-is-a-pure-function-in-core.md`); it therefore has policies
-  and types where the other four have a `contracts/` service port. Each of those four domain
-  service ports ships an executable conformance suite under `testing/` — `auth` has a second
-  one for its security properties — and the backend runs every one of them against its own
-  implementation, so "the adapter satisfies the contract" is a test, not a review note.
-  Every subpath in `libs/core/package.json`'s `exports` resolves to a real barrel on disk,
-  and every barrel on disk is exported; Forge's gate asserts that in both directions.
-- **`apps/backend`** — NestJS. Registration, email verification, sign-in/out, password
-  change and reset, profile, session listing and revocation, an append-only audit log, and
-  `/health`. Mail leaves through a port, not a vendor
-  (`docs/adrs/0008-ports-not-vendors.md`) — the shipped adapter writes messages to disk, so
-  a generated project works end to end with nothing to sign up for. Three migrations build
-  the schema, the last of which takes `UPDATE`/`DELETE` on the audit table away from the
-  application role at the database.
-- **`apps/webapp`** — Nuxt 4. The whole auth surface (sign in, register, forgot/reset
-  password, verify email) plus an account area, over an Atomic Design component library.
-  The layering is enforced by a checker, not a convention: `npm run layers -w apps/webapp`
-  resolves every rendered tag and every cross-layer import to the layer that defines it,
-  and fails if it finds nothing to scan.
+Most templates hand you a skeleton and a `TODO`. Forge hands you the part everyone rewrites
+badly: sign-up, sign-in, sessions that rotate, organizations, roles, per-record grants,
+federated providers, a second factor, rate limiting, and an audit log the application role
+cannot edit. It ships as **one** complete monorepo you copy and rename — no presets, no stack
+variants, no layer composition — and the generator that copies it has **zero runtime
+dependencies**.
 
-What is **not** built yet: organizations and tenancy (`docs/adrs/0007-tenancy-is-explicit-never-ambient.md`
-records the decision, and every contract method that acts on somebody's record already takes
-an explicit `actorId` rather than resolving a caller from ambient state, but there is
-no `Organization` entity and the audit log's `organizationId` is a plain string that is
-always `null` this phase), MFA, OAuth/social sign-in, and WebAuthn. See the design spec's §14
-"Deferred" and the Phase 2 plan's "Next".
+What it does not ship is a product. That part is yours.
 
-## Quick start
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🔐 Auth, finished
+Password and federated sign-in, email verification, recovery, rotating refresh tokens, TOTP
+and passkeys, single-use recovery codes.
+
+</td>
+<td width="33%" valign="top">
+
+### 🏢 Tenancy and access
+Organizations, memberships, invitations, roles and per-record grants — answered by one pure
+function, never an ambient lookup.
+
+</td>
+<td width="33%" valign="top">
+
+### 📜 Audit you can trust
+Append-only at the database. The application connects as a role with no `UPDATE` or `DELETE`
+on the table, and cannot grant them back.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🧱 A domain that knows nothing
+`libs/core` imports no framework and names none — not in code, not in prose. A gate reads the
+comments too.
+
+</td>
+<td valign="top">
+
+### 🚦 Abuse resistance
+Every credential and second-factor surface is budgeted, keyed only on subjects the server
+minted. Counters live in Postgres, so replicas share them.
+
+</td>
+<td valign="top">
+
+### 🤖 The "how we work" layer
+An agent roster, single-source standards, and the ADRs that say why — adoptable into a
+repository you already have.
+
+</td>
+</tr>
+</table>
+
+---
+
+## 🚀 Quick start
 
 ```bash
 npm run create -- --name my-app
+cd my-app
+npm run dev:up
 ```
 
-This prompts for anything you didn't pass on the command line, stages the new project in a
-sibling directory next to the target (`<out>/.forge-staging-<random>`, not `os.tmpdir()` —
-the OS temp directory is often a different filesystem, where `fs.rename` fails with `EXDEV`;
-staging as a sibling keeps the final move on the same filesystem so it can be a real atomic
-rename), substitutes tokens, and only then atomically moves it into place — a failed run
-leaves nothing behind. Useful flags:
+That's a running stack — backend, webapp and Postgres, containerized on Node 22 — with a
+database-backed readiness probe and a webapp you can sign up to.
+
+> [!NOTE]
+> Generation stages the project in a sibling directory and only then moves it into place, so a
+> failed run leaves nothing behind. The staging directory is a sibling rather than the OS temp
+> directory on purpose: `fs.rename` across filesystems fails with `EXDEV`, and the final move
+> has to be a real atomic rename.
+
+<details>
+<summary><strong>Every flag</strong></summary>
 
 ```bash
 npm run create -- --name my-app \
@@ -75,211 +120,242 @@ npm run create -- --name my-app \
   --yes
 ```
 
-- `--out` defaults to the current directory; the project lands at `<out>/<name>`.
-- `--no-git` skips `git init` and the initial commit.
-- `--yes` accepts every derived default and skips prompts (useful in scripts/CI).
+| Flag | Default |
+|---|---|
+| `--out` | the current directory; the project lands at `<out>/<name>` |
+| `--no-git` | off — `git init` and an initial commit run by default |
+| `--yes` | off — accepts every derived default and skips prompts |
 
-Once generated:
+`dev:up` installs inside the containers from the committed `package-lock.json`. A host
+`npm install` is optional, and only useful for editor tooling.
 
-```bash
-cd my-app
-npm run dev:up   # backend + webapp + Postgres, containerized, Node 22
+</details>
+
+---
+
+## 📦 What's in the box
+
+A generated project is a working identity platform, not a scaffold. Six phases are built.
+
+| | Ships |
+|---|---|
+| **Identity** | users, auth identities, sessions with rotating refresh tokens, email verification, password reset |
+| **Tenancy** | organizations, memberships, invitations that are single-use, expiring, hashed and address-checked |
+| **Authorization** | platform roles, organization roles, per-record grants — all through one `can()` in core |
+| **Federated sign-in** | Google, GitHub and generic OIDC behind one port, PKCE, and a development adapter that refuses to exist in production |
+| **Second factor** | TOTP, WebAuthn passkeys, single-use recovery codes, and a compiler-held guarantee that no session opens without one |
+| **Hardening** | throttling on every credential surface, continuity of control on enrolment, append-only audit |
+
+> [!IMPORTANT]
+> A second factor belongs to the **account**, not to the way in. The federated callback asks
+> for it too. That decision is [ADR-0012](template/docs/adrs/0012-a-second-factor-is-a-property-of-the-account.md),
+> and it is the kind of thing that is a migration rather than an edit if you get it wrong later.
+
+**Not included, deliberately:** nested teams inside organizations, SAML/SCIM provisioning, API
+keys and machine-to-machine tokens, per-field permissions, and self-service billing.
+
+---
+
+## 🏗 Architecture
+
+```mermaid
+flowchart LR
+  B[Browser] --> W[Nuxt webapp]
+  W -->|"REST, bearer + refresh cookie"| G
+
+  subgraph G[NestJS guard chain]
+    direction TB
+    G1[JwtAuthGuard<br/><i>closes every route</i>] --> G2[ForgeThrottlerGuard<br/><i>budgets the attempt</i>] --> G3[PermissionsGuard<br/><i>asks can()</i>]
+  end
+
+  G --> S[Services]
+  S --> C["libs/core<br/><i>pure policy, no framework</i>"]
+  S --> DB[(PostgreSQL)]
+  S -.->|append only| A[(audit_entries)]
+
+  style C fill:#1f6feb,color:#fff
+  style A fill:#8250df,color:#fff
 ```
 
-`dev:up` installs inside the containers from the committed `package-lock.json`; a host
-`npm install` (or `npm ci`) is optional, and only useful for local editor tooling.
+Three packages, one rule each:
 
-### Adopt mode
+- **`libs/core`** — the domain, framework-agnostic and transport-free. One folder per domain, plus `shared`. Service ports ship **executable conformance suites**, and the backend runs every
+  one against its real implementation — so "the adapter satisfies the contract" is a test, not
+  a review note.
+- **`apps/backend`** — NestJS, TypeORM, seven migrations. External capabilities are ports with
+  development adapters, so a fresh clone works end to end with nothing to sign up for
+  ([ADR-0008](template/docs/adrs/0008-ports-not-vendors.md)).
+- **`apps/webapp`** — Nuxt 4 over an Atomic Design component library, with the layering
+  enforced by a checker rather than a convention.
 
-To bring just the "how we work" layer — agents, standards, ADRs — into a repository that
-already exists, without touching its application code:
+<details>
+<summary><strong>The layout a generated project gets</strong></summary>
+
+```
+my-app/
+├── CLAUDE.md, README.md, forge.json          # forge.json is the extraction receipt
+├── compose.yaml, compose.prod.yaml, .env.example
+├── .github/workflows/ci.yml
+├── .claude/agents/, .claude/agent-memory/
+├── docs/{standards,adrs,rfcs,architecture,guides,concepts,api,superpowers}/
+├── libs/core/        → users identities auth mfa organizations authorization audit shared
+│                       grouped by kind: entities/ types/ enums/ errors/ policies/, plus
+│                       contracts/ + testing/ where a domain has a service port
+└── apps/
+    ├── backend/      → auth, identities, users, mfa, organizations, authorization,
+    │                   audit, throttling, mail, health, common, db/migrations
+    └── webapp/       → auth + account + organizations + mfa pages, Atomic Design library,
+                        stores, composables, fetchers, Storybook + Vitest
+```
+
+</details>
+
+---
+
+## 🔁 Adopt mode
+
+To bring only the "how we work" layer into a repository that already exists:
 
 ```bash
 npm run create -- --into ~/existing-repo
 ```
 
-Adopt mode copies only the declared **process subset** (`tools/create/subset.mjs`'s
-`PROCESS_SUBSET`): `CLAUDE.md`, `.claude/agents/**`, `.claude/agent-memory/**`,
-`docs/standards/**`, and the ADRs that describe how we work — `0000-template.md` through
-`0004`. The platform ADRs (`0005`–`0008`) are deliberately not in it: they are decisions
-about *this* template's identity architecture, not about how a team works, and they would
-be false in a repository that had adopted only the process layer. Adopt mode **never
-overwrites an existing file** — anything already present at a destination path is skipped
-and listed in the closing report.
+It copies the declared process subset — `CLAUDE.md`, the agents, the shared standards, and the
+ADRs about process — and **never overwrites an existing file**. Anything already there is
+skipped and listed in the closing report.
 
-**Precondition: a comparable package layout.** The adopted agent prompts point at
-`libs/core/STANDARDS.md`, `apps/backend/STANDARDS.md` and `apps/webapp/STANDARDS.md` for
-their package-specific rules and review dimensions — none of those three files is itself
-part of the process subset (they're template-specific content, not "how we work"). Adopt
-mode does not create them, check for them, or require a `libs/core`/`apps/backend`/
-`apps/webapp` layout to exist. If the target repo has no comparable file at one of those
-paths, the corresponding agent's pointer dangles: `reviewer`, for instance, discovers its
-review dimensions from each package's `STANDARDS.md`, so in a repo missing all three it
-finds zero dimensions to check and reports every package clean — not because the code is
-clean, but because it found nothing to check it against. Adopting the process layer into a
-repository with a substantially different layout means either writing equivalent
-`STANDARDS.md` files at those three paths yourself, or expecting the adopted agents'
-package-specific guidance to be inert until you do. The closing report names these three
-paths after every adopt run as a reminder.
+> [!WARNING]
+> The adopted agent prompts point at `libs/core/STANDARDS.md`, `apps/backend/STANDARDS.md` and
+> `apps/webapp/STANDARDS.md` for their review dimensions, and those files are **not** in the
+> subset. In a repository without them, `reviewer` discovers zero dimensions and reports every
+> package clean — not because the code is clean, but because it found nothing to check against.
+> Write equivalents at those paths, or expect that guidance to be inert. The closing report
+> names them after every run.
 
-## What a generated project contains
+---
 
-```
-my-app/
-├── CLAUDE.md, README.md, forge.json          # forge.json is the extraction receipt
-├── package.json, package-lock.json, nx.json, tsconfig.base.json, eslint.config.base.mjs
-├── compose.yaml, compose.prod.yaml, .env.example
-├── .github/workflows/ci.yml
-├── .claude/agents/ (11 agents + README), .claude/agent-memory/
-├── docs/{standards,adrs,rfcs,architecture,guides,concepts,api,superpowers}/
-├── libs/core/        → users/ identities/ auth/ audit/ authorization/ shared/
-│                       grouped by kind — entities/ types/ enums/ errors/ policies/, and
-│                       contracts/ + testing/ where a domain has a service port. Every
-│                       group that exists is a subpath export; the gate checks both ways.
-└── apps/
-    ├── backend/      → auth, identities, users, audit, mail (a port), health,
-    │                   common (i18n, filters, interceptors, pipes, crypto, …), db/migrations
-    └── webapp/       → pages (auth + account), an Atomic Design component library,
-                        stores, composables, fetchers, Storybook + Vitest wired up
+## 🛠 Changing the template
+
+`template/` is an ordinary, complete, bootable monorepo — **not** a set of `.hbs` files. Edit
+it directly:
+
+```bash
+cd template && npm install
 ```
 
-`npm run dev:up` gives you a running stack with a working `/health` endpoint. Across all
-three packages the project ships NX-driven `lint`, `typecheck`, `test` and `build`, plus two
-gates that are **not** in any `run-many` list and so need naming explicitly:
+and treat it like any other project while you work. The tokens are the only thing that makes
+it a template, and they are valid TypeScript identifiers and valid JSON strings, so nothing
+breaks while you have it open.
+
+> [!IMPORTANT]
+> `npm run sanitize` must pass before any commit that touches `template/`. It is what catches
+> a source-project trace or a populated secret before it ships into every project generated
+> afterwards. Run it; don't weaken it to make a commit pass.
+
+---
+
+## 🧪 The gates
+
+A gate that only ever runs against correct code proves nothing. The spec's §11 lists sixteen
+faults, **D1–D16**, each with the observation that must catch it — and the ones Forge owns are
+enforced by *injecting the fault and watching the gate fail*.
+
+| | Fault injected | Caught by |
+|---|---|---|
+| **D1** | an unresolved `__FORGE_MISSING__` token | generation aborts, leaving nothing behind |
+| **D2** | `import { Repository } from 'typeorm'` in a real core entity — static, dynamic and `require()` | `nx lint core`, each form's own rule message asserted |
+| **D4** | adopt mode over a repo that already has `CLAUDE.md` | the file stays byte-identical and is reported as skipped |
+| **D5** | a source-project trace or a populated secret | `npm run sanitize` |
+| **D14** | a TSDoc line naming a JWT and a cookie in a real core contract | `npm run purity -w libs/core`, both terms asserted |
+
+D2 and D14 are injected into files that were already there and restored afterwards — a probe
+file a test writes for itself only ever proves the guard covers the directory the probe went
+into. The rest are behaviours of the generated application and live in its own suites.
+
+```bash
+npm run test:all     # sanitize → unit → integration (generates a real project, runs its gates)
+```
+
+> [!TIP]
+> `npm test` is the **unit tier only**, and `FORGE_E2E=1 npm test` runs nothing extra. The slow
+> tiers live in `npm run test:integration`; `FORGE_E2E=1` adds the Docker stage on top. Budget
+> real time for it — a generated project's `npm ci` plus a Nuxt build, then image builds.
+
+Two gates are not in any `run-many` list and need naming explicitly, in Forge and in every
+generated project:
 
 ```bash
 npm run purity -w libs/core     # core names no framework or transport, in code or in prose
 npm run layers -w apps/webapp   # a component renders only layers below its own
 ```
 
-Both are in the root `affected` script (`nx affected -t lint test build typecheck purity
-layers`), which is what a project's own CI should run. Forge's generated-project gate runs
-each of them by name, because `nx run-many -t build` and friends never reach them.
+<details>
+<summary><strong>CI, and why the slow jobs run on push</strong></summary>
 
-## Changing the template
+| Job | Runs | Does |
+|---|---|---|
+| `unit` | push + PR | `sanitize`, then the generator's unit tests |
+| `generated-project` | push + PR | generates a real project and runs its own gates |
+| `storybook` | push + PR | the only thing that compiles the story files at all |
+| `docker` | push + PR | boots the generated stack for real |
+| `lockfile-refresh` | weekly | regenerates the lockfile and re-runs the gate; never commits |
 
-`template/` is an ordinary, complete, bootable monorepo — not a set of `.hbs` files. Edit it
-directly: `cd template && npm install` and treat it like any other project while you work.
-Before committing anything that touches `template/`, run the full suite from the Forge root:
+`generated-project` and `docker` used to be pull-request-only, which meant a direct push to
+`main` ran `unit` and nothing else — everything a PR checked could be landed by pushing. A push
+now costs 30–45 minutes instead of 10. **A gate that runs only on the path somebody can choose
+not to take is not a gate.**
 
-```bash
-npm run test:all
-```
+Forge itself has no dependencies and therefore no lockfile, so no `npm ci` step appears in its
+own workflow. There is nothing to install.
 
-This runs, in order: `npm run sanitize` (the extraction gate — must be clean), `npm test`
-(the generator's own unit tests), and `npm run test:integration` (generates a real project
-and asserts it passes its own `lint`/`typecheck`/`test`/`build`/`purity`/`layers`; set
-`FORGE_E2E=1` to also boot the generated stack in Docker and check `/health`). The
-integration tier is slow — a generated project's `npm ci` plus a Nuxt build, and the Docker
-tier adds image builds on top — budget real time for it rather than expecting it to finish
-like the unit tier. It installs with `npm ci`, not `npm install`, so the committed
-`package-lock.json` is exercised by the same command the Dockerfiles and `dev:up` use: a
-lockfile that had fallen out of sync with a `package.json` would otherwise pass the whole
-gate and fail on the user's first boot.
+</details>
 
-### The discriminating tests
+---
 
-The design spec's §11 "Testing" lists fifteen faults, D1–D15, each with the observation
-that must catch it. A gate that only ever runs against correct code proves nothing, so the
-ones Forge itself owns are enforced by **injecting the fault and watching the gate fail**:
+## 🔤 Tokens
 
-| | Fault injected | Caught by | Enforced in |
-|---|---|---|---|
-| D1 | an unresolved `__FORGE_MISSING__` token | generation aborts, leaves nothing behind | `tests/integration/create.test.mjs` |
-| D2 | `import { Repository } from 'typeorm'` in a real core entity, in static, dynamic and `require()` form | `npx nx lint core` — each form's own rule message asserted | `tests/integration/generated-project.test.mjs` |
-| D4 | adopt mode over a repo that already has `CLAUDE.md` | the file is left byte-identical and reported as skipped | `tests/integration/create.test.mjs` |
-| D5 | a source-project trace or a populated secret anywhere in `template/` or `tools/` | `npm run sanitize` | `tools/sanitize.mjs`, run by both tiers |
-| D14 | a TSDoc line naming a JWT and a cookie in a real core contract | `npm run purity -w libs/core` — both terms asserted, not just the first | `tests/integration/generated-project.test.mjs` |
-
-D2 and D14 are injected into files that were already there — `libs/core/src/auth/entities/Session.ts`
-and `libs/core/src/auth/contracts/IAuthService.ts` — and restored afterwards. A probe file
-the test writes for itself only ever proves the guard covers the directory the probe was
-written into.
-
-The rest are behaviours of the generated application, not of Forge, and are enforced inside
-the generated project's own suites — which Forge's gate runs wholesale via `npm run test`,
-without asserting them one by one. Of those, **D3** (`*.conformance.spec.ts` in each backend
-domain, running core's suites against the real adapter), **D6** (`auth/__tests__/global-guard.spec.ts`),
-**D7** (`auth/__tests__/enumeration-safety.spec.ts`), **D8** (`auth/__tests__/refresh-rotation.spec.ts`)
-and **D13** (`db/__tests__/migration-sql.spec.ts` — which says in its own header that it reads
-the migration text and is *not* itself the database-level guarantee) have specs today.
-**D9–D12 and D15 do not, and cannot**: they describe organizations, MFA, OAuth and resource
-grants, none of which is built yet.
-
-## Tokens
-
-Substituted in both file contents and path segments (so `libs/core/package.json`'s
-`"name": "__FORGE_SCOPE__/core"` generalizes correctly). The generator fails if any
-`__FORGE_[A-Z0-9_]*__` token survives substitution.
+Substituted in file contents **and** path segments, so `"name": "__FORGE_SCOPE__/core"`
+generalizes correctly. Generation fails if any `__FORGE_[A-Z0-9_]*__` token survives.
 
 | Token | Example | Source |
 |---|---|---|
-| `__FORGE_NAME__` | `my-app` | prompted; must match `^[a-z][a-z0-9-]*$` |
-| `__FORGE_TITLE__` | `My App` | derived: title-cased from name |
-| `__FORGE_SCOPE__` | `@my-app` | derived: `@` + name |
+| `__FORGE_NAME__` | `my-app` | prompted; `^[a-z][a-z0-9-]*$` |
+| `__FORGE_TITLE__` | `My App` | derived — title-cased |
+| `__FORGE_SCOPE__` | `@my-app` | derived — `@` + name |
 | `__FORGE_DESCRIPTION__` | `An app.` | prompted, may be empty |
-| `__FORGE_DB_NAME__` | `my_app` | derived: name with `-` → `_`; `^[a-z][a-z0-9_]*$` |
+| `__FORGE_DB_NAME__` | `my_app` | derived — `-` → `_`; `^[a-z][a-z0-9_]*$` |
 
-Binary files are detected by a NUL byte in the first 8 KiB and copied verbatim, untouched by
-token substitution.
+Binary files are detected by a NUL byte in the first 8 KiB and copied verbatim.
 
-## CI
+---
 
-`.github/workflows/ci.yml` runs four push/PR jobs and one scheduled one:
+## ⚠️ Known limitations
 
-- **unit** — every push and PR: `npm run sanitize` (must run first — it's the cheapest gate
-  and the one that catches an extraction mistake), then `npm test`.
-- **generated-project** — every push and PR: generate a real project and run its own gates
-  (`npm run test:integration`).
-- **storybook** — every push and PR, and blocking: builds the template's Storybook (`nx run
-  webapp:build-storybook`, a target `nx run-many -t build` never invokes on its own, so it
-  needs its own step to be exercised at all). This is the only thing that compiles the story
-  files. It was non-blocking and known-red from the day it was added until 2026-09-21; the
-  cause is written up in the job's comment in `.github/workflows/ci.yml`. Note that
-  `storybook build` exits 0 over an empty module graph, so a green tick here is only worth
-  what the `stories` glob is worth — `apps/webapp/app/test/storybook-config.spec.ts` asserts
-  in the fast tier that the glob still matches real files.
-- **docker** — every push and PR, and the slowest: `npm run test:integration` with
-  `FORGE_E2E=1`, which boots the generated stack for real and asserts `/health` returns
-  `{"status":"ok"}`.
+- **No drift or update tooling.** `forge.json` records the commit a project was generated
+  from, so re-syncing stays *possible*, but nothing does it yet.
+- **A generated project's CI workflow is never parsed.** It is copied like any other file and
+  checked only by a plain-text scan, so a YAML error in it would ship silently. Validating it
+  needs a YAML parser, which conflicts with the zero-dependency constraint — accepted as a
+  known gap, not an oversight.
+- **No OpenAPI document.** The webapp's service layer is written by hand against a contract
+  that exists only as backend source.
+- **Recovery codes predating the transcribable alphabet no longer redeem**, and there is no
+  administrator reset path. Nothing is deployed yet, which is why no transition was built.
 
-`generated-project` and `docker` used to be `if: pull_request`, which meant a direct push to
-`main` ran the `unit` tier and nothing else — everything a PR checked could be landed by
-pushing, including every discriminating test that lives inside a generated project. Both now
-run on push as well. A push to `main` costs ~30–45 minutes rather than ~10; a gate that runs
-only on the path somebody can choose not to take is not a gate.
-- **lockfile-refresh** — schedule-only (weekly): regenerates `template/package-lock.json`
-  from scratch and runs the generated-project gate against the result, so dependency drift
-  surfaces here rather than the day someone deletes `node_modules`. It never commits.
+---
 
-Forge has no runtime or test dependencies, so there is no lockfile and no `npm ci`/`npm
-install` step for Forge's own `package.json` in this workflow — there is nothing to install.
-(`npm ci` was checked directly against this repo before writing the workflow, and again
-while extending it: with no `package-lock.json` present it fails immediately with `EUSAGE`,
-it does not treat "nothing to install" as success — so it is deliberately never invoked
-here.) The generated projects created inside the integration/storybook/docker steps are a
-separate `package.json` tree, ship their own `package-lock.json`, and do get an explicit
-install.
+## 📚 More
 
-## Known limitations
+| | |
+|---|---|
+| Design spec | [`docs/superpowers/specs/2026-09-17-forge-template-design.md`](docs/superpowers/specs/2026-09-17-forge-template-design.md) |
+| Phase roadmap | [`docs/superpowers/phase-roadmap.md`](docs/superpowers/phase-roadmap.md) |
+| Forge's own ADRs | [`docs/adrs/`](docs/adrs/) — one template not layers, a dependency-free generator, copy-out-only extraction |
+| The template's ADRs | [`template/docs/adrs/`](template/docs/adrs/) — the decisions a generated project inherits |
+| Agent orientation | [`CLAUDE.md`](CLAUDE.md) |
 
-- **The generated project's own `.github/workflows/ci.yml` is never parsed or validated.**
-  It's copied wholesale from `template/.github/workflows/ci.yml` like every other file, and
-  checked only by `sanitize`'s plain-text scan and the integration test's file-existence
-  assertion — neither understands YAML structure. A YAML syntax error or a bad job/step
-  reference in that file would ship silently today. Validating it would need a YAML parser,
-  which conflicts with the zero-dependency constraint (`docs/adrs/0002-dependency-free-generator.md`)
-  — this is accepted as a known gap rather than an oversight.
-- **No drift/update tooling.** A generated project's `forge.json` records the Forge commit
-  it was generated from, so re-syncing against a newer template stays *possible*, but no
-  tooling to do it exists yet (`docs/adrs/0003-extraction-is-copy-out-only.md`).
-- **Organizations, tenancy, MFA, OAuth and WebAuthn are not built** — see "What exists
-  today" above.
+---
 
-## More
-
-- Design spec: `docs/superpowers/specs/2026-09-17-forge-template-design.md`
-- Phase 1 plan: `docs/superpowers/plans/2026-09-17-forge-phase-1-generator-and-template-skeleton.md`
-- Phase 2 plan: `docs/superpowers/plans/2026-09-18-forge-phase-2-identity-foundation.md`
-- ADRs: `docs/adrs/`
-- Agent orientation: `CLAUDE.md`
+<p align="center">
+  <sub>Forge was extracted once, read-only, from a real monorepo — and never reads from it again.</sub>
+</p>
