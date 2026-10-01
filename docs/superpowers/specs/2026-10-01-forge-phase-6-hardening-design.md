@@ -212,8 +212,9 @@ cannot get that from these two numbers.
 
 **`mfa-attempt` is kept, and it is not dead.** Its subject is the signed-in account whenever
 there is one, so it binds the enrolment leg of `POST /mfa/webauthn/verify` — which proves an
-existing factor and spends no login challenge per guess — where it is the counter doing the
-work. It is also the budget that would bind the login legs the day one of them stops spending
+existing factor and spends no login challenge per guess — where it bounds a burst. The tighter
+hourly bound on that leg is `mfa-mint`, because completing an enrolment consumes its ceremony
+before the proof is checked, so each guess also costs a fresh set of options. It is also the budget that would bind the login legs the day one of them stops spending
 the challenge before checking the proof; dropping it because it is slack today would make
 that change silently unbounded. Its window is the challenge's own time to live, so where it
 does bind a challenge the budget dies with it.

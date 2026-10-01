@@ -1,6 +1,6 @@
 # Forge — Phase Roadmap
 
-Phases 1 through 5 are built. This records how the remaining work is decomposed and, more
+Phases 1 through 6 are built. This records how the remaining work is decomposed and, more
 importantly, **the ordering decisions that exist to avoid rework**. They are easy to get wrong
 and expensive to undo.
 
@@ -14,7 +14,7 @@ identity platform as one thing. It is not one plan. It is four.
 | **3. Organizations + authorization** | Orgs, memberships, invitations, `can()` as pure core logic, roles, per-resource grants, guards — and the whole client half: services, `useCan`, the permission middleware, the pages. | **BUILT** |
 | **4. OAuth + account linking** | Google/GitHub/OIDC adapters behind one port, a development adapter that refuses to exist in production, PKCE and single-use authorization rows, the federated sign-in and link decisions as pure core policy, the callback and its refusal page, and linking from account settings. | **BUILT** |
 | **5. MFA** | TOTP + WebAuthn as second factors and single-use recovery codes, all three answering one challenge; `SecondFactorSettled` as a compiler-held guarantee that no session opens without one; the challenge page, the security screen and the recovery-codes panel. | **BUILT** |
-| **6. Hardening + abuse resistance** | Throttling across every credential and second-factor surface, keyed only on server-known subjects; continuity of control on enrolment; ADR-0013 conformance; and the cheap carried debt from Phase 5 §8. Adds no capability. | specified, not written |
+| **6. Hardening + abuse resistance** | Throttling across every credential and second-factor surface, keyed only on server-known subjects; continuity of control on enrolment; ADR-0013 conformance; and the cheap carried debt from Phase 5 §8. Adds no capability. | **BUILT** |
 
 ## The ordering decisions
 
@@ -498,3 +498,30 @@ rather than a defect — but the webapp's service layer is written by hand again
 that exists only as backend source, and that is where the first drift will appear. Phase 6
 left it out because it would add a surface to every controller in the workspace, which is a
 poor companion to a phase whose other changes are security-bearing and want a small diff.
+
+## What Phase 7 inherits
+
+Phase 6 closed throttling, continuity of control on enrolment, and ADR-0013 conformance. Three
+things were decided against rather than left undone, so nobody reopens them as oversights:
+
+- **Recovery codes issued before the alphabet change do not redeem, and no transition path was
+  built.** `consume` normalises before hashing, so an old base64url digest never matches, and
+  there is no administrator reset anywhere in the backend — a person holding only old codes has
+  no route back. Accepting both encodings was considered and refused on the grounds that
+  nothing is deployed yet and the dual path would be permanent surface to carry. If that stops
+  being true before a generated project ships to real users, this is the decision to revisit
+  first. The breaking note is in `apps/backend/CHANGELOG.md`.
+- **A throttled person sees the generic failure message.** `TOO_MANY_ATTEMPTS` is pinned in the
+  webapp's code list, so the invariant that both copies match is intact, but no copy was
+  written: no enrolment path maps an error code to a message today, and adding one for a single
+  code would mean a mechanism rather than a string.
+- **`@nestjs/swagger` is still not wired.** The webapp's service layer is written by hand
+  against a contract that exists only as backend source, which is where the first drift will
+  appear.
+
+**What Phase 6 would tell Phase 7 about its own gates:** `coverage` is a separate nx target and
+`libs/core` enforces 100%, so `-t test lint typecheck` passes while it fails — that is how an
+error class reached core with no core test through fourteen task reviews and a whole-branch
+review. And `FORGE_E2E=1 npm test` runs the unit tier and nothing else; the slow tiers are
+`npm run test:integration`. Both traps were already recorded before this phase and both were
+walked into anyway.

@@ -202,13 +202,17 @@ held package, the exact versions each pin was verified against, and what moving 
 It also records one dependency that is deliberately **not** held back, so that stays a choice
 rather than an accident.
 
-What they have in common, and what you need to know before proposing an upgrade: this package
-compiles to CommonJS and its Jest runner is CommonJS, so a dependency whose newer major is
-ESM-only (`"type": "module"`) fails with `Must use import to load ES Module` before a single
-test runs — on the Node that CI and both Docker images use, and on newer ones. A caret range
-cannot cross a major on its own, so each pin holds until somebody moves this package's test
-runner off CommonJS. That precondition, not the version number, is what the pins are waiting
-on; one of them has a second cost on top of it, which `//pinned` spells out.
+What you need to know before proposing an upgrade: this package compiles to CommonJS and its
+Jest runner is CommonJS, so a dependency that is ESM-only (`"type": "module"`) fails with
+`Must use import to load ES Module` before a single test runs — on the Node that CI and both
+Docker images use, and on newer ones. A caret range cannot cross a major on its own, so the
+usual escape is moving this package's test runner off CommonJS.
+
+**That is the shape of most of these pins but not of all of them**, and the difference matters
+to anyone attempting one: a package can be held because the ESM-only module is a *transitive*
+dependency rather than itself, in which case there is a second escape that does not touch the
+test runner. `//pinned` says which case each pin is and what each one would cost. Read it
+there rather than assuming they are alike.
 
 ## Common utilities
 
