@@ -3,8 +3,8 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
 
-// No global route prefix: `/health` is polled directly (by the container
-// healthcheck and by the e2e smoke test), unprefixed.
+// No global route prefix: the health endpoints are polled directly, unprefixed,
+// by the container healthcheck (which polls readiness) and by smoke tests.
 //
 // Deliberately almost empty, and NOT protected: every line here is one no test
 // can see. `main.ts` is excluded from coverage (`jest.config.ts`: `'!main.ts'`)

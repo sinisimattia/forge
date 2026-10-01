@@ -47,6 +47,23 @@ export class AuditService implements IAuditService {
    * and the entry that goes missing is the one somebody needed. The cost is
    * stated plainly: a database that will not accept an audit row also refuses
    * the sign-in that provoked it.
+   *
+   * ## The one caller that does catch and continue, deliberately
+   *
+   * `PostgresThrottlerStorage.increment` logs and swallows a rejection from the
+   * `THROTTLE_ENGAGED` write, and that is correct there rather than a violation
+   * of the rule above. The difference is *when* it runs: the block is already
+   * stored and the refusal is already right by the time the entry is attempted,
+   * so propagating would convert a correct refusal into a server error for
+   * somebody who is merely being told to wait, and would protect nothing — the
+   * action the entry describes has already been taken, and taken the safe way.
+   * Everywhere else, the entry and the action it describes are still bound
+   * together, which is what makes swallowing there a silent log.
+   *
+   * **The two are not to be "aligned" by whoever reads only one of them.** The
+   * reasoning for the exception lives beside the code that takes it, in that
+   * method's own TSDoc; read it before changing either. A lost entry there is
+   * permanent, and `AuditAction.THROTTLE_ENGAGED`'s own doc says so.
    */
   public async record(input: RecordAuditEntryInput): Promise<void> {
     await this.entries.insert(AuditService.toRow(input));

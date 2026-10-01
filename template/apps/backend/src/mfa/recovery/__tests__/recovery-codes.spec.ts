@@ -111,11 +111,17 @@ describe('RecoveryCodes', () => {
       }
     });
 
-    it('draws sixteen bytes per code: twenty-two characters once ungrouped', async () => {
-      // 128 bits, and short enough to copy from paper. Thirty-two bytes would
-      // be forty-three characters, eleven groups, on every code of a printed sheet.
+    it('draws only from the transcribable alphabet', async () => {
       const codes = await world.service.generate(USER);
-      for (const code of codes) expect(ungrouped(code)).toHaveLength(22);
+      for (const code of codes) expect(ungrouped(code)).toMatch(/^[0-9A-HJKMNP-TV-Z]+$/);
+    });
+
+    it('keeps at least 128 bits of entropy', async () => {
+      // Each symbol of a 32-symbol alphabet carries five bits, so 128 bits
+      // takes the next whole symbol up from 128 / 5. A shorter code would have
+      // less entropy than the digest scheme relies on.
+      const codes = await world.service.generate(USER);
+      for (const code of codes) expect(ungrouped(code).length).toBeGreaterThanOrEqual(26);
     });
 
     it('groups a code for legibility with whitespace only', async () => {
@@ -153,16 +159,73 @@ describe('RecoveryCodes', () => {
       await expect(world.service.consume(USER, ungrouped(code))).resolves.toBeUndefined();
     });
 
+    /**
+     * A code from a fresh batch containing every one of `wanted`, so that a
+     * substitution test cannot pass by having nothing to substitute. The odds
+     * that a batch of ten has no `0` are well under a thousandth.
+     */
+    async function codeWith(wanted: string): Promise<string> {
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        const found = (await world.service.generate(USER))
+          .find((code) => [...wanted].every((char) => code.includes(char)));
+        if (found !== undefined) return found;
+      }
+      throw new Error(`no generated code contained ${wanted}`);
+    }
+
+    it('accepts a code typed in lower case', async () => {
+      const [code] = await world.service.generate(USER);
+      await expect(world.service.consume(USER, code.toLowerCase())).resolves.toBeUndefined();
+    });
+
+    it('accepts the letter a person is likely to type for a zero', async () => {
+      const code = await codeWith('0');
+      const typed = code.replace(/0/g, 'O');
+      expect(typed).not.toBe(code);
+
+      await expect(world.service.consume(USER, typed)).resolves.toBeUndefined();
+    });
+
+    it('accepts the letters a person is likely to type for a one', async () => {
+      const code = await codeWith('1');
+      const typedI = code.replace(/1/g, 'I');
+      expect(typedI).not.toBe(code);
+      await expect(world.service.consume(USER, typedI)).resolves.toBeUndefined();
+
+      const again = await codeWith('1');
+      await expect(world.service.consume(USER, again.replace(/1/g, 'l'))).resolves.toBeUndefined();
+    });
+
+    it('recognises a spent code however it is typed the second time', async () => {
+      // The diagnosis after a miss reads the row by the same digest, so a code
+      // typed differently the second time is still the spent one and not a
+      // stranger.
+      const [code] = await world.service.generate(USER);
+      await world.service.consume(USER, code);
+
+      await expect(world.service.consume(USER, code.toLowerCase()))
+        .rejects.toBeInstanceOf(RecoveryCodeAlreadyConsumedError);
+    });
+
+    it('still refuses a character the alphabet does not contain', async () => {
+      const [code] = await world.service.generate(USER);
+      // `U` is not folded to anything: it was dropped from the alphabet to
+      // avoid accidental words, and no digit is read as one.
+      await expect(world.service.consume(USER, `U${code.slice(1)}`))
+        .rejects.toBeInstanceOf(MfaVerificationFailedError);
+    });
+
     it('refuses a code that is already spent, naming that and not "unknown"', async () => {
       // Seeded spent rather than spent through `consume`, so the predicate is
-      // the only thing that can refuse it.
+      // the only thing that can refuse it. A stored digest is of a code's
+      // normalised form, so the seeded one is a code already in that form.
       await world.codes.insert({
         userId: USER,
-        codeHash: hashOpaqueToken('seeded-spent'),
+        codeHash: hashOpaqueToken('SEEDEDSPENT'),
         consumedAt: new Date(),
         createdAt: new Date(),
       });
-      await expect(world.service.consume(USER, 'seeded-spent'))
+      await expect(world.service.consume(USER, 'SEEDEDSPENT'))
         .rejects.toBeInstanceOf(RecoveryCodeAlreadyConsumedError);
     });
 

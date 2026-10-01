@@ -18,7 +18,7 @@ import { UserRecord } from '../../users/user-record.entity';
 import { Public } from '../decorators';
 import { PlatformAdminGuard } from '../guards';
 import { JwtStrategy } from '../strategies';
-import { FakeDataSource } from '../../common/testing';
+import { FakeDataSource, UNMETERED_THROTTLING } from '../../common/testing';
 
 /**
  * The two branches of `PlatformAdminGuard` that no ordinary route can reach.
@@ -115,6 +115,7 @@ describe('PlatformAdminGuard', () => {
         ConfigModule.forRoot({ ignoreEnvFile: true, load: [() => ({ JWT_SECRET: SIGNING_KEY })] }),
         I18N,
         PassportModule,
+        UNMETERED_THROTTLING,
         JwtModule.register({ secret: SIGNING_KEY, signOptions: { expiresIn: '5m' } }),
       ],
       controllers: [ProbeController],

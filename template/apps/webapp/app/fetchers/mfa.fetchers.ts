@@ -1,7 +1,7 @@
-import type { MfaMethodJSON } from '__FORGE_SCOPE__/core/mfa/types';
 import type {
   ApiClient,
   AuthResponseBody,
+  MfaMethodsBody,
   MfaProofBody,
   RecoveryCodesBody,
   TotpConfirmationBody,
@@ -71,9 +71,12 @@ export async function postWebAuthnLoginVerify(
  * paths.
  */
 
-/** The actor's methods, confirmed and not. Carries no secret material. */
-export async function getMfaMethods(client: ApiClient): Promise<MfaMethodJSON[]> {
-  return client<MfaMethodJSON[]>({ method: 'GET', path: '/mfa/methods' });
+/**
+ * The actor's methods, confirmed and not, and how many recovery codes they have
+ * left. Carries no secret material.
+ */
+export async function getMfaMethods(client: ApiClient): Promise<MfaMethodsBody> {
+  return client<MfaMethodsBody>({ method: 'GET', path: '/mfa/methods' });
 }
 
 /**
@@ -87,16 +90,23 @@ export async function postTotpEnroll(
   return client<TotpEnrollmentBody>({ method: 'POST', path: '/mfa/totp/enroll', body: { label } });
 }
 
-/** Finishes a TOTP enrollment. `recoveryCodes` is non-null only on the account's first. */
+/**
+ * Finishes a TOTP enrollment. `recoveryCodes` is non-null only on the account's first.
+ *
+ * `proof` is a proof of a factor the account **already holds**, owed whenever it
+ * holds one, and it rides under its own `proof` key: `methodId` and `code` here
+ * are the new method's, and a proof's own would collide with them.
+ */
 export async function postTotpConfirm(
   client: ApiClient,
   methodId: string,
   code: string,
+  proof: MfaProofBody | null,
 ): Promise<TotpConfirmationBody> {
   return client<TotpConfirmationBody>({
     method: 'POST',
     path: '/mfa/totp/confirm',
-    body: { methodId, code },
+    body: proof === null ? { methodId, code } : { methodId, code, proof },
   });
 }
 
@@ -136,15 +146,21 @@ export async function postWebAuthnEnrollOptions(
   });
 }
 
-/** Registers the passkey the authenticator produced under `label`. */
+/**
+ * Registers the passkey the authenticator produced under `label`.
+ *
+ * `proof` is owed whenever the account already holds a confirmed method; see
+ * {@link postTotpConfirm}.
+ */
 export async function postWebAuthnEnrollVerify(
   client: ApiClient,
   label: string,
   response: Record<string, unknown>,
+  proof: MfaProofBody | null,
 ): Promise<WebAuthnEnrollmentBody> {
   return client<WebAuthnEnrollmentBody>({
     method: 'POST',
     path: '/mfa/webauthn/verify',
-    body: { response, label },
+    body: proof === null ? { response, label } : { response, label, proof },
   });
 }

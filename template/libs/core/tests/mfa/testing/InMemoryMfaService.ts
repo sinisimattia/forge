@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { IMfaService } from '__FORGE_SCOPE__/core/mfa/contracts';
 import { MfaMethod } from '__FORGE_SCOPE__/core/mfa/entities';
 import { MfaMethodType } from '__FORGE_SCOPE__/core/mfa/enums';
-import { MfaRemovalDecision } from '__FORGE_SCOPE__/core/mfa/enums';
+import { MfaEnrollmentDecision, MfaRemovalDecision } from '__FORGE_SCOPE__/core/mfa/enums';
 import {
   MfaMethodAlreadyConfirmedError,
   MfaMethodNotFoundError,
@@ -10,7 +10,7 @@ import {
   MfaVerificationFailedError,
   RecoveryCodeAlreadyConsumedError,
 } from '__FORGE_SCOPE__/core/mfa/errors';
-import { decideMfaRemoval } from '__FORGE_SCOPE__/core/mfa/policies';
+import { decideMfaEnrollment, decideMfaRemoval } from '__FORGE_SCOPE__/core/mfa/policies';
 import type {
   MfaMethodId,
   MfaMethodJSON,
@@ -104,10 +104,22 @@ export class InMemoryMfaService implements IMfaService {
     actorId: UserId,
     methodId: MfaMethodId,
     code: string,
+    proof: MfaProof | null,
   ): Promise<RecoveryCodeBatch | null> {
     const row = this.ownedRow(actorId, methodId);
     if (row.confirmedAt !== null) throw new MfaMethodAlreadyConfirmedError(methodId);
+
+    // Asked of the account's methods as they stand, with this one still
+    // unconfirmed, and with `false`: whether a proof is owed at all.
+    const owed = decideMfaEnrollment(this.entitiesFor(actorId), false)
+      !== MfaEnrollmentDecision.ALLOWED;
+    if (owed && proof === null) throw new MfaReauthenticationRequiredError();
+
     if (this.totpSecrets.get(methodId) !== code) throw new MfaVerificationFailedError();
+    // After the new method's own code, so a mistyped one does not spend the proof.
+    if (owed && proof !== null && !(await this.verifyProof(actorId, proof))) {
+      throw new MfaVerificationFailedError();
+    }
     this.spentCodes.add(`${methodId}:${code}`);
 
     const hadConfirmedMethod = Array.from(this.methods.values())

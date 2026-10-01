@@ -447,7 +447,7 @@ describe('mfa audit trail', () => {
       // Spending a `LOGIN` challenge means re-reading the account, wherever the
       // spending happens: without that here, a suspension binds on the leg that
       // finishes the sign-in but not on the leg that hands out this account's
-      // passkey credential ids and mints it a fresh window.
+      // passkey credential ids and mints it a replacement challenge.
       const account = await world.seedUserWithoutMfa();
       seedPasskey(account.userId);
       const started = await login(account).expect(200);

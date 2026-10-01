@@ -9,6 +9,7 @@ import {
 } from '../../common/testing';
 import { MfaMethodRecord } from '../entities/mfa-method-record.entity';
 import { MfaRecoveryCodeRecord } from '../entities/mfa-recovery-code-record.entity';
+import { MAX_MFA_METHODS } from '../mfa-limits';
 import { RECOVERY_CODE_COUNT } from '../recovery/recovery-codes';
 
 /**
@@ -78,11 +79,16 @@ describe('MfaController', () => {
       .send({ label });
   }
 
-  function confirm(token: string, methodId: string, code: string): request.Test {
+  function confirm(
+    token: string,
+    methodId: string,
+    code: string,
+    proof?: object,
+  ): request.Test {
     return request(world.app.getHttpServer())
       .post('/mfa/totp/confirm')
       .set('Authorization', bearer(token))
-      .send({ methodId, code });
+      .send(proof === undefined ? { methodId, code } : { methodId, code, proof });
   }
 
   /**
@@ -122,6 +128,16 @@ describe('MfaController', () => {
       expect(row?.confirmedAt).toBeNull();
       expect(row?.userId).toBe(account.userId);
       expect(row?.label).toBe('Phone');
+    });
+
+    it('refuses with a 409 and its own code once the account holds the most it may', async () => {
+      const account = await world.seedUserWithoutMfa();
+      const token = await accessTokenOf(account);
+      for (let i = 0; i < MAX_MFA_METHODS; i += 1) await enroll(token, `k${i}`).expect(201);
+
+      const refused = await enroll(token, 'one too many').expect(409);
+
+      expect(refused.body.code).toBe('MFA_TOO_MANY_METHODS');
     });
 
     it('offers the secret it stored, in a URI whose issuer comes from configuration', async () => {
@@ -354,19 +370,26 @@ describe('MfaController', () => {
       const account = await world.seedUserWithoutMfa();
       const token = await accessTokenOf(account);
       const first = await enroll(token, 'One').expect(201);
-      await confirm(token, first.body.methodId, currentCodeFor(first.body.secret)).expect(200);
+      const firstBatch = await confirm(
+        token,
+        first.body.methodId,
+        currentCodeFor(first.body.secret),
+      ).expect(200);
       const batchBefore = world.source
         .all(MfaRecoveryCodeRecord)
         .map((row) => row.codeHash)
         .sort();
 
       // The account now has a confirmed method, so its token is the one from
-      // before the confirmation: a session is not re-issued by enrolling.
+      // before the confirmation: a session is not re-issued by enrolling. Adding
+      // a second factor costs a proof of the first; one of the codes just issued
+      // is the proof any person holding that batch has.
       const second = await enroll(token, 'Two').expect(201);
       const confirmed = await confirm(
         token,
         second.body.methodId,
         currentCodeFor(second.body.secret),
+        { recoveryCode: firstBatch.body.recoveryCodes[0] },
       ).expect(200);
 
       expect(confirmed.body.recoveryCodes).toBeNull();
@@ -439,8 +462,8 @@ describe('MfaController', () => {
       const body = JSON.stringify(listed.body);
       expect(body).not.toContain(offer.body.secret);
       expect(body).not.toContain(pending.body.secret);
-      expect(listed.body).toHaveLength(2);
-      for (const method of listed.body) {
+      expect(listed.body.methods).toHaveLength(2);
+      for (const method of listed.body.methods) {
         expect(Object.keys(method).sort()).toEqual(
           ['confirmedAt', 'createdAt', 'id', 'label', 'lastUsedAt', 'type', 'userId'],
         );
@@ -468,7 +491,7 @@ describe('MfaController', () => {
         .set('Authorization', bearer(verified.body.accessToken))
         .expect(200);
 
-      expect(listed.body).toHaveLength(1);
+      expect(listed.body.methods).toHaveLength(1);
       expect(JSON.stringify(listed.body)).not.toContain(seeded.totpSecret);
     });
 
@@ -485,10 +508,57 @@ describe('MfaController', () => {
         .set('Authorization', bearer(myToken))
         .expect(200);
 
-      const ids = listed.body.map((method: { id: string }) => method.id);
+      const ids = listed.body.methods.map((method: { id: string }) => method.id);
       expect(ids).toEqual([pending.body.methodId]);
       expect(ids).not.toContain(elsewhere.body.methodId);
-      expect(listed.body[0].confirmedAt).toBeNull();
+      expect(listed.body.methods[0].confirmedAt).toBeNull();
+    });
+
+    /** The envelope's one key beside `methods`; see the tests below. */
+    async function recoveryCodesRemainingFor(token: string): Promise<unknown> {
+      const listed = await request(world.app.getHttpServer())
+        .get('/mfa/methods')
+        .set('Authorization', bearer(token))
+        .expect(200);
+      return listed.body.recoveryCodesRemaining;
+    }
+
+    it('reports how many unconsumed recovery codes remain', async () => {
+      const account = await world.seedUserWithoutMfa();
+      const token = await accessTokenOf(account);
+      const codes = await world.recoveryCodes.generate(account.userId);
+      expect(codes).toHaveLength(RECOVERY_CODE_COUNT);
+      expect(await recoveryCodesRemainingFor(token)).toBe(RECOVERY_CODE_COUNT);
+
+      await world.recoveryCodes.consume(account.userId, codes[0]!);
+
+      expect(await recoveryCodesRemainingFor(token)).toBe(RECOVERY_CODE_COUNT - 1);
+    });
+
+    it('reports zero rather than omitting the count', async () => {
+      const account = await world.seedUserWithoutMfa();
+      const token = await accessTokenOf(account);
+
+      const listed = await request(world.app.getHttpServer())
+        .get('/mfa/methods')
+        .set('Authorization', bearer(token))
+        .expect(200);
+
+      // `toBe(0)` alone would also fail on a missing key, but the key's presence
+      // is the property: a template cannot tell an absent field from a zero.
+      expect(Object.keys(listed.body)).toContain('recoveryCodesRemaining');
+      expect(listed.body.recoveryCodesRemaining).toBe(0);
+    });
+
+    it('reports zero once every code is spent, and counts only the actor\'s own', async () => {
+      const mine = await world.seedUserWithoutMfa();
+      const theirs = await world.seedUserWithoutMfa();
+      const myToken = await accessTokenOf(mine);
+      const myCodes = await world.recoveryCodes.generate(mine.userId);
+      await world.recoveryCodes.generate(theirs.userId);
+      for (const code of myCodes) await world.recoveryCodes.consume(mine.userId, code);
+
+      expect(await recoveryCodesRemainingFor(myToken)).toBe(0);
     });
   });
 

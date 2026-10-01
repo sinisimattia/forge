@@ -56,6 +56,7 @@ describe('AuditAction enum values', () => {
     RECOVERY_CODES_REGENERATED: 'RECOVERY_CODES_REGENERATED',
     RECOVERY_CODE_CONSUMED: 'RECOVERY_CODE_CONSUMED',
     FEDERATED_AUTHORIZATION_CORRUPT: 'FEDERATED_AUTHORIZATION_CORRUPT',
+    THROTTLE_ENGAGED: 'THROTTLE_ENGAGED',
   };
 
   // One case per member, so a failure names the key that moved instead of stopping a loop

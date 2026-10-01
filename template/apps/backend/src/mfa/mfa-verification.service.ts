@@ -274,15 +274,17 @@ export class MfaVerificationService {
   /**
    * Checks one {@link MfaProof} against one account's own second factors. **The
    * only place a proof is judged**: `completeLogin` and
-   * `completeLoginWithRecoveryCode` reach it, and so do `MfaService.removeMethod`
-   * and `MfaService.regenerateRecoveryCodes`.
+   * `completeLoginWithRecoveryCode` reach it, and so do every route that asks a
+   * signed-in person for a fresh proof — through
+   * {@link MfaVerificationService.proveSecondFactor}.
    *
-   * That is the point of it being one method. Sign-in and removal each ask "is
-   * this a live proof of a second factor this account holds?", and two
-   * implementations of that question can drift until one accepts what the other
-   * refuses — at which point the weaker one is the way in. A removal that
-   * accepted a stale code, or a method that was never confirmed, would let a
-   * hijacked session strip the factor that defeats it.
+   * That is the point of it being one method. Sign-in and every
+   * proof-gated change to an account's factors each ask "is this a live proof of
+   * a second factor this account holds?", and two implementations of that
+   * question can drift until one accepts what the other refuses — at which point
+   * the weaker one is the way in. A removal that accepted a stale code, or a
+   * method that was never confirmed, would let a hijacked session strip the
+   * factor that defeats it; an enrollment that did would let it add one of its own.
    *
    * Which kind of proof this is was decided by the field the caller populated —
    * `'methodId' in proof` — and nothing here looks at a string's length or
@@ -358,6 +360,40 @@ export class MfaVerificationService {
     await this.claimStep(method.id, step, now);
 
     return { methodId: method.id, methodType: method.type };
+  }
+
+  /**
+   * Judges a proof a *signed-in* person offered, through
+   * {@link MfaVerificationService.verifyProof}, and answers a refusal in the
+   * vocabulary of the account's own calls rather than a sign-in's.
+   *
+   * **The one answer, for every call that asks a signed-in person for a fresh
+   * proof** — removing the last factor, replacing the recovery codes, and
+   * confirming a factor on an account that already has one, by either of the
+   * two ways a factor is confirmed. They share it so that "is this proof good"
+   * cannot be answered two ways.
+   *
+   * A proof naming a method that is not the actor's confirmed one comes back
+   * from the verifier as `MfaMethodNotFoundError`, which is right for a sign-in
+   * and wrong here: on these calls the method a `MfaMethodNotFoundError` names is
+   * the one in the *path* or the body, and a caller must be able to tell a bad
+   * target from a bad proof. Every way a proof can fail to hold is
+   * `MfaVerificationFailedError` — a spent recovery code alone keeps its own
+   * error, which is a distinct, useful fact to a signed-in person.
+   *
+   * @param actorId - whose second factors may answer; never read from a request
+   * @param proof - what the caller offered
+   * @throws MfaVerificationFailedError when the proof does not hold, including
+   *   one that names a method that is not the actor's confirmed one
+   * @throws RecoveryCodeAlreadyConsumedError when the proof is a recovery code that was spent
+   */
+  public async proveSecondFactor(actorId: UserId, proof: MfaProof): Promise<void> {
+    try {
+      await this.verifyProof(actorId, proof);
+    } catch (error) {
+      if (error instanceof MfaMethodNotFoundError) throw new MfaVerificationFailedError();
+      throw error;
+    }
   }
 
   /**

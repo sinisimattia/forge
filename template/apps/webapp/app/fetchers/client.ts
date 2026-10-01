@@ -1,7 +1,18 @@
 import type { ApiClient, ApiErrorBody, ApiRequest } from '~/types';
 
 /**
- * A refusal that arrived over the wire, before anybody decided what it means.
+ * A failed exchange over the wire, before anybody decided what it means.
+ *
+ * Usually a refusal, and `status` is then the one the server answered with.
+ * **It is not only a refusal: a 2xx whose body is not JSON becomes one of these
+ * too**, carrying that successful status and a synthesised body. Such an answer
+ * is not a value of the type the caller asked for — a captive portal or a proxy
+ * answering for a backend that is not there produces exactly it — and handing
+ * it back as one would fail somewhere far from here, in a component reading a
+ * field off an HTML page. So it joins the single kind of failure every caller
+ * above this line already handles. The consequence for a reader: do not treat
+ * `status` as evidence of refusal without checking it, and do not assume
+ * `body.code` is populated — on that path there is none.
  *
  * It is deliberately *not* a domain error. The fetchers throw this and nothing
  * else; turning it into `UserNotFoundError` or `ConsumedTokenError` is the
@@ -134,10 +145,27 @@ function urlOf(baseUrl: string, request: ApiRequest): string {
 /**
  * The transport the application really runs on.
  *
- * Native `fetch` rather than Nuxt's `$fetch`, and the reason is `credentials`:
- * the renewal cookie only travels when the request asks for it, that is a
- * `fetch` option, and using the platform's own function keeps the one place
- * DEC-3 depends on legible instead of wrapped.
+ * The platform's `fetch` rather than Nuxt's `$fetch` (ofetch). `$fetch` has
+ * defaults this function does not want, and using it would mean overriding them:
+ *
+ * - it rejects on any 4xx/5xx, while this function reads the status as a value
+ *   (`ignoreResponseError`);
+ * - it parses the body itself with a lenient JSON parser, while the parsing
+ *   below is deliberate about empty bodies and a proxy's non-JSON error page
+ *   (`responseType: 'text'`);
+ * - it retries a failed or timed-out request once for methods without a body,
+ *   which would stretch the bound of {@link DEFAULT_API_TIMEOUT_MS} to twice
+ *   its value for those requests (`retry: false`).
+ *
+ * Those are options. What is not one is that it re-throws a network failure or
+ * a timeout as its own `FetchError` rather than the platform's rejection, which
+ * the timeout's documented behaviour does not allow for; keeping that would take
+ * a catch and a re-throw. The choice is not forced, it is that this much
+ * overriding to recover what the platform call does by default is more
+ * indirection than the wrapper removes.
+ *
+ * `credentials` is not a reason. The wrapper's options extend `RequestInit` and
+ * forward it, so it could carry the cookie as well as this does.
  *
  * {@link ApiRequest.actor} is read and ignored here, which is not an oversight —
  * see its own documentation. A browser holds one credential; the server resolves
@@ -182,8 +210,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     // an empty body, which would turn "it worked" into an unhandled parse error.
     if (response.status === 204) return undefined as T;
 
-    const text = await response.text();
-    const parsed: unknown = text === '' ? undefined : JSON.parse(text);
+    const parsed = parseBody(await response.text());
 
     if (!response.ok) {
       // A body that is not the envelope — a proxy's HTML error page, a gateway
@@ -195,8 +222,36 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       throw new ApiError(response.status, body);
     }
 
+    // A success whose body is not JSON — a captive portal, a proxy answering for
+    // a backend that is not there — is not a value of `T`, and handing it back as
+    // one would fail somewhere far from here. It becomes the same single kind of
+    // failure, carrying the status it arrived with.
+    if (parsed === NOT_JSON) {
+      throw new ApiError(response.status, {
+        error: response.statusText,
+        message: 'The response body was not JSON',
+      });
+    }
+
     return parsed as T;
   };
+}
+
+/** What {@link parseBody} answers for text that is not JSON. */
+const NOT_JSON = Symbol('not-json');
+
+/**
+ * The body as a value: `undefined` for nothing, {@link NOT_JSON} for text that
+ * does not parse. It never throws, because a refusal whose body is an HTML page
+ * must still reach the code that turns it into an `ApiError`.
+ */
+function parseBody(text: string): unknown {
+  if (text === '') return undefined;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return NOT_JSON;
+  }
 }
 
 /** Whether a parsed body is the envelope the backend's exception filter emits. */

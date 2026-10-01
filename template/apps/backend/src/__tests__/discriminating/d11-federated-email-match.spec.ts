@@ -23,7 +23,7 @@ import { OAuthProviderRegistry } from '../../auth/oauth/oauth-provider.registry'
 import { OAuthService } from '../../auth/oauth/oauth.service';
 import { SessionService } from '../../auth/session/session.service';
 import { JwtStrategy } from '../../auth/strategies';
-import { FakeDataSource } from '../../common/testing';
+import { FakeDataSource, UNMETERED_THROTTLING } from '../../common/testing';
 import { AuthIdentityRecord } from '../../identities/auth-identity-record.entity';
 import { Argon2PasswordHasher } from '../../identities/hashing';
 import { IdentitiesController } from '../../identities/identities.controller';
@@ -266,6 +266,7 @@ describe('D11 — a provider-asserted address links nothing', () => {
         }),
         I18N,
         PassportModule,
+        UNMETERED_THROTTLING,
         JwtModule.register({ secret: SIGNING_KEY, signOptions: { expiresIn: '5m' } }),
       ],
       controllers: [OAuthController, IdentitiesController],

@@ -76,6 +76,8 @@ const GOOD_ATTESTATION = { id: 'attestation-good', type: 'public-key' };
 const BASE32_SEED = 'JBSWY3DPEHPK3PXP';
 const RECOVERY = ['K7QD-M2XW-9P4R', 'H3TB-Z8NC-5V6J', 'W9FA-R4YE-2L7S'];
 const NEXT_RECOVERY = ['B2CD-N8XW-3P5R', 'T4YB-Q7NC-6V8J', 'D9FA-M5YE-4L2S'];
+/** How many codes a freshly issued batch holds, as the server counts them. */
+const WHOLE_BATCH = 10;
 const RIGHT_CODE = '123456';
 const WRONG_CODE = '654321';
 const SPARE_RECOVERY = 'Z2QD-M2XW-9P4R';
@@ -99,9 +101,22 @@ function totp(id: string, label: string, confirmed: boolean): MfaMethodJSON {
 }
 
 /** The server's rules for `/mfa`, over a mutable list, recording every request. */
-function mfaBackend(initial: MfaMethodJSON[]) {
+function mfaBackend(initial: MfaMethodJSON[], remaining?: number) {
   let methods = [...initial];
   let hasRecoveryBatch = initial.some((m) => m.confirmedAt !== null);
+  /**
+   * What `GET /mfa/methods` reports as left. Defaults to a whole batch for an
+   * account that holds one and to none otherwise, as the server does; a batch
+   * issued or regenerated here is a whole one again.
+   */
+  let recoveryCodesRemaining = remaining ?? (hasRecoveryBatch ? WHOLE_BATCH : 0);
+  /**
+   * Whether the account holds a pending passkey-enrollment challenge. Minted by
+   * the options request and **spent by the first verify that gets past the
+   * proof requirement**, whatever happens next — as the route does — so a second
+   * submit of one ceremony is refused for ever and a spec can see it.
+   */
+  let enrollmentChallenge = false;
   const requests: ApiRequest[] = [];
   /** `VERB path` -> how many matching calls still succeed before every later one answers 500. */
   const breaking = new Map<string, number>();
@@ -127,7 +142,7 @@ function mfaBackend(initial: MfaMethodJSON[]) {
     const answer = (value: unknown): Promise<T> => Promise.resolve(value as T);
     const { method, path, body } = request;
 
-    if (method === 'GET' && path === '/mfa/methods') return answer(methods);
+    if (method === 'GET' && path === '/mfa/methods') return answer({ methods, recoveryCodesRemaining });
 
     if (method === 'POST' && path === '/mfa/totp/enroll') {
       const label = String((body as { label?: unknown }).label ?? '').trim();
@@ -142,11 +157,19 @@ function mfaBackend(initial: MfaMethodJSON[]) {
     }
 
     if (method === 'POST' && path === '/mfa/totp/confirm') {
-      const given = body as { methodId: string; code: string };
+      const given = body as { methodId: string; code: string; proof?: unknown };
+      // The server's rule for adding a factor: an account that already holds a
+      // confirmed method is owed a proof of it, and its first factor is not.
+      if (methods.some((m) => m.confirmedAt !== null)) {
+        const verdict = proves(given.proof);
+        if (verdict === 'none') return Promise.reject(refusal(403, 'MFA_REAUTHENTICATION_REQUIRED'));
+        if (verdict === 'wrong') return Promise.reject(refusal(422, 'MFA_VERIFICATION_FAILED'));
+      }
       if (given.code !== RIGHT_CODE) return Promise.reject(refusal(422, 'MFA_VERIFICATION_FAILED'));
       methods = methods.map((m) => (m.id === given.methodId ? totp(m.id, m.label, true) : m));
       const first = !hasRecoveryBatch;
       hasRecoveryBatch = true;
+      if (first) recoveryCodesRemaining = WHOLE_BATCH;
       return answer({ recoveryCodes: first ? RECOVERY : null });
     }
 
@@ -154,6 +177,7 @@ function mfaBackend(initial: MfaMethodJSON[]) {
       const verdict = proves(body);
       if (verdict === 'none') return Promise.reject(refusal(403, 'MFA_REAUTHENTICATION_REQUIRED'));
       if (verdict === 'wrong') return Promise.reject(refusal(422, 'MFA_VERIFICATION_FAILED'));
+      recoveryCodesRemaining = WHOLE_BATCH;
       return answer({ recoveryCodes: NEXT_RECOVERY });
     }
 
@@ -174,22 +198,41 @@ function mfaBackend(initial: MfaMethodJSON[]) {
 
     if (method === 'POST' && path === '/mfa/webauthn/options') {
       // An enrollment: the session, and no challenge token in or out.
+      enrollmentChallenge = true;
       return answer({ publicKey: PASSKEY_OPTIONS, challengeToken: null });
     }
 
     if (method === 'POST' && path === '/mfa/webauthn/verify') {
-      const given = body as { response: { id?: string }; label?: string };
+      const given = body as { response: { id?: string }; label?: string; proof?: unknown };
+      // The route's own order: the label, then a missing proof (refused BEFORE
+      // the challenge is spent, so that retry is good), then the challenge, then
+      // the attestation, then a proof that was sent.
       if (String(given.label ?? '').trim() === '') {
         return Promise.reject(refusal(422, 'MFA_LABEL_REQUIRED'));
       }
-      // One answer for every refusal, with no code, as the route gives.
+      const owed = methods.some((m) => m.confirmedAt !== null);
+      if (owed && proves(given.proof) === 'none') {
+        return Promise.reject(refusal(403, 'MFA_REAUTHENTICATION_REQUIRED'));
+      }
+      if (!enrollmentChallenge) {
+        // `MfaChallengeNotFoundError`, a domain error the filter's table does not
+        // name: `422`, with no `code`, as the filter answers any such error.
+        return Promise.reject(new ApiError(422, { error: 'Unprocessable Entity', message: 'Refused.' }));
+      }
+      enrollmentChallenge = false;
+      // The enrollment branch is not flattened: a refused attestation is the
+      // domain's own `422 MFA_VERIFICATION_FAILED`, as a wrong proof is.
       if (given.response.id !== GOOD_ATTESTATION.id) {
-        return Promise.reject(new ApiError(401, { error: 'Unauthorized', message: 'Refused.' }));
+        return Promise.reject(refusal(422, 'MFA_VERIFICATION_FAILED'));
+      }
+      if (owed && proves(given.proof) === 'wrong') {
+        return Promise.reject(refusal(422, 'MFA_VERIFICATION_FAILED'));
       }
       const added = { ...totp('method-key', String(given.label), true), type: MfaMethodType.WEBAUTHN };
       methods = [...methods, added];
       const first = !hasRecoveryBatch;
       hasRecoveryBatch = true;
+      if (first) recoveryCodesRemaining = WHOLE_BATCH;
       return answer({ method: added, recoveryCodes: first ? RECOVERY : null });
     }
 
@@ -230,8 +273,8 @@ function button(wrapper: VueWrapper, key: string) {
 describe('the security page, second factor', () => {
   let backend: Backend;
 
-  async function open(initial: MfaMethodJSON[]): Promise<VueWrapper> {
-    backend = mfaBackend(initial);
+  async function open(initial: MfaMethodJSON[], remaining?: number): Promise<VueWrapper> {
+    backend = mfaBackend(initial, remaining);
     useAuthStore().adoptTransport(backend.client);
     const wrapper = mount(SecurityPage, { global: mountOptions() });
     await flushPromises();
@@ -263,6 +306,56 @@ describe('the security page, second factor', () => {
       const wrapper = await open([totp('m1', 'Tablet', false)]);
       expect(wrapper.text()).toContain('account.mfa.addTotp');
       expect(wrapper.text()).not.toContain('account.mfa.regenerate');
+    });
+  });
+
+  describe('the recovery codes that remain', () => {
+    const LOW = '[data-test="recovery-codes-low"]';
+
+    it('shows the count, and does not warn while there are plenty', async () => {
+      const wrapper = await open([totp('m1', 'Phone', true)], 9);
+      expect(wrapper.text()).toContain('account.mfa.recoveryRemaining|{"count":9}');
+      expect(wrapper.find(LOW).exists()).toBe(false);
+    });
+
+    it('warns when few remain', async () => {
+      const wrapper = await open([totp('m1', 'Phone', true)], 2);
+      expect(wrapper.html()).toContain('2');
+      expect(wrapper.find(LOW).exists()).toBe(true);
+      expect(wrapper.find(LOW).text()).toContain('"count":2');
+    });
+
+    it('warns at the threshold, and not one above it', async () => {
+      const at = await open([totp('m1', 'Phone', true)], 3);
+      expect(at.find(LOW).exists()).toBe(true);
+      const above = await open([totp('m1', 'Phone', true)], 4);
+      expect(above.find(LOW).exists()).toBe(false);
+    });
+
+    it('says so, rather than showing nothing, when none remain', async () => {
+      const wrapper = await open([totp('m1', 'Phone', true)], 0);
+      expect(wrapper.find(LOW).exists()).toBe(true);
+      expect(wrapper.find(LOW).text()).toContain('account.mfa.recoveryNone');
+      expect(wrapper.text()).toContain('account.mfa.recoveryRemaining|{"count":0}');
+    });
+
+    it('is not shown to an account with no confirmed method, which has no codes to count', async () => {
+      const wrapper = await open([totp('m1', 'Tablet', false)], 0);
+      expect(wrapper.find(LOW).exists()).toBe(false);
+      expect(wrapper.text()).not.toContain('account.mfa.recoveryRemaining');
+    });
+
+    it('stops warning once a new batch is issued', async () => {
+      const wrapper = await open([totp('m1', 'Phone', true)], 1);
+      expect(wrapper.find(LOW).exists()).toBe(true);
+      await button(wrapper, 'account.mfa.regenerate').trigger('click');
+      await wrapper.find('#proof-code').setValue(RIGHT_CODE);
+      await submitFormOf(wrapper, '#proof-code');
+      await wrapper.find('#recovery-saved').setValue(true);
+      await button(wrapper, 'account.mfa.recovery.done').trigger('click');
+      await flushPromises();
+      expect(wrapper.text()).toContain('account.mfa.recoveryRemaining|{"count":10}');
+      expect(wrapper.find(LOW).exists()).toBe(false);
     });
   });
 
@@ -314,8 +407,95 @@ describe('the security page, second factor', () => {
       await submitLabel(wrapper, 'Second phone');
       await wrapper.find('#totp-code').setValue(RIGHT_CODE);
       await submitFormOf(wrapper, '#totp-code');
+      await wrapper.find('#proof-code').setValue(RIGHT_CODE);
+      await submitFormOf(wrapper, '#proof-code');
       expect(wrapper.find('#recovery-codes').exists()).toBe(false);
       expect(wrapper.text()).toContain('Second phone');
+    });
+
+    describe('adding a second factor costs a proof of the first', () => {
+      const confirmBodies = (): unknown[] => backend.to('POST', '/mfa/totp/confirm').map((r) => r.body);
+      const isConfirmed = (id: string): boolean => backend.methods()
+        .some((m) => m.id === id && m.confirmedAt !== null);
+
+      it('asks for no proof when it is the first factor, and sends none', async () => {
+        const wrapper = await open([]);
+        await submitLabel(wrapper, 'Phone');
+        await wrapper.find('#totp-code').setValue(RIGHT_CODE);
+        await submitFormOf(wrapper, '#totp-code');
+
+        expect(wrapper.find('#proof-code').exists()).toBe(false);
+        expect(wrapper.find('#proof-recovery-code').exists()).toBe(false);
+        expect(confirmBodies()).toEqual([{ methodId: 'method-new', code: RIGHT_CODE }]);
+        expect(isConfirmed('method-new')).toBe(true);
+      });
+
+      it('does not confirm without a proof, and asks for one and says why instead of failing', async () => {
+        const wrapper = await open([totp('m1', 'Phone', true)]);
+        await submitLabel(wrapper, 'Attacker phone');
+        await wrapper.find('#totp-code').setValue(RIGHT_CODE);
+        await submitFormOf(wrapper, '#totp-code');
+
+        expect(isConfirmed('method-new')).toBe(false);
+        expect(wrapper.find('#proof-code').exists()).toBe(true);
+        expect(wrapper.text()).toContain('account.mfa.proof.requiredEnroll');
+        expect(wrapper.text()).not.toContain('account.mfa.failed');
+        expect(wrapper.text()).not.toContain('account.mfa.proof.wrong');
+      });
+
+      it('confirms when a proof from the existing method is given, sent nested under `proof`', async () => {
+        const wrapper = await open([totp('m1', 'Phone', true)]);
+        await submitLabel(wrapper, 'Second phone');
+        await wrapper.find('#totp-code').setValue(RIGHT_CODE);
+        await submitFormOf(wrapper, '#totp-code');
+        await wrapper.find('#proof-code').setValue(RIGHT_CODE);
+        await submitFormOf(wrapper, '#proof-code');
+
+        expect(isConfirmed('method-new')).toBe(true);
+        expect(confirmBodies()).toEqual([
+          { methodId: 'method-new', code: RIGHT_CODE },
+          { methodId: 'method-new', code: RIGHT_CODE, proof: { methodId: 'm1', code: RIGHT_CODE } },
+        ]);
+        expect(wrapper.find('#proof-code').exists()).toBe(false);
+        expect(wrapper.find('#totp-secret').exists()).toBe(false);
+      });
+
+      it('accepts a recovery code as the proof', async () => {
+        const wrapper = await open([totp('m1', 'Phone', true)]);
+        await submitLabel(wrapper, 'Second phone');
+        await wrapper.find('#totp-code').setValue(RIGHT_CODE);
+        await submitFormOf(wrapper, '#totp-code');
+        await button(wrapper, 'account.mfa.proof.useRecovery').trigger('click');
+        await wrapper.find('#proof-recovery-code').setValue(SPARE_RECOVERY);
+        await submitFormOf(wrapper, '#proof-recovery-code');
+
+        expect(isConfirmed('method-new')).toBe(true);
+      });
+
+      it('says a DIFFERENT thing when the proof was wrong, and confirms nothing', async () => {
+        const wrapper = await open([totp('m1', 'Phone', true)]);
+        await submitLabel(wrapper, 'Second phone');
+        await wrapper.find('#totp-code').setValue(RIGHT_CODE);
+        await submitFormOf(wrapper, '#totp-code');
+        await wrapper.find('#proof-code').setValue(WRONG_CODE);
+        await submitFormOf(wrapper, '#proof-code');
+
+        expect(isConfirmed('method-new')).toBe(false);
+        expect(wrapper.text()).toContain('account.mfa.proof.wrong');
+        expect(wrapper.text()).not.toContain('account.mfa.proof.requiredEnroll');
+      });
+
+      it('backing out of the proof returns to the enrollment, which can still be finished', async () => {
+        const wrapper = await open([totp('m1', 'Phone', true)]);
+        await submitLabel(wrapper, 'Second phone');
+        await wrapper.find('#totp-code').setValue(RIGHT_CODE);
+        await submitFormOf(wrapper, '#totp-code');
+        await button(wrapper, 'common.actions.cancel').trigger('click');
+        await flushPromises();
+
+        expect(wrapper.find('#totp-secret').text()).toBe(BASE32_SEED);
+        expect(isConfirmed('method-new')).toBe(false);
+      });
     });
   });
 
@@ -578,13 +758,16 @@ describe('the security page, second factor', () => {
       browser.attestation = GOOD_ATTESTATION;
       const wrapper = await open([totp('m1', 'Phone', true)]);
       await addPasskey(wrapper);
+      // The account already holds a factor, so the server asks for a proof of it.
+      await wrapper.find('#proof-code').setValue(RIGHT_CODE);
+      await submitFormOf(wrapper, '#proof-code');
 
       expect(browser.calls).toEqual([{ optionsJSON: PASSKEY_OPTIONS }]);
       const [options] = backend.to('POST', '/mfa/webauthn/options');
       // A session and no challenge: the route decides the ceremony from that.
       expect(options?.body).toEqual({});
-      const [verify] = backend.to('POST', '/mfa/webauthn/verify');
-      expect(verify?.body).toEqual({ response: GOOD_ATTESTATION, label: 'Office key' });
+      const [verify] = backend.to('POST', '/mfa/webauthn/verify').slice(-1);
+      expect(verify?.body).toMatchObject({ response: GOOD_ATTESTATION, label: 'Office key' });
       expect(wrapper.text()).toContain('Office key');
       expect(wrapper.text()).toContain('account.mfa.typeWebauthn');
       expect(wrapper.text()).not.toContain('account.mfa.failed');
@@ -618,7 +801,7 @@ describe('the security page, second factor', () => {
 
     it('says it could not add it when the server refuses the attestation, and lists nothing new', async () => {
       browser.attestation = { id: 'attestation-forged', type: 'public-key' };
-      const wrapper = await open([totp('m1', 'Phone', true)]);
+      const wrapper = await open([totp('m1', 'Phone', false)]);
       await addPasskey(wrapper);
 
       expect(backend.to('POST', '/mfa/webauthn/verify')).toHaveLength(1);
@@ -626,6 +809,89 @@ describe('the security page, second factor', () => {
       expect(wrapper.text()).not.toContain('account.mfa.passkeyDismissed');
       expect(wrapper.text()).not.toContain('Office key');
       expect(backend.methods().map((m) => m.id)).toEqual(['m1']);
+    });
+
+    describe('adding a second factor costs a proof of the first', () => {
+      const verifyBodies = (): unknown[] => backend.to('POST', '/mfa/webauthn/verify').map((r) => r.body);
+      const hasKey = (): boolean => backend.methods().some((m) => m.id === 'method-key');
+
+      it('asks for no proof when the passkey is the first factor', async () => {
+        browser.attestation = GOOD_ATTESTATION;
+        const wrapper = await open([]);
+        await addPasskey(wrapper);
+
+        expect(wrapper.find('#proof-code').exists()).toBe(false);
+        expect(verifyBodies()).toEqual([{ response: GOOD_ATTESTATION, label: 'Office key' }]);
+        expect(hasKey()).toBe(true);
+      });
+
+      it('does not register without a proof, and asks for one and says why instead of failing', async () => {
+        browser.attestation = GOOD_ATTESTATION;
+        const wrapper = await open([totp('m1', 'Phone', true)]);
+        await addPasskey(wrapper);
+
+        expect(hasKey()).toBe(false);
+        expect(wrapper.find('#proof-code').exists()).toBe(true);
+        expect(wrapper.text()).toContain('account.mfa.proof.requiredEnroll');
+        expect(wrapper.text()).not.toContain('account.mfa.failed');
+      });
+
+      it('registers with a proof, and the person touches the key only once', async () => {
+        browser.attestation = GOOD_ATTESTATION;
+        const wrapper = await open([totp('m1', 'Phone', true)]);
+        await addPasskey(wrapper);
+        await wrapper.find('#proof-code').setValue(RIGHT_CODE);
+        await submitFormOf(wrapper, '#proof-code');
+
+        expect(hasKey()).toBe(true);
+        // The ceremony already performed is carried to the retry, not repeated.
+        expect(browser.calls).toHaveLength(1);
+        expect(verifyBodies()).toEqual([
+          { response: GOOD_ATTESTATION, label: 'Office key' },
+          {
+            response: GOOD_ATTESTATION,
+            label: 'Office key',
+            proof: { methodId: 'm1', code: RIGHT_CODE },
+          },
+        ]);
+        expect(wrapper.find('#proof-code').exists()).toBe(false);
+      });
+
+      it('after a wrong proof drops the ceremony and says to touch the key again, rather than resending it', async () => {
+        browser.attestation = GOOD_ATTESTATION;
+        const wrapper = await open([totp('m1', 'Phone', true)]);
+        await addPasskey(wrapper);
+        await wrapper.find('#proof-code').setValue(WRONG_CODE);
+        await submitFormOf(wrapper, '#proof-code');
+
+        expect(hasKey()).toBe(false);
+        // The route spent the ceremony's challenge before it judged the proof, so
+        // the same attestation can never succeed: it must not be offered again.
+        expect(wrapper.find('#proof-code').exists()).toBe(false);
+        expect(wrapper.text()).toContain('account.mfa.passkeyRestart');
+        expect(wrapper.text()).not.toContain('account.mfa.failed');
+        expect(verifyBodies()).toHaveLength(2);
+
+        // And starting over works: a new ceremony, a new challenge, a right proof.
+        await addPasskey(wrapper);
+        await wrapper.find('#proof-code').setValue(RIGHT_CODE);
+        await submitFormOf(wrapper, '#proof-code');
+        expect(browser.calls).toHaveLength(2);
+        expect(hasKey()).toBe(true);
+        expect(wrapper.text()).not.toContain('account.mfa.passkeyRestart');
+      });
+
+      it('keeps the ceremony across a MISSING proof, which is refused before the challenge is spent', async () => {
+        browser.attestation = GOOD_ATTESTATION;
+        const wrapper = await open([totp('m1', 'Phone', true)]);
+        await addPasskey(wrapper);
+        expect(wrapper.find('#proof-code').exists()).toBe(true);
+        await wrapper.find('#proof-code').setValue(RIGHT_CODE);
+        await submitFormOf(wrapper, '#proof-code');
+
+        expect(browser.calls).toHaveLength(1);
+        expect(hasKey()).toBe(true);
+      });
     });
 
     it('says the name is missing when it is blank, and adds nothing', async () => {

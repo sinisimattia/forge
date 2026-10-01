@@ -47,19 +47,32 @@ export interface IMfaService {
    * something a client may challenge — see `decideAuthenticationStep` — until
    * {@link IMfaService.confirmTotpEnrollment} proves the person who asked for
    * it can actually produce a valid code from it. An abandoned offer that is
-   * never confirmed is simply a method nothing ever gates on.
+   * never confirmed gates nothing, but it is still a method the actor holds: it
+   * counts toward the most methods an account may hold, as a confirmed one does,
+   * and it frees its place only when it is removed.
    *
    * @param actorId - the user on whose behalf the call is made
    * @param label - the name the person gives this method, so they can tell
    * it apart from another of the same kind later
    * @returns the shared secret, in every form a caller might need to show it
    * @throws MfaLabelRequiredError when the label is absent or only whitespace
+   * @throws TooManyMfaMethodsError when the actor already holds the most methods
+   *   an account may, confirmed or not
    */
   beginTotpEnrollment(actorId: UserId, label: string): Promise<TotpEnrollmentOffer>;
 
   /**
    * Finishes a TOTP enrollment by proving the person holds a working copy of
    * the secret {@link IMfaService.beginTotpEnrollment} minted.
+   *
+   * **A factor is admitted only by a factor the account already holds.** An
+   * account with no confirmed method owes nothing here, because it has nothing
+   * to prove with; once it has one, confirming another costs a fresh proof of
+   * it, decided by `decideMfaEnrollment` over the account's methods as they
+   * stand *before* this one is confirmed. Without the rule a session that is not
+   * the owner's could enrol and confirm a factor of its own, and then remove the
+   * owner's — which {@link IMfaService.removeMethod} permits whenever a
+   * confirmed method remains.
    *
    * A batch of recovery codes comes back exactly once for an account: the
    * confirmation that gives the account its first confirmed method mints
@@ -72,6 +85,8 @@ export interface IMfaService {
    * @param actorId - the user on whose behalf the call is made
    * @param methodId - the method {@link IMfaService.beginTotpEnrollment} offered
    * @param code - the time-based code the person's app produced for it
+   * @param proof - a fresh proof of a second factor the account already
+   * holds, or `null` when none is offered
    * @returns a fresh recovery code batch if this confirmation gave the
    * account its first confirmed method, otherwise `null`
    * @throws MfaMethodNotFoundError when the method is not theirs —
@@ -79,12 +94,21 @@ export interface IMfaService {
    * for other people's ids
    * @throws MfaMethodAlreadyConfirmedError when the method has already been
    * confirmed once
-   * @throws MfaVerificationFailedError when the code does not verify
+   * @throws MfaReauthenticationRequiredError when the account already holds a
+   * confirmed method and `proof` is `null`
+   * @throws MfaVerificationFailedError when the code does not verify, or when a
+   * proof was owed, was offered, and does not verify. A proof that is offered
+   * but not owed is not checked at all
+   * @throws RecoveryCodeAlreadyConsumedError when `proof` names a recovery
+   * code that has already been used
+   * @see decideMfaEnrollment — the domain policy that decides whether a proof
+   * is owed. Every implementation calls it rather than restating the rule.
    */
   confirmTotpEnrollment(
     actorId: UserId,
     methodId: MfaMethodId,
     code: string,
+    proof: MfaProof | null,
   ): Promise<RecoveryCodeBatch | null>;
 
   /**

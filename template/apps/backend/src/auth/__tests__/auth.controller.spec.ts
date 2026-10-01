@@ -14,6 +14,7 @@ import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import { User } from '__FORGE_SCOPE__/core/users/entities';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
+import { UNMETERED_THROTTLING } from '../../common/testing';
 import { MfaVerificationService } from '../../mfa/mfa-verification.service';
 import { AuthController } from '../auth.controller';
 import { AuthService } from '../auth.service';
@@ -150,6 +151,7 @@ describe('AuthController', () => {
         // it looks.
         I18N,
         PassportModule,
+        UNMETERED_THROTTLING,
         JwtModule.register({ secret: SIGNING_KEY, signOptions: { expiresIn: '5m' } }),
       ],
       controllers: [AuthController],

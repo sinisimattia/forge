@@ -2,7 +2,7 @@
 
 The **NestJS** REST API for __FORGE_TITLE__ — TypeORM over PostgreSQL, i18n error/response
 handling. Part of the [__FORGE_TITLE__ monorepo](../../README.md). Ships with no business
-domain of its own, and with the identity foundation already built: `GET /health`, the
+domain of its own, and with the identity foundation already built: `GET /health` and `GET /health/ready`, the
 `/auth` endpoints (registration, verification, sign-in, renewal, sign-out, sessions,
 password reset and change), `/users` (the caller's own profile plus four platform-admin
 routes), `/users/me/identities`, `/audit`, and a global guard that closes every route that
@@ -18,7 +18,7 @@ npm run dev:logs       # follow logs
 npm run dev:migrate    # run TypeORM migrations against the running backend
 ```
 
-The API is served at **http://localhost:3000** (e.g. `GET /health`). It expects a Postgres
+The API is served at **http://localhost:3000** (liveness at `GET /health`, readiness at `GET /health/ready`). It expects a Postgres
 reachable via `DATABASE_URL`; in the dev stack that's wired for you. See the root
 [README](../../README.md) for the full environment and `.env.example` for configuration.
 

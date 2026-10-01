@@ -122,33 +122,52 @@ export class MfaChallengeService {
    * or not they were ever consumed: neither is presentable again, so neither
    * has any further use.
    *
-   * **It is not indexed, and that is a choice rather than an omission.**
-   * `1758000005000-Mfa.ts` creates `ix_mfa_challenges_user_id` and no index on
-   * `expires_at` — this comment claimed one for two phases, which was never
-   * true. The predicate is therefore a sequential scan, and what makes that
-   * acceptable is that this sweep runs on the path that creates rows: the
-   * table only ever holds the challenges minted inside one TTL window, which
-   * is `MFA_CHALLENGE_TTL_MS` — minutes — of sign-ins and enrollments. A
-   * deployment where that is a large number is a deployment that wants the
-   * index; adding one is a migration, not an edit here.
+   * `expires_at` is indexed (`ix_mfa_challenges_expires_at`), so the
+   * predicate is an index range rather than a scan of the table.
    *
    * Doing it here rather than in a scheduled job is what
    * makes it a thing that runs — a sweep on a path nothing calls is a sweep
    * that does not exist.
    *
+   * ## A replacement does not outlive what it replaces
+   *
+   * A chain of challenges lasts {@link MFA_CHALLENGE_TTL_MS} from the moment its
+   * first was issued, and no sequence of ceremonies lengthens that. A ceremony
+   * that spends one challenge to mint the next passes the spent challenge's
+   * expiry as `expiresAt`, and the replacement lapses then. Without it every
+   * replacement would open a window of its own, and whoever held a challenge
+   * could keep it alive by asking for the next before the last lapsed. A
+   * challenge that replaces nothing omits `expiresAt` and lapses a full window
+   * from now.
+   *
+   * The expiry is clamped to that full window, so the bound does not depend on
+   * what a caller passes: a value later than now plus the window is replaced
+   * by it, and a value already past gives a challenge nothing can present. This
+   * method does not look for the row being replaced; taking the expiry from the
+   * row the caller consumed is the caller's.
+   *
    * @param userId - whose challenge this is
    * @param purpose - what it will be allowed to finish, fixed now
    * @param webauthnChallenge - the ceremony nonce, or `null` for a challenge
    *   that never enters one
+   * @param expiresAt - when the challenge lapses, for one that replaces another;
+   *   never later than {@link MFA_CHALLENGE_TTL_MS} from now, which is also when
+   *   it lapses if omitted
    * @returns the plaintext token, the only copy of it that will ever exist
    */
   public async mint(
     userId: UserId,
     purpose: MfaChallengePurpose,
     webauthnChallenge: string | null,
+    expiresAt?: Date,
   ): Promise<string> {
     const now = new Date();
     await this.challenges.delete({ expiresAt: LessThan(now) });
+
+    // The full window is the ceiling and the default: a supplied expiry can
+    // shorten a challenge's life and never lengthen it.
+    const ceiling = now.getTime() + MFA_CHALLENGE_TTL_MS;
+    const lapsesAt = new Date(Math.min(expiresAt?.getTime() ?? ceiling, ceiling));
 
     const { token, hash } = generateOpaqueToken();
     await this.challenges.insert({
@@ -158,7 +177,7 @@ export class MfaChallengeService {
       tokenHash: hash,
       purpose,
       webauthnChallenge,
-      expiresAt: new Date(now.getTime() + MFA_CHALLENGE_TTL_MS),
+      expiresAt: lapsesAt,
       consumedAt: null,
       createdAt: now,
     });

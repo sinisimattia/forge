@@ -196,4 +196,32 @@ export enum AuditAction {
    * been established at this point, so the actor is null.
    */
   FEDERATED_AUTHORIZATION_CORRUPT = 'FEDERATED_AUTHORIZATION_CORRUPT',
+  /**
+   * A subject spent a budget and was refused. **Attempted on the attempt that
+   * first blocked the subject, and never for the refusals that follow it.**
+   *
+   * The restriction is the point. A refusal costs the attacker nothing to repeat,
+   * so an entry per refusal would let anybody write into this table without bound
+   * simply by continuing to attempt, and the record would become the thing that
+   * is amplified. Nobody is established at this point, so the actor is null; the
+   * resource identifies the subject by a digest and never by the value, which may
+   * be an address or a single-use credential.
+   *
+   * ## What "once" does and does not promise
+   *
+   * It is **at most once per block, not at least once.** An adapter may attempt
+   * this entry at a point where the block it describes is already in force and
+   * the refusal is already correct, and is then right to log a failed write
+   * rather than turn a correct refusal into an error for the person being told
+   * to wait. The entry is lost permanently when that happens: a later attempt by
+   * the same subject is not a new block, so nothing retries it. A block with no
+   * entry is therefore possible, and an empty stretch of this action is not
+   * evidence that nobody was refused.
+   *
+   * Nor is "once" a guarantee of exactly one row the other way: two attempts
+   * whose transactions begin in the same instant can each be told they set the
+   * block, and write two entries for the one block. Read this action as a
+   * sample of blocking, not as a count of blocks.
+   */
+  THROTTLE_ENGAGED = 'THROTTLE_ENGAGED',
 }

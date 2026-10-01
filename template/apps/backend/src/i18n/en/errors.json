@@ -2,7 +2,8 @@
   "common": {
     "internal": "An unexpected error occurred",
     "validation_failed": "Validation failed",
-    "invalid_uuid": "The provided identifier is not a valid UUID"
+    "invalid_uuid": "The provided identifier is not a valid UUID",
+    "too_many_attempts": "Too many attempts. Wait a moment and try again"
   },
   "http": {
     "bad_request": "The request could not be processed",
@@ -41,6 +42,9 @@
       "NEEDS_DIGIT": "Include at least one digit",
       "BREACHED": "That password appears in a public list of known passwords. Choose a different one"
     }
+  },
+  "mfa": {
+    "too_many_methods": "You have reached the most second-step methods an account can hold. Remove one you no longer use, then try again"
   },
   "oauth": {
     "invalid_redirect": "That redirect destination is not allowed"

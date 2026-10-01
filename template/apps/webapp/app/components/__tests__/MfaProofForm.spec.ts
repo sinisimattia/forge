@@ -23,7 +23,11 @@ const PHONE = method('phone', MfaMethodType.TOTP, '2026-09-01T09:05:00.000Z');
 const KEY = method('key', MfaMethodType.WEBAUTHN, '2026-09-01T09:05:00.000Z');
 const UNFINISHED = method('tablet', MfaMethodType.TOTP, null);
 
-function form(reason: ProofReason, methods: MfaMethodJSON[] = [PHONE], action: 'remove' | 'regenerate' = 'remove') {
+function form(
+  reason: ProofReason,
+  methods: MfaMethodJSON[] = [PHONE],
+  action: 'remove' | 'regenerate' | 'confirmTotp' | 'enrollPasskey' = 'remove',
+) {
   return mount(MfaProofForm, { props: { action, reason, methods }, global: mountOptions() });
 }
 
@@ -57,6 +61,16 @@ describe('MfaProofForm', () => {
     expect(wrapper.text()).toContain('account.mfa.proof.requiredRegenerate');
     expect(wrapper.text()).not.toContain('account.mfa.proof.requiredRemove');
   });
+
+  it.each(['confirmTotp', 'enrollPasskey'] as const)(
+    'words adding a factor (%s) for itself',
+    (action) => {
+      const wrapper = form('required', [PHONE], action);
+      expect(wrapper.text()).toContain('account.mfa.proof.requiredEnroll');
+      expect(wrapper.text()).not.toContain('account.mfa.proof.requiredRemove');
+      expect(wrapper.text()).not.toContain('account.mfa.proof.requiredRegenerate');
+    },
+  );
 
   it('emits a method and its code, and nothing else', async () => {
     const wrapper = form('required');

@@ -27,6 +27,7 @@ import {
 import { assertNever } from '__FORGE_SCOPE__/core/shared/policies';
 import { UserNotFoundError } from '__FORGE_SCOPE__/core/users/errors';
 import { ParseUuidParamPipe } from '../common/pipes';
+import { Throttled } from '../throttling/throttled.decorator';
 import { MfaLoginCompletion, MfaVerificationService } from '../mfa/mfa-verification.service';
 import { AuthService } from './auth.service';
 import { clientContextOf } from './client-context';
@@ -124,6 +125,7 @@ export class AuthController {
    */
   @Public()
   @Post('resend-verification')
+  @Throttled('credential')
   @HttpCode(HttpStatus.ACCEPTED)
   public async resendVerification(
     @Body() body: ResendVerificationDto,
@@ -160,6 +162,7 @@ export class AuthController {
    */
   @Public()
   @Post('login')
+  @Throttled('credential')
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', 'no-store')
   public async login(
@@ -219,7 +222,9 @@ export class AuthController {
   }
 
   /**
-   * Lists the methods a login challenge may be finished with, and spends nothing.
+   * Lists the methods a login challenge may be finished with, and does not spend the
+   * challenge — it does draw on the `mfa-mint` budget, which is what stops it being
+   * a free way to probe tokens.
    *
    * The federated door's half of what `POST /auth/login` returns inline: the
    * browser is redirected with a challenge token and no body, so it asks here
@@ -238,6 +243,7 @@ export class AuthController {
    */
   @Public()
   @Post('mfa/methods')
+  @Throttled('mfa-mint')
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', 'no-store')
   public async mfaMethods(
@@ -328,6 +334,7 @@ export class AuthController {
    */
   @Public()
   @Post('mfa/verify')
+  @Throttled('mfa-attempt')
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', 'no-store')
   public async verifyMfa(
@@ -457,6 +464,7 @@ export class AuthController {
    */
   @Public()
   @Post('forgot-password')
+  @Throttled('credential')
   @HttpCode(HttpStatus.ACCEPTED)
   public async forgotPassword(@Body() body: ForgotPasswordDto): Promise<RegistrationAcceptedDto> {
     await this.auth.requestPasswordReset(body.email);
@@ -474,6 +482,7 @@ export class AuthController {
    */
   @Public()
   @Post('reset-password')
+  @Throttled('reset-credential')
   @HttpCode(HttpStatus.OK)
   public async resetPassword(@Body() body: ResetPasswordDto): Promise<{ status: 'reset' }> {
     await this.auth.resetPassword(body.credential, body.secret);

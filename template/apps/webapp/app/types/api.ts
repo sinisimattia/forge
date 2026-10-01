@@ -60,7 +60,12 @@ export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
  *   fell eleven codes behind — the organization, membership, invitation and
  *   grant codes of Tasks 10–14 — with the literal-list test staying green on
  *   both sides throughout, because neither side's eleven-item literal ever
- *   had to change to stay equal to the other's eleven-item literal.
+ *   had to change to stay equal to the other's eleven-item literal. It opened
+ *   again for `TOO_MANY_ATTEMPTS` the moment the backend began refusing with
+ *   it, and again both tests stayed green. **Treat it as open, not as closed
+ *   by the last person who noticed it**: adding a row to `DOMAIN_ERROR_CODES`
+ *   means adding the same name here and in this file's test, by hand, in the
+ *   same change.
  * - It is **not** a completeness check against the backend, and it cannot be
  *   made into one without either importing backend code into this bundle
  *   (which would pull `@nestjs/common`, `express` and `nestjs-i18n` into a
@@ -107,6 +112,7 @@ export const API_ERROR_CODES = [
   'MFA_METHOD_ALREADY_CONFIRMED',
   'MFA_METHOD_NOT_FOUND',
   'MFA_REAUTHENTICATION_REQUIRED',
+  'MFA_TOO_MANY_METHODS',
   'MFA_VERIFICATION_FAILED',
   'ORGANIZATION_NAME_REQUIRED',
   'ORGANIZATION_NOT_FOUND',
@@ -115,6 +121,7 @@ export const API_ERROR_CODES = [
   'SESSION_NOT_FOUND',
   'TOKEN_CONSUMED',
   'TOKEN_EXPIRED',
+  'TOO_MANY_ATTEMPTS',
   'USER_NOT_FOUND',
   'WEAK_PASSWORD',
 ] as const;
@@ -452,6 +459,20 @@ export interface TotpConfirmationBody {
 /** What `POST /mfa/recovery-codes` answers: the new batch, in the clear, once. */
 export interface RecoveryCodesBody {
   recoveryCodes: string[];
+}
+
+/**
+ * What `GET /mfa/methods` answers: the methods, and the account's own count of
+ * recovery codes it has not spent.
+ *
+ * The count is the backend's `MfaMethodsResponseDto.recoveryCodesRemaining`,
+ * restated for the reason {@link AuthResponseBody} gives. It sits beside
+ * `methods` because it belongs to the account, and is always a number: `0` is a
+ * real answer, not an absent one.
+ */
+export interface MfaMethodsBody {
+  methods: MfaMethodJSON[];
+  recoveryCodesRemaining: number;
 }
 
 /** What `POST /mfa/webauthn/verify` answers for an enrollment. */

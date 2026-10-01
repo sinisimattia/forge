@@ -12,7 +12,7 @@ import type { SessionId } from '__FORGE_SCOPE__/core/auth/types';
 import { PlatformRole, UserStatus } from '__FORGE_SCOPE__/core/users/enums';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
-import { FakeDataSource } from '../../common/testing';
+import { FakeDataSource, UNMETERED_THROTTLING } from '../../common/testing';
 import { PlatformAdminGuard } from '../../auth/guards';
 import { JwtStrategy } from '../../auth/strategies';
 import { MembershipRecord } from '../../organizations/membership-record.entity';
@@ -111,6 +111,7 @@ describe('AuditController', () => {
         ConfigModule.forRoot({ ignoreEnvFile: true, load: [() => ({ JWT_SECRET: SIGNING_KEY })] }),
         I18N,
         PassportModule,
+        UNMETERED_THROTTLING,
         JwtModule.register({ secret: SIGNING_KEY, signOptions: { expiresIn: '5m' } }),
       ],
       controllers: [AuditController],

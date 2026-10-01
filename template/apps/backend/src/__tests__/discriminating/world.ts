@@ -23,7 +23,7 @@ import { GrantsController } from '../../authorization/grants.controller';
 import { REQUIRED_PERMISSION } from '../../authorization/require-permission.decorator';
 import { ResourceGrantRecord } from '../../authorization/resource-grant-record.entity';
 import { generateOpaqueToken } from '../../common/crypto';
-import { FakeDataSource } from '../../common/testing';
+import { FakeDataSource, UNMETERED_THROTTLING } from '../../common/testing';
 import type { IMailer } from '../../mail';
 import { InvitationRecord } from '../../organizations/invitation-record.entity';
 import { InvitationsController } from '../../organizations/invitations.controller';
@@ -351,6 +351,7 @@ export async function buildWorld(): Promise<DiscriminatingWorld> {
       ConfigModule.forRoot({ ignoreEnvFile: true, load: [() => ({ JWT_SECRET: SIGNING_KEY })] }),
       I18N,
       PassportModule,
+      UNMETERED_THROTTLING,
       JwtModule.register({ secret: SIGNING_KEY, signOptions: { expiresIn: '5m' } }),
     ],
     controllers: [...GUARDED_CONTROLLERS],

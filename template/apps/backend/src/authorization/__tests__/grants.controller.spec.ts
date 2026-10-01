@@ -16,7 +16,7 @@ import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { GLOBAL_PROVIDERS, I18N } from '../../app.module';
 import { AuditEntryRecord } from '../../audit/audit-entry-record.entity';
 import { AuditService } from '../../audit/audit.service';
-import { FakeDataSource } from '../../common/testing';
+import { FakeDataSource, UNMETERED_THROTTLING } from '../../common/testing';
 import { JwtStrategy } from '../../auth/strategies';
 import { MembershipRecord } from '../../organizations/membership-record.entity';
 import { OrganizationRecord } from '../../organizations/organization-record.entity';
@@ -83,6 +83,7 @@ describe('GrantsController', () => {
         ConfigModule.forRoot({ ignoreEnvFile: true, load: [() => ({ JWT_SECRET: SIGNING_KEY })] }),
         I18N,
         PassportModule,
+        UNMETERED_THROTTLING,
         JwtModule.register({ secret: SIGNING_KEY, signOptions: { expiresIn: '5m' } }),
       ],
       controllers: [GrantsController],

@@ -14,19 +14,75 @@ import { MfaRecoveryCodeRecord } from '../entities/mfa-recovery-code-record.enti
 export const RECOVERY_CODE_COUNT = 10;
 
 /**
- * Bytes of entropy per code: 128 bits, which is 22 characters once encoded.
+ * Bytes of entropy per code: 128 bits.
  *
- * **Deliberately not `generateOpaqueToken`.** That helper draws 32 bytes — 43
- * characters, eleven groups of four — and takes no length. A recovery code is
- * the one credential this system expects a person to copy by hand from paper,
- * on the worst day they have had with their phone, ten to a sheet. 128 bits is
- * already far past anything an attacker can search, so the second 128 bits
- * buys nothing and costs legibility. Do not tidy this back to the helper.
+ * **Deliberately not `generateOpaqueToken`.** That helper draws 32 bytes and
+ * takes no length, and its output is a much longer string than this one. A
+ * recovery code is the one credential this system expects a person to copy by
+ * hand from paper, on the worst day they have had with their phone, ten to a
+ * sheet. 128 bits is already far past anything an attacker can search, so the
+ * second 128 bits buys nothing and costs legibility. Do not tidy this back to
+ * the helper.
  */
 const CODE_BYTES = 16;
 
+/**
+ * Crockford's base32 alphabet: the digits and the letters, less `I`, `L`, `O`
+ * and `U`.
+ *
+ * The first three are dropped because a person reads them as `1`, `1` and `0`,
+ * and the last so that a code cannot spell a word by accident. Every symbol
+ * left stands for exactly one value, which is what lets {@link normalise} fold
+ * the dropped letters onto the symbols they are mistaken for without any code
+ * becoming ambiguous.
+ */
+const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
 /** Characters per group in the form a person keeps. Presentation only: see {@link RecoveryCodes.consume}. */
 const GROUP_SIZE = 4;
+
+/**
+ * The one form a code takes before it is hashed: no whitespace, upper case, and
+ * the letters a person mistakes for digits written as those digits.
+ *
+ * **Both {@link RecoveryCodes.generate} and {@link RecoveryCodes.consume} take
+ * their digest from this function's output**, so a code is stored as the digest
+ * of what a person's typing normalises to, whatever way it was typed. The two
+ * cannot disagree about what a code is, because neither has an opinion of its
+ * own. A fold written only in `consume` would work until somebody changed what
+ * `generate` stores.
+ *
+ * `I` and `L` read as `1` and `O` as `0`, which is Crockford's own rule for
+ * decoding. `U` is folded onto nothing: it is outside the alphabet and no digit
+ * is mistaken for it, so a code containing one matches no stored code.
+ */
+function normalise(typed: string): string {
+  return typed
+    .replace(/\s+/g, '')
+    .toUpperCase()
+    .replace(/O/g, '0')
+    .replace(/[IL]/g, '1');
+}
+
+/** Crockford base32, unpadded, of `bytes`, in the alphabet above. */
+function encodeBase32(bytes: Uint8Array): string {
+  let out = '';
+  let buffer = 0;
+  let bits = 0;
+  for (const byte of bytes) {
+    buffer = (buffer << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += ALPHABET[(buffer >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+    buffer &= (1 << bits) - 1;
+  }
+  // The bits that did not fill a symbol are padded on the right with zeros, so
+  // no input bit is dropped.
+  if (bits > 0) out += ALPHABET[(buffer << (5 - bits)) & 31];
+  return out;
+}
 
 /**
  * Recovery codes: the way back in when the device holding a second factor is
@@ -105,8 +161,8 @@ export class RecoveryCodes {
   public async generate(userId: UserId, manager?: EntityManager): Promise<readonly string[]> {
     const now = new Date();
     const issued = Array.from({ length: RECOVERY_CODE_COUNT }, () => {
-      const token = randomBytes(CODE_BYTES).toString('base64url');
-      return { token, hash: hashOpaqueToken(token) };
+      const token = encodeBase32(randomBytes(CODE_BYTES));
+      return { token, hash: hashOpaqueToken(normalise(token)) };
     });
 
     const write = async (through: EntityManager): Promise<void> => {
@@ -129,11 +185,12 @@ export class RecoveryCodes {
   /**
    * Spends a code belonging to `userId`, or says why it could not.
    *
-   * Whitespace is removed before the digest is taken, undoing the grouping
-   * {@link RecoveryCodes.generate} applied for the person's benefit. That is
-   * the whole of the normalisation, and it is not a decision about what kind
-   * of proof this is — which field a value arrived in decides that, upstream of
-   * here.
+   * The code is put through {@link normalise} before the digest is taken: the
+   * grouping {@link RecoveryCodes.generate} applied for the person's benefit is
+   * undone, case is ignored, and the letters a person reads as digits are
+   * read as digits. That is the whole of the normalisation, and it is not a
+   * decision about what kind of proof this is — which field a value arrived in
+   * decides that, upstream of here.
    *
    * **This tells two refusals apart, and its caller must not.** A code that
    * never existed and a code that was already spent are different facts: the
@@ -154,7 +211,7 @@ export class RecoveryCodes {
    * @throws MfaVerificationFailedError when no such code was issued to this account
    */
   public async consume(userId: UserId, code: string): Promise<void> {
-    const codeHash = hashOpaqueToken(code.replace(/\s+/g, ''));
+    const codeHash = hashOpaqueToken(normalise(code));
     const result = await this.codes.update(
       { codeHash, userId, consumedAt: IsNull() },
       { consumedAt: new Date() },
@@ -166,7 +223,25 @@ export class RecoveryCodes {
     throw new MfaVerificationFailedError();
   }
 
-  /** `abcdefgh` → `abcd efgh`. */
+  /**
+   * How many of `userId`'s codes have not been spent.
+   *
+   * A count of the rows `consumedAt IS NULL` — the same predicate
+   * {@link RecoveryCodes.consume} spends against, so a code is counted exactly
+   * when it could still be used. An account that holds no codes at all answers
+   * `0`, not `null`: "none left" is the number a person most needs to be told,
+   * and a caller that cannot tell it from an absent value will not show it.
+   *
+   * Read-only, and not a check before anything: nothing may decide whether to
+   * spend a code on this, because the answer can be stale by the time it is used.
+   *
+   * @param userId - whose codes to count
+   */
+  public async remaining(userId: UserId): Promise<number> {
+    return this.codes.count({ where: { userId, consumedAt: IsNull() } });
+  }
+
+  /** `ABCDEFGH` → `ABCD EFGH`. */
   private static group(token: string): string {
     return token.match(new RegExp(`.{1,${GROUP_SIZE}}`, 'g'))!.join(' ');
   }

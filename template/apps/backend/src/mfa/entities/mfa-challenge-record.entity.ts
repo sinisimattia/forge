@@ -66,6 +66,7 @@ export class MfaChallengeRecord {
   @Column({ name: 'webauthn_challenge', type: 'text', nullable: true })
   webauthnChallenge!: string | null;
 
+  @Index('ix_mfa_challenges_expires_at')
   @Column({ name: 'expires_at', type: 'timestamptz' })
   expiresAt!: Date;
 

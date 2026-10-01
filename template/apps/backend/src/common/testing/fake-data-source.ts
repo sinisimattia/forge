@@ -241,6 +241,10 @@ export class FakeDataSource {
         const found = this.match(entity, options?.where ?? {});
         return sortRows(found, options?.order).map((one) => ({ ...one }));
       },
+      count: async (options) => {
+        await yieldTurn();
+        return this.match(entity, options?.where ?? {}).length;
+      },
       findAndCount: async (options) => {
         await yieldTurn();
         // Ordered, then counted, then sliced — in that order, and every step
@@ -411,6 +415,7 @@ export class FakeDataSource {
 export interface FakeRepository {
   findOne(options: { where: Where }): Promise<Row | null>;
   find(options?: { where?: Where; order?: Record<string, 'ASC' | 'DESC'> }): Promise<Row[]>;
+  count(options?: { where?: Where }): Promise<number>;
   findAndCount(options?: PageOptions): Promise<[Row[], number]>;
   insert(values: Row): Promise<{ identifiers: { id: string }[] }>;
   update(criteria: Criteria, patch: Row): Promise<{ affected: number }>;

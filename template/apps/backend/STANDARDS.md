@@ -45,7 +45,7 @@ src/<module>/
 └── <module>.repository.ts          # only if complex queries exist
 ```
 
-- This skeleton ships only `health/` (a liveness probe with no business logic) plus
+- This skeleton ships only `health/` (liveness and readiness probes with no business logic) plus
   `src/common/` (shared cross-cutting concerns). Feature modules — e.g. `articles`,
   `comments`, `tags` — are added the same way once a domain exists.
 - **Shared utilities:** `src/common/` — filters, interceptors, pipes, types, i18n

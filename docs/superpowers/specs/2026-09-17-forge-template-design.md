@@ -401,8 +401,9 @@ permission → read the audit trail → rotate a refresh token → reset the pas
 | D13 | `UPDATE`/`DELETE` attempted on `audit_entries` by the app role | rejected at the database |
 | D14 | `grep -riE "\bjwt\b|cookie|http" libs/core/src` | zero hits — core purity in prose |
 | D15 | last `OWNER` of an org tries to leave or demote themselves | rejected |
+| D16 | a subject exhausts its budget (`mfa-attempt`, against one challenge) | refused `429` `TOO_MANY_ATTEMPTS` with a translated message and its retry window — not the library's own body, not a `500` |
 
-D6–D15 exist because a platform that compiles and returns 200 on the happy path is not a
+D6–D16 exist because a platform that compiles and returns 200 on the happy path is not a
 platform that is secure; these are the assertions that would actually catch a regression.
 
 CI: unit + integration on every push; Docker e2e on PRs.

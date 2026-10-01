@@ -12,8 +12,9 @@ import type { ProofReason } from '~/composables/useMfaMethods';
  * - `required` — the server refused because no proof came with the request
  *   (`403`, `MFA_REAUTHENTICATION_REQUIRED`). Removing the last method is a way
  *   of removing the requirement, and a signed-in tab is not enough to authorise
- *   that. This is the rule doing its job, so the text explains the rule and does
- *   not read as an error.
+ *   that; nor is it enough to add a second factor, which would let a hijacked tab
+ *   enrol one of its own. This is the rule doing its job, so the text explains
+ *   the rule and does not read as an error.
  * - `wrong` — a proof was sent and did not check out (`422`), or was a recovery
  *   code already spent. The remedy is different (try another), and the text is
  *   an error.
@@ -30,7 +31,7 @@ import type { ProofReason } from '~/composables/useMfaMethods';
  */
 interface Props {
   /** What the proof unlocks, which picks the wording. */
-  action: 'remove' | 'regenerate';
+  action: 'remove' | 'regenerate' | 'confirmTotp' | 'enrollPasskey';
   /** Why the form is showing. */
   reason: ProofReason;
   /** The account's methods; the confirmed authenticator apps among them can supply a code. */
@@ -61,11 +62,11 @@ const methodId = ref(codeMethods.value[0]?.id ?? '');
 const codeInput = ref('');
 const recoveryInput = ref('');
 
-const requiredKey = computed(
-  () => (props.action === 'remove'
-    ? 'account.mfa.proof.requiredRemove'
-    : 'account.mfa.proof.requiredRegenerate'),
-);
+const requiredKey = computed(() => {
+  if (props.action === 'remove') return 'account.mfa.proof.requiredRemove';
+  if (props.action === 'regenerate') return 'account.mfa.proof.requiredRegenerate';
+  return 'account.mfa.proof.requiredEnroll';
+});
 
 const methodOptions = computed(
   () => codeMethods.value.map((method) => ({ value: method.id, label: method.label })),

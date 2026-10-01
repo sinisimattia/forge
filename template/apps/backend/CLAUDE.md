@@ -72,7 +72,7 @@ src/<module>/
 └── <module>.repository.ts          # Only if complex queries exist
 ```
 
-**Present today:** `health/` (liveness probe, no business logic); `auth/` (the
+**Present today:** `health/` (liveness and database-backed readiness probes, no business logic); `auth/` (the
 `/auth` endpoints including recovery, the global `JwtAuthGuard`, `PlatformAdminGuard`,
 `@Public()`/`@CurrentUser()`, the session and rotation services, and the one
 `REFRESH_COOKIE` constant); `identities/` (the password identity, the argon2id hasher, the
@@ -83,8 +83,11 @@ file-writing development adapter, and the message templates); `organizations/`
 unscoped `POST /invitations/:token/accept`); `authorization/` (`PermissionsGuard`,
 `@RequirePermission`, `PrincipalService` — the one hydrator of a `Principal` — and
 `/organizations/:id/grants`); `audit/` (`GET /audit` and `GET /organizations/:id/audit`);
-and the persistence record classes under `users/`, `identities/`, `auth/entities/`,
-`audit/`, `organizations/` and `authorization/`. Those are named `<Thing>Record` because
+`mfa/` (the `/mfa` endpoints, the challenge, verification and recovery-code services, and
+the TOTP and WebAuthn ceremonies — the second factor every path that would open a session
+asks about); `throttling/` (`ForgeThrottlerGuard`, `@Throttled`, the bucket definitions and
+the Postgres-backed counter store); and the persistence record classes, which sit beside the
+module that owns them. Those are named `<Thing>Record` because
 `__FORGE_SCOPE__/core` already exports `User`, `AuthIdentity`, `Session`, `AuditEntry`,
 `Organization`, `Membership`, `Invitation` and `ResourceGrant`, and a repository imports
 both in one file.
@@ -112,11 +115,15 @@ both in one file.
 ## What's wired up
 
 - `AppModule` — `ConfigModule` (global, `.env`), `TypeOrmModule.forRootAsync` reading
-  `DATABASE_URL`, the eleven persistence record classes, `I18nModule`, `HealthModule`,
-  `MailModule`, `AuditModule`, `IdentitiesModule`, `AuthModule`, `UsersModule`,
-  `OrganizationsModule`, and
+  `DATABASE_URL`, every persistence record class the application maps, the translation
+  module, one module per feature area, and
   `GLOBAL_PROVIDERS` — the `APP_GUARD`, `APP_PIPE`, `APP_FILTER` and `APP_INTERCEPTOR`
-  described above. Everything that can be module metadata IS, because module metadata is
+  described above. **`app.module.ts`'s own `imports` and `entities` arrays are that list and
+  neither is restated here**: a copy of either falls behind the first module or entity added
+  after it was written, and both have. The `entities` array in particular is not a free list
+  — the schema-drift probe in `tests/integration/docker.test.mjs` asserts the exact *set* of
+  tables TypeORM maps, so a record class registered late turns it red, and one registered
+  early costs nothing. Everything that can be module metadata IS, because module metadata is
   assertable without starting anything; `__tests__/composition-root.spec.ts` reads this list
   off the decorator and its table says which fault each assertion catches.
 - `app.setup.ts` — `cookie-parser` and CORS from `CORS_ORIGIN`, which are the two things
@@ -124,11 +131,12 @@ both in one file.
 - `main.ts` — four statements: create, `configureApp`, read `PORT` (default `3000`),
   listen. Deliberately almost empty: it is excluded from coverage and no spec imports it,
   so anything added there is invisible to the whole suite. That was measured.
-  There is **no** global route prefix — `GET /health` is polled unprefixed by the
-  container healthcheck and by the e2e smoke test; keep it that way unless every
-  consumer of `/health` is updated at the same time. `GET /health` also carries
-  `@Public()`, without which the global guard answers it `401` and nothing that waits on
-  `service_healthy` ever starts.
+  There is **no** global route prefix — the health endpoints are polled unprefixed, by
+  the container healthcheck (which polls readiness) and by smoke tests; keep it that way
+  unless every poller of them is updated at the same time. Both health endpoints carry
+  `@Public()`: without it the global guard answers `401`, a `401` is a response, so the
+  healthcheck's `r.ok` is false for ever and nothing that waits on `service_healthy`
+  starts.
 - **Configuration this package refuses to boot without:** `DATABASE_URL`, `JWT_SECRET`
   (the key access credentials are signed with), `PUBLIC_WEBAPP_URL` (the origin every
   mail link is built from — verification, password reset **and** invitation) and
@@ -187,17 +195,20 @@ both in one file.
 
 ## Pinned dependencies
 
-| Package | Held at | Why |
-| --- | --- | --- |
-| `@nestjs/jwt` | `^11.0.2` | 12.x is ESM-only |
-| `@nestjs/passport` | `^11.0.5` | 12.x is ESM-only |
+**The list lives in `package.json` under `//pinned`, and is not copied here.** That is where
+`npm outdated` sends a reader, it sits beside the ranges it explains, and a table restated in
+this file falls behind the moment a pin is added — which it did. Read it there: it names every
+held package, the exact versions each pin was verified against, and what moving off it costs.
+It also records one dependency that is deliberately **not** held back, so that stays a choice
+rather than an accident.
 
-Both 12.x releases declare `"type": "module"`. This package compiles to CommonJS and its
-Jest runner is CommonJS, so importing either one fails before a single test runs with
-`Must use import to load ES Module`, on the Node 22 that CI and both Docker images use.
-The caret ranges cannot cross into 12 on their own; a deliberate upgrade means moving this
-package's test runner off CommonJS first. The same note is in `package.json` under
-`//pinned`, which is where `npm outdated` sends a reader.
+What they have in common, and what you need to know before proposing an upgrade: this package
+compiles to CommonJS and its Jest runner is CommonJS, so a dependency whose newer major is
+ESM-only (`"type": "module"`) fails with `Must use import to load ES Module` before a single
+test runs — on the Node that CI and both Docker images use, and on newer ones. A caret range
+cannot cross a major on its own, so each pin holds until somebody moves this package's test
+runner off CommonJS. That precondition, not the version number, is what the pins are waiting
+on; one of them has a second cost on top of it, which `//pinned` spells out.
 
 ## Common utilities
 

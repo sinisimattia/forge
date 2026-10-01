@@ -5,6 +5,7 @@ import { MfaReauthenticationRequiredError } from '../errors/MfaReauthenticationR
 import { MfaVerificationFailedError } from '../errors/MfaVerificationFailedError';
 import { RecoveryCodeAlreadyConsumedError } from '../errors/RecoveryCodeAlreadyConsumedError';
 import type { MfaMethodId } from '../types/MfaMethodId';
+import type { MfaProof } from '../types/MfaProof';
 import type { RecoveryCodeBatch } from '../types/RecoveryCodeBatch';
 import type { IMfaServiceContractDeps, MfaServiceContractContext } from './IMfaServiceContractDeps';
 
@@ -49,12 +50,14 @@ export function runIMfaServiceContract(deps: IMfaServiceContractDeps): void {
   async function confirmedMethod(
     context: MfaServiceContractContext,
     label: string,
+    proof: MfaProof | null = null,
   ): Promise<{ methodId: MfaMethodId; batch: RecoveryCodeBatch | null }> {
     const offer = await context.service.beginTotpEnrollment(context.actorId, label);
     const batch = await context.service.confirmTotpEnrollment(
       context.actorId,
       offer.methodId,
       context.validCodeFor(offer),
+      proof,
     );
     return { methodId: offer.methodId, batch };
   }
@@ -98,13 +101,19 @@ export function runIMfaServiceContract(deps: IMfaServiceContractDeps): void {
         const { service, actorId, otherUserId, validCodeFor } = await makeContext();
 
         const actorOffer = await service.beginTotpEnrollment(actorId, 'Actor\'s phone');
-        await service.confirmTotpEnrollment(actorId, actorOffer.methodId, validCodeFor(actorOffer));
+        await service.confirmTotpEnrollment(
+          actorId,
+          actorOffer.methodId,
+          validCodeFor(actorOffer),
+          null,
+        );
 
         const otherOffer = await service.beginTotpEnrollment(otherUserId, 'Someone else\'s phone');
         await service.confirmTotpEnrollment(
           otherUserId,
           otherOffer.methodId,
           validCodeFor(otherOffer),
+          null,
         );
 
         const listed = await service.listMethods(actorId);
@@ -137,6 +146,7 @@ export function runIMfaServiceContract(deps: IMfaServiceContractDeps): void {
             actorId,
             firstOffer.methodId,
             validCodeFor(firstOffer),
+            null,
           );
           expect.ok(firstBatch !== null, 'the first confirmed method must mint recovery codes');
           // A type assertion, not a runtime branch: the check above already
@@ -150,6 +160,7 @@ export function runIMfaServiceContract(deps: IMfaServiceContractDeps): void {
             actorId,
             secondOffer.methodId,
             validCodeFor(secondOffer),
+            { recoveryCode: firstCodes[0] },
           );
           expect.equal(
             secondBatch,
@@ -159,15 +170,102 @@ export function runIMfaServiceContract(deps: IMfaServiceContractDeps): void {
         },
       );
 
+      // The first factor is owed no proof — an account with no confirmed method has
+      // nothing to prove with, and demanding one would be an account that can never
+      // enrol anything. This is the control that stops the refusal below being
+      // satisfied by an implementation that refuses everybody.
+      it('confirms the account\'s first factor with no proof', async () => {
+        const context = await makeContext();
+
+        const first = await confirmedMethod(context, 'First', null);
+
+        expect.ok(first.batch !== null, 'the first factor must confirm without a proof');
+      });
+
+      // The escalation this closes: a stolen session enrols a factor of its own,
+      // confirms it, and then removes the owner's — permitted, because a confirmed
+      // method would survive. Confirming a second factor costs a proof of the first.
+      it('refuses to confirm a second factor without a proof, and leaves it unconfirmed', async () => {
+        const context = await makeContext();
+        const first = await confirmedMethod(context, 'First');
+        const offer = await context.service.beginTotpEnrollment(context.actorId, 'Second');
+
+        await expect.rejects(
+          () => context.service.confirmTotpEnrollment(
+            context.actorId,
+            offer.methodId,
+            context.validCodeFor(offer),
+            null,
+          ),
+          MfaReauthenticationRequiredError,
+        );
+
+        const listed = await context.service.listMethods(context.actorId);
+        const unconfirmed = listed.filter((method) => !method.isConfirmed());
+        expect.equal(
+          unconfirmed.map((method) => String(method.id)).join(),
+          String(offer.methodId),
+          'the refused method must stay unconfirmed',
+        );
+        expect.equal(
+          listed.some((method) => method.id === first.methodId && method.isConfirmed()),
+          true,
+          'the first factor is untouched',
+        );
+      });
+
+      it('confirms a second factor when a recovery code from the account accompanies it', async () => {
+        const context = await makeContext();
+        const first = await confirmedMethod(context, 'First');
+
+        const second = await confirmedMethod(context, 'Second', {
+          recoveryCode: (first.batch as RecoveryCodeBatch).codes[0],
+        });
+
+        expect.equal(second.batch, null, 'only the first confirmation issues codes');
+        expect.equal(
+          (await listedIds(context)).includes(String(second.methodId)),
+          true,
+          'the second factor must be on the account',
+        );
+      });
+
+      it('refuses a proof that is another user\'s recovery code', async () => {
+        const context = await makeContext();
+        await confirmedMethod(context, 'First');
+        const other = await context.service.beginTotpEnrollment(context.otherUserId, 'Theirs');
+        const otherBatch = await context.service.confirmTotpEnrollment(
+          context.otherUserId,
+          other.methodId,
+          context.validCodeFor(other),
+          null,
+        );
+        const offer = await context.service.beginTotpEnrollment(context.actorId, 'Second');
+
+        const refusal = await refusalOf(
+          () => context.service.confirmTotpEnrollment(
+            context.actorId,
+            offer.methodId,
+            context.validCodeFor(offer),
+            { recoveryCode: (otherBatch as RecoveryCodeBatch).codes[0] },
+          ),
+        );
+
+        expect.ok(
+          isRecoveryProofRefusal(refusal),
+          'somebody else\'s recovery code must be refused as a proof, and by a domain error',
+        );
+      });
+
       it('refuses to confirm a method that is already confirmed', async () => {
         const { service, actorId, validCodeFor } = await makeContext();
 
         const offer = await service.beginTotpEnrollment(actorId, 'Phone');
         const code = validCodeFor(offer);
-        await service.confirmTotpEnrollment(actorId, offer.methodId, code);
+        await service.confirmTotpEnrollment(actorId, offer.methodId, code, null);
 
         await expect.rejects(
-          () => service.confirmTotpEnrollment(actorId, offer.methodId, code),
+          () => service.confirmTotpEnrollment(actorId, offer.methodId, code, null),
           MfaMethodAlreadyConfirmedError,
         );
       });
@@ -204,6 +302,7 @@ export function runIMfaServiceContract(deps: IMfaServiceContractDeps): void {
           otherUserId,
           otherOffer.methodId,
           validCodeFor(otherOffer),
+          null,
         );
 
         const foreign: unknown = await service
@@ -250,7 +349,9 @@ export function runIMfaServiceContract(deps: IMfaServiceContractDeps): void {
       it('removes a confirmed method on the session alone while another remains', async () => {
         const context = await makeContext();
         const first = await confirmedMethod(context, 'First');
-        await confirmedMethod(context, 'Second');
+        await confirmedMethod(context, 'Second', {
+          recoveryCode: (first.batch as RecoveryCodeBatch).codes[0],
+        });
 
         await context.service.removeMethod(context.actorId, first.methodId, null);
 
@@ -327,6 +428,7 @@ export function runIMfaServiceContract(deps: IMfaServiceContractDeps): void {
           context.otherUserId,
           otherOffer.methodId,
           context.validCodeFor(otherOffer),
+          null,
         );
         const stolen = (otherBatch as RecoveryCodeBatch).codes[0];
 

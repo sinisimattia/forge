@@ -23,7 +23,7 @@ import { GrantsController } from '../authorization/grants.controller';
 import { PermissionsGuard, PrincipalService } from '../authorization';
 import { ResourceGrantRecord } from '../authorization/resource-grant-record.entity';
 import { generateOpaqueToken } from '../common/crypto';
-import { FakeDataSource } from '../common/testing';
+import { FakeDataSource, UNMETERED_THROTTLING } from '../common/testing';
 import type { IMailer } from '../mail';
 import { InvitationRecord } from '../organizations/invitation-record.entity';
 import { InvitationsController } from '../organizations/invitations.controller';
@@ -289,6 +289,7 @@ describe('tenant isolation (D9)', () => {
         ConfigModule.forRoot({ ignoreEnvFile: true, load: [() => ({ JWT_SECRET: SIGNING_KEY })] }),
         I18N,
         PassportModule,
+        UNMETERED_THROTTLING,
         JwtModule.register({ secret: SIGNING_KEY, signOptions: { expiresIn: '5m' } }),
       ],
       // Every organization-scoped controller at once, because D9 is a property

@@ -1,6 +1,16 @@
-import { IsNotEmpty, IsObject, IsString, MaxLength, ValidateIf } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateIf,
+  ValidateNested,
+} from 'class-validator';
 import { validationMessage } from '../../common/i18n';
 import { MFA_LABEL_MAX_LENGTH } from './enroll-totp.dto';
+import { MfaProofDto } from './mfa-proof.dto';
 
 /**
  * One request to `POST /mfa/webauthn/options`.
@@ -60,4 +70,14 @@ export class WebAuthnVerifyDto extends WebAuthnOptionsDto {
   @IsNotEmpty({ message: validationMessage('validation.IS_NOT_EMPTY') })
   @MaxLength(MFA_LABEL_MAX_LENGTH, { message: validationMessage('validation.MAX_LENGTH') })
   label?: string;
+
+  /**
+   * A fresh proof of a second factor the account **already holds**, on an
+   * enrollment. Owed only when the account already has a confirmed method.
+   * Ignored on a login, which is not adding a factor to anything.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => MfaProofDto)
+  proof?: MfaProofDto;
 }

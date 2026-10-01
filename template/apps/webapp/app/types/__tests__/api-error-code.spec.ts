@@ -67,6 +67,7 @@ describe('the wire vocabulary this webapp expects', () => {
       'MFA_METHOD_ALREADY_CONFIRMED',
       'MFA_METHOD_NOT_FOUND',
       'MFA_REAUTHENTICATION_REQUIRED',
+      'MFA_TOO_MANY_METHODS',
       'MFA_VERIFICATION_FAILED',
       'ORGANIZATION_NAME_REQUIRED',
       'ORGANIZATION_NOT_FOUND',
@@ -75,6 +76,7 @@ describe('the wire vocabulary this webapp expects', () => {
       'SESSION_NOT_FOUND',
       'TOKEN_CONSUMED',
       'TOKEN_EXPIRED',
+      'TOO_MANY_ATTEMPTS',
       'USER_NOT_FOUND',
       'WEAK_PASSWORD',
     ]);

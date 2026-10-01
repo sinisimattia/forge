@@ -24,6 +24,9 @@ import { MfaChallengeRecord } from './mfa/entities/mfa-challenge-record.entity';
 import { MfaMethodRecord } from './mfa/entities/mfa-method-record.entity';
 import { MfaRecoveryCodeRecord } from './mfa/entities/mfa-recovery-code-record.entity';
 import { MfaModule } from './mfa/mfa.module';
+import { ForgeThrottlerGuard } from './throttling/forge-throttler.guard';
+import { RateLimitCounterRecord } from './throttling/rate-limit-counter.entity';
+import { ThrottlingModule } from './throttling/throttling.module';
 import { InvitationRecord } from './organizations/invitation-record.entity';
 import { MembershipRecord } from './organizations/membership-record.entity';
 import { OrganizationRecord } from './organizations/organization-record.entity';
@@ -90,6 +93,10 @@ export function typeOrmOptions(config: ConfigService): TypeOrmModuleOptions {
       MfaMethodRecord,
       MfaChallengeRecord,
       MfaRecoveryCodeRecord,
+      // Mapped for the schema-drift probe's sake, like the MFA entities above:
+      // the table is queried with raw SQL through the `DataSource`, so no
+      // repository for this record is ever injected.
+      RateLimitCounterRecord,
     ],
     synchronize: false,
   };
@@ -155,6 +162,21 @@ export const GLOBAL_PROVIDERS: Provider[] = [
   // marked `@Public()`. Deleting it breaks no type and fails no lint rule.
   { provide: APP_GUARD, useClass: JwtAuthGuard },
 
+  // Every route carrying `@Throttled` draws on its bucket. Deleting this line
+  // breaks no type and fails no lint rule, which is why
+  // `__tests__/composition-root.spec.ts` asserts it is here.
+  //
+  // Below `JwtAuthGuard` and not above it, because global guards run in the
+  // order this array lists them and both directions of that order matter.
+  // `ThrottleSubject.ACCOUNT_OR_CHALLENGE` reads the signed-in account off the
+  // request, which only authentication puts there; metering first would demote
+  // every authenticated route to the shared no-subject budget while nothing
+  // reported it. And on a route that requires a credential, metering first
+  // would let somebody holding no credential at all spend that shared budget
+  // and have it refuse everybody else. The composition-root spec asserts the
+  // arrangement and, separately, the answer it produces.
+  { provide: APP_GUARD, useClass: ForgeThrottlerGuard },
+
   // `whitelist` + `forbidNonWhitelisted` are the only things rejecting a field a
   // DTO does not declare. Without this provider every DTO in the application
   // validates nothing at all.
@@ -215,6 +237,7 @@ export const GLOBAL_PROVIDERS: Provider[] = [
     IdentitiesModule,
     AuthModule,
     MfaModule,
+    ThrottlingModule,
     UsersModule,
     OrganizationsModule,
   ],

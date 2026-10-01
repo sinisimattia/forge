@@ -363,6 +363,11 @@ test(
       assert.equal(health.status, 200);
       assert.deepEqual(health.json, { status: 'ok' });
 
+      const ready = await call(base, 'GET', '/health/ready');
+      assert.equal(ready.status, 200, 'readiness answers 200 against a live database');
+      assert.equal(ready.json.status, 'ok');
+      assert.equal(ready.json.info.database.status, 'up');
+
       // The regression guard for the dev webapp's SSR-500 defect. `compose.yaml`'s
       // `webapp` healthcheck already made `--wait` above block until this route
       // answers `200`, so this is not a race — it is naming what "the stack is up"
@@ -399,6 +404,7 @@ test(
       await walkTheTenancyFlow(base, target);
       await proveTheAuditLogIsAppendOnly(compose, projectName, target);
       await proveWhatTheFakeCannotExpress(compose, base, target);
+      await proveTheRateLimiterCountsInTheDatabase(compose, target);
     } catch (error) {
       const diagnostics = await composeDiagnostics(target, projectName);
       throw new Error(`${error.message}\n\n${diagnostics}`);
@@ -1226,7 +1232,8 @@ async function proveWhatTheFakeCannotExpress(compose, base, target) {
       'audit_entries', 'auth_identities', 'email_verification_tokens', 'memberships',
       'mfa_challenges', 'mfa_methods', 'mfa_recovery_codes',
       'oauth_authorization_requests', 'organization_invitations', 'organizations',
-      'password_reset_tokens', 'refresh_tokens', 'resource_grants', 'sessions', 'users',
+      'password_reset_tokens', 'rate_limit_counters', 'refresh_tokens', 'resource_grants',
+      'sessions', 'users',
     ],
     `the set of tables TypeORM maps has changed. Got: ${[...report.tables].sort().join(', ')}. `
     + 'A new domain means adding its tables here; a table DISAPPEARING from this list means an '
@@ -1282,6 +1289,208 @@ async function proveWhatTheFakeCannotExpress(compose, base, target) {
     'deleting the account took its audit history with it. That is what a foreign key on '
     + 'audit_entries does, and it happens with the table owner\'s privileges, so the '
     + 'REVOKE that makes this log append-only does not apply to it.',
+  );
+}
+
+/**
+ * The two statements `PostgresThrottlerStorage` ships, read out of the generated
+ * project rather than retyped here.
+ *
+ * Retyping them would make this file a second place the counting behaviour
+ * lives: the statement could be rewritten to count every attempt as the first,
+ * and this test would go on passing against its own copy. It was tried — see
+ * the falsification in the task report — and reading the literal is what makes
+ * breaking the increment turn this red.
+ *
+ * @param target - the generated project directory
+ * @returns the sweep and the increment, as the application sends them
+ * @throws Error when either constant is no longer an exported template literal,
+ *   which means this test is no longer running what the application runs
+ */
+async function throttlerStatements(target) {
+  const source = await fs.readFile(
+    path.join(target, 'apps/backend/src/throttling/postgres-throttler.storage.ts'),
+    'utf8',
+  );
+  const read = (name) => {
+    const match = source.match(new RegExp(`export const ${name} = \`([^\`]*)\``));
+    assert.ok(
+      match,
+      `postgres-throttler.storage.ts no longer exports ${name} as a template literal, so this `
+      + 'test would be asserting against nothing',
+    );
+    return match[1];
+  };
+  return { sweep: read('SWEEP_FINISHED_WINDOWS'), record: read('RECORD_ONE_ATTEMPT') };
+}
+
+/**
+ * Runs the storage's statements `attempts` times over **one** connection.
+ *
+ * One `psql` process is one session is one connection, which is the whole point
+ * of this helper: calling it twice is two independent connections, as two
+ * replicas would be, and that is the property no in-process double can show.
+ *
+ * `PREPARE`/`EXECUTE` rather than interpolation, because the statement is read
+ * verbatim and carries `$1`-`$4`; the prepared parameter types are the ones the
+ * application's driver sends. Only `key` is spelled into the `EXECUTE`, and this
+ * file is the only thing that ever supplies it.
+ *
+ * @param compose - the project-scoped compose runner
+ * @param url - the connection string to run as (see `connectionUrlsFrom`)
+ * @param statements - what {@link throttlerStatements} read
+ * @param budget - the key, and the window, limit and block in milliseconds
+ * @param attempts - how many increments to make on this connection
+ * @returns one row per attempt, as the statement returned it
+ */
+async function attemptsOnOneConnection(compose, url, statements, budget, attempts) {
+  const { key, ttl, limit, block } = budget;
+  const args = [
+    'exec', '-T', 'postgres', 'psql', url, '-qtA', '-F', '|', '-v', 'ON_ERROR_STOP=1',
+    '-c', `PREPARE sweep AS ${statements.sweep}`,
+    '-c', `PREPARE record (text, double precision, integer, double precision) AS ${statements.record}`,
+  ];
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    args.push('-c', 'EXECUTE sweep', '-c', `EXECUTE record('${key}', ${ttl}, ${limit}, ${block})`);
+  }
+  const { stdout } = await compose(...args);
+  return stdout.trim().split('\n').filter(Boolean).map((line) => {
+    const [hits, expiresAt, blockedUntil, engaged] = line.split('|');
+    return {
+      hits: Number(hits),
+      expiresAt,
+      blockedUntil: blockedUntil === '' ? null : blockedUntil,
+      engaged: engaged === 't',
+    };
+  });
+}
+
+/**
+ * The rate limiter counts in the database, across connections.
+ *
+ * **This is the only place that property is asserted, and it cannot move.** The
+ * bundled store the application deliberately does not use is a map in the
+ * process: with one instance it is correct, and with several each keeps its own
+ * counters, so the effective limit becomes the configured one multiplied by the
+ * number of instances — silently, with every unit test green, because a
+ * single-process suite cannot observe a disagreement between processes. The
+ * backend's own spec for this storage says so in its header and asserts only
+ * what TypeScript can be held to; the counting lives in one SQL statement, and
+ * this is where that statement meets a real Postgres.
+ *
+ * Runs as the **application** role, not the owner, so it is also the evidence
+ * that the role the backend connects as can write this table.
+ *
+ * @param compose - the project-scoped compose runner
+ * @param target - the generated project directory
+ */
+async function proveTheRateLimiterCountsInTheDatabase(compose, target) {
+  const { app } = await connectionUrlsFrom(target);
+  const statements = await throttlerStatements(target);
+  const ttl = 60_000;
+  const limit = 5;
+  const block = 120_000;
+  const stamp = Date.now();
+  const go = (key, attempts, over = {}) =>
+    attemptsOnOneConnection(compose, app, statements, { key, ttl, limit, block, ...over }, attempts);
+
+  // ---- The budget, and the attempt that exceeds it. ----
+  //
+  // The block is set when hits exceed the limit, strictly — a limit of N permits
+  // N and refuses the one after. Off by one in either direction is a budget that
+  // is not the configured budget, and nothing else would report it.
+  const metered = await go(`probe-budget-${stamp}`, limit + 2);
+  const atTheLimit = metered[limit - 1];
+  const afterTheLimit = metered[limit];
+  const whileBlocked = metered[limit + 1];
+  assert.equal(atTheLimit.hits, limit, `attempts are not being counted: ${JSON.stringify(metered)}`);
+  assert.equal(atTheLimit.blockedUntil, null, 'the last attempt inside the budget was refused');
+  assert.equal(afterTheLimit.hits, limit + 1, 'the attempt past the budget was not counted');
+  assert.notEqual(afterTheLimit.blockedUntil, null, 'the attempt past the budget was not blocked');
+
+  // The statement says which call set the block, and says it once. The audit
+  // entry is written on that call alone; an `engaged` on every refusal would let
+  // an attacker fill the audit table by continuing to attempt.
+  assert.deepEqual(
+    metered.map((one) => one.engaged),
+    metered.map((_, index) => index === limit),
+    `the block was not reported exactly once, on the attempt that set it: ${JSON.stringify(metered)}`,
+  );
+
+  // A blocked subject is not counted further, matching the bundled store: the
+  // block is the refusal, and counting during it would make the recorded total a
+  // measure of the attacker's persistence rather than of the budget — and would
+  // push the block's end further out on every attempt, which is a different
+  // policy from the configured one.
+  assert.equal(whileBlocked.hits, afterTheLimit.hits, 'a blocked subject was counted up further');
+  assert.equal(
+    whileBlocked.blockedUntil, afterTheLimit.blockedUntil,
+    'an attempt made during a block moved the block',
+  );
+
+  // ---- An active block survives its window rolling over. ----
+  //
+  // The budget's window and the block run on separate clocks, and the `CASE`
+  // arms test the block before the window for exactly this case: a subject that
+  // trips the limit in the last moment of a window would otherwise have the
+  // refusal erased by the rollover a moment later, and `blockDuration` would be
+  // decorative — the sign-in buckets configure it equal to the window, so the
+  // refusal would be shortened to nothing. A short window with a long block, so
+  // the rollover happens inside this test.
+  const rollover = { ttl: 2_000, limit: 2, block: 60_000 };
+  const rolling = `probe-rollover-${stamp}`;
+  const tripped = await go(rolling, rollover.limit + 1, rollover);
+  const atTheBlock = tripped.at(-1);
+  assert.notEqual(
+    atTheBlock.blockedUntil, null,
+    `the subject never became blocked, so the rollover below proves nothing: ${JSON.stringify(tripped)}`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, rollover.ttl + 500));
+  const [afterTheRoll] = await go(rolling, 1, rollover);
+  assert.equal(
+    afterTheRoll.blockedUntil, atTheBlock.blockedUntil,
+    'the window rolling over cleared a block that had not expired, so blockDuration is '
+    + 'decorative: a subject that trips the limit late in its window is released at the roll',
+  );
+  assert.equal(afterTheRoll.engaged, false, 'a refusal during a block that a roll-over spared was reported as a new block');
+  assert.equal(
+    afterTheRoll.hits, atTheBlock.hits,
+    'a blocked subject was counted up again once its window rolled over',
+  );
+
+  // ---- One subject's budget is not another's. ----
+  const other = await go(`probe-other-${stamp}`, 1);
+  assert.equal(other[0].hits, 1, 'a fresh subject inherited a count');
+  assert.equal(other[0].blockedUntil, null, 'a fresh subject inherited a block');
+
+  // ---- Two connections, one counter. The reason this class exists. ----
+  //
+  // Two separate `psql` sessions, as two replicas would be. If the counter lived
+  // in a process, each would start from nothing and permit the whole budget, and
+  // the second session's last attempt would read 3 rather than 6.
+  const shared = `probe-shared-${stamp}`;
+  const first = await go(shared, 3);
+  const second = await go(shared, 3);
+  assert.equal(first.at(-1).hits, 3, `the first connection did not count: ${JSON.stringify(first)}`);
+  assert.equal(
+    second.at(-1).hits, 6,
+    'six attempts across two independent connections did not count as six, so the counter is '
+    + `not shared: ${JSON.stringify(first)} then ${JSON.stringify(second)}`,
+  );
+
+  // ---- The sweep reaches a key nothing is writing any more. ----
+  //
+  // It runs on the write path, so a subject that stops being attempted is never
+  // revisited by its own increment. A sweep narrowed to the key in hand would
+  // leave this row behind for ever and nothing else would ever look.
+  const abandoned = `probe-abandoned-${stamp}`;
+  await go(abandoned, 1, { ttl: 1 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await go(`probe-busy-${stamp}`, 1);
+  assert.equal(
+    await psqlValue(compose, app, `SELECT count(*) FROM rate_limit_counters WHERE key = '${abandoned}'`),
+    '0',
+    'a finished window belonging to another key survived the sweep',
   );
 }
 

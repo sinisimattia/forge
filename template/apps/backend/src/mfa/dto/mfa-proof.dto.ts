@@ -54,3 +54,16 @@ export function proofOf(body: MfaProofDto): MfaProof | null {
   if (hasMethodProof && !hasRecoveryProof) return { methodId: methodId as MfaMethodId, code };
   throw new BadRequestException('A proof is either a recoveryCode, or a methodId with its code.');
 }
+
+/**
+ * {@link proofOf} for a proof that rides *inside* another request's body, as an
+ * optional `proof` property, because the outer body already uses `methodId` and
+ * `code` for something else.
+ *
+ * Absent is `null`, exactly as an empty body is for {@link proofOf}.
+ *
+ * @throws BadRequestException for a `proof` that is neither empty nor exactly one proof
+ */
+export function nestedProofOf(proof: MfaProofDto | undefined): MfaProof | null {
+  return proof === undefined ? null : proofOf(proof);
+}

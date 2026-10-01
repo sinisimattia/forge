@@ -152,6 +152,31 @@ describe('MfaChallengeService', () => {
       expect(row.expiresAt.getTime()).toBeLessThanOrEqual(Date.now() + MFA_CHALLENGE_TTL_MS);
     });
 
+    it('uses the expiry it is given instead of a fresh window', async () => {
+      const inherited = new Date(Date.now() + 30_000);
+
+      const token = await service.mint(
+        USER_ID,
+        MfaChallengePurpose.LOGIN,
+        null,
+        inherited,
+      );
+
+      const row = await challenges.findOne({ where: { tokenHash: hashOpaqueToken(token) } });
+      expect(row?.expiresAt.getTime()).toBe(inherited.getTime());
+    });
+
+    it('never lets a supplied expiry lengthen a challenge past the full window', async () => {
+      const farFuture = new Date(Date.now() + 10 * MFA_CHALLENGE_TTL_MS);
+      const before = Date.now();
+
+      const token = await service.mint(USER_ID, MfaChallengePurpose.LOGIN, null, farFuture);
+
+      const row = await challenges.findOne({ where: { tokenHash: hashOpaqueToken(token) } });
+      expect(row?.expiresAt.getTime()).toBeLessThanOrEqual(Date.now() + MFA_CHALLENGE_TTL_MS);
+      expect(row?.expiresAt.getTime()).toBeGreaterThanOrEqual(before + MFA_CHALLENGE_TTL_MS);
+    });
+
     it('draws a different token every time', async () => {
       const first = await service.mint(USER_ID, MfaChallengePurpose.LOGIN, null);
       const second = await service.mint(USER_ID, MfaChallengePurpose.LOGIN, null);

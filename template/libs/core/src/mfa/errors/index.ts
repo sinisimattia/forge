@@ -7,3 +7,4 @@ export * from './MfaMethodNotFoundError';
 export * from './MfaReauthenticationRequiredError';
 export * from './MfaVerificationFailedError';
 export * from './RecoveryCodeAlreadyConsumedError';
+export * from './TooManyMfaMethodsError';

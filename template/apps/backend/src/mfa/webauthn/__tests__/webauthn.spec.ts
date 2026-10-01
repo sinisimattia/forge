@@ -12,14 +12,18 @@ import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { OptionalJwtAuthGuard } from '../../../auth/guards';
 import {
   WEBAUTHN,
+  currentCodeFor,
   makeMfaWorld,
   type MfaWorld,
   type SeededAccount,
+  type SeededMfaUser,
 } from '../../../common/testing';
 import { AuditEntryRecord } from '../../../audit/audit-entry-record.entity';
+import { hashOpaqueToken } from '../../../common/crypto';
 import { MfaChallengeRecord } from '../../entities/mfa-challenge-record.entity';
 import { MfaMethodRecord } from '../../entities/mfa-method-record.entity';
 import { MfaChallengePurpose } from '../../enums/MfaChallengePurpose';
+import { MAX_MFA_METHODS } from '../../mfa-limits';
 import { RECOVERY_CODE_COUNT } from '../../recovery/recovery-codes';
 
 /**
@@ -510,6 +514,285 @@ describe('WebAuthn ceremonies', () => {
     });
   });
 
+  describe('enrollment, for an account that already has a second factor', () => {
+    const STEP_MS = 30_000;
+
+    /** A full two-phase sign-in, leaving the current step's code unspent for a proof. */
+    async function signIn(user: SeededMfaUser): Promise<string> {
+      const login = await request(world.app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: user.email, secret: user.secret })
+        .expect(200);
+      const verified = await request(world.app.getHttpServer())
+        .post('/auth/mfa/verify')
+        .send({
+          challengeToken: login.body.challengeToken,
+          methodId: user.methodId,
+          code: currentCodeFor(user.totpSecret, new Date(Date.now() - STEP_MS)),
+        })
+        .expect(200);
+      return verified.body.accessToken as string;
+    }
+
+    const attestationVerifies = (): void => {
+      registrationVerifier.mockResolvedValue({
+        verified: true,
+        registrationInfo: {
+          credential: { id: CREDENTIAL_ID, publicKey: PUBLIC_KEY_BYTES, counter: 0 },
+        },
+      });
+    };
+
+    const ownerProof = (user: SeededMfaUser): object => ({
+      methodId: user.methodId,
+      code: currentCodeFor(user.totpSecret),
+    });
+
+    it('refuses a passkey without a proof, registers nothing, and keeps the challenge for a retry', async () => {
+      const user = await world.seedUserWithConfirmedTotp();
+      const token = await signIn(user);
+      await options().set('Authorization', bearer(token)).send({}).expect(200);
+      attestationVerifies();
+
+      const refused = await verify()
+        .set('Authorization', bearer(token))
+        .send({ response: { id: CREDENTIAL_ID }, label: 'Attacker key' })
+        .expect(403);
+
+      expect(refused.body.code).toBe('MFA_REAUTHENTICATION_REQUIRED');
+      expect(methodsOf(user.userId)).toHaveLength(1);
+      expect(auditOf(AuditAction.MFA_METHOD_ADDED)).toHaveLength(0);
+      // Refused before the ceremony was spent, so the person is not made to
+      // start the ceremony again to supply what was missing.
+      const [challenge] = challengesOf(user.userId)
+        .filter((row) => row.purpose === MfaChallengePurpose.WEBAUTHN_ENROLLMENT);
+      expect(challenge.consumedAt).toBeNull();
+    });
+
+    it('registers a passkey when a proof from the existing factor accompanies it, issuing no new codes', async () => {
+      const user = await world.seedUserWithConfirmedTotp();
+      const token = await signIn(user);
+      await options().set('Authorization', bearer(token)).send({}).expect(200);
+      attestationVerifies();
+
+      const answered = await verify()
+        .set('Authorization', bearer(token))
+        .send({
+          response: { id: CREDENTIAL_ID },
+          label: 'Second key',
+          proof: ownerProof(user),
+        })
+        .expect(200);
+
+      expect(answered.body.recoveryCodes).toBeNull();
+      expect(methodsOf(user.userId)).toHaveLength(2);
+    });
+
+    it('refuses a proof that does not verify, and registers nothing', async () => {
+      const user = await world.seedUserWithConfirmedTotp();
+      const token = await signIn(user);
+      await options().set('Authorization', bearer(token)).send({}).expect(200);
+      attestationVerifies();
+
+      const refused = await verify()
+        .set('Authorization', bearer(token))
+        .send({
+          response: { id: CREDENTIAL_ID },
+          label: 'Second key',
+          proof: { recoveryCode: 'not-a-code' },
+        })
+        .expect(422);
+
+      expect(refused.body.code).toBe('MFA_VERIFICATION_FAILED');
+      expect(methodsOf(user.userId)).toHaveLength(1);
+    });
+
+    it('does not spend the proof on an attestation that does not verify', async () => {
+      const user = await world.seedUserWithConfirmedTotp();
+      const token = await signIn(user);
+      const proof = ownerProof(user);
+
+      await options().set('Authorization', bearer(token)).send({}).expect(200);
+      // The library refuses (the default in this file), with a proof attached.
+      await verify()
+        .set('Authorization', bearer(token))
+        .send({ response: { id: CREDENTIAL_ID }, label: 'Second key', proof })
+        .expect(422);
+
+      // The very same proof is still good for a ceremony that does verify.
+      await options().set('Authorization', bearer(token)).send({}).expect(200);
+      attestationVerifies();
+      await verify()
+        .set('Authorization', bearer(token))
+        .send({ response: { id: CREDENTIAL_ID }, label: 'Second key', proof })
+        .expect(200);
+
+      expect(methodsOf(user.userId)).toHaveLength(2);
+    });
+
+    it('lets a passkey be the first factor with no proof, and gives it the recovery codes', async () => {
+      const account = await world.seedUserWithoutMfa();
+      const token = await accessTokenOf(account);
+      await options().set('Authorization', bearer(token)).send({}).expect(200);
+      attestationVerifies();
+
+      const answered = await verify()
+        .set('Authorization', bearer(token))
+        .send({ response: { id: CREDENTIAL_ID }, label: 'First key' })
+        .expect(200);
+
+      expect(answered.body.recoveryCodes).toHaveLength(RECOVERY_CODE_COUNT);
+    });
+
+    it('decides again under the lock: a factor confirmed since the first look is one that is owed a proof', async () => {
+      const account = await world.seedUserWithoutMfa();
+      const token = await accessTokenOf(account);
+      await options().set('Authorization', bearer(token)).send({}).expect(200);
+      // The attestation is verified between the first look at the account's
+      // methods and the transaction. A factor confirmed in that gap — by the
+      // other way in, or by a second tab — is what the first look could not see.
+      registrationVerifier.mockImplementation(async () => {
+        seedPasskey(account.userId, OTHER_CREDENTIAL_ID);
+        return {
+          verified: true,
+          registrationInfo: {
+            credential: { id: CREDENTIAL_ID, publicKey: PUBLIC_KEY_BYTES, counter: 0 },
+          },
+        };
+      });
+
+      const refused = await verify()
+        .set('Authorization', bearer(token))
+        .send({ response: { id: CREDENTIAL_ID }, label: 'Late' })
+        .expect(403);
+
+      expect(refused.body.code).toBe('MFA_REAUTHENTICATION_REQUIRED');
+      expect(methodsOf(account.userId)).toHaveLength(1);
+      expect(auditOf(AuditAction.MFA_METHOD_ADDED)).toHaveLength(0);
+    });
+
+    it('does not let a passkey and a TOTP method both be admitted as an account\'s first factor', async () => {
+      const account = await world.seedUserWithoutMfa();
+      const token = await accessTokenOf(account);
+
+      const offered = await request(world.app.getHttpServer())
+        .post('/mfa/totp/enroll')
+        .set('Authorization', bearer(token))
+        .send({ label: 'Phone' })
+        .expect(201);
+      await options().set('Authorization', bearer(token)).send({}).expect(200);
+      attestationVerifies();
+
+      // Both are owed nothing when they start, because the account holds no
+      // confirmed method; only the decision re-made inside the transaction sees
+      // the other one land.
+      const [passkey, totp] = await Promise.all([
+        verify()
+          .set('Authorization', bearer(token))
+          .send({ response: { id: CREDENTIAL_ID }, label: 'Key' }),
+        request(world.app.getHttpServer())
+          .post('/mfa/totp/confirm')
+          .set('Authorization', bearer(token))
+          .send({
+            methodId: offered.body.methodId,
+            code: currentCodeFor(offered.body.secret as string),
+          }),
+      ]);
+
+      expect([passkey.status, totp.status].sort()).toEqual([200, 403]);
+      const confirmed = methodsOf(account.userId).filter((row) => row.confirmedAt !== null);
+      expect(confirmed).toHaveLength(1);
+    });
+  });
+
+  describe('enrollment, at the most methods an account may hold', () => {
+    const STEP_MS = 30_000;
+
+    async function signIn(user: SeededMfaUser): Promise<string> {
+      const login = await request(world.app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: user.email, secret: user.secret })
+        .expect(200);
+      const verified = await request(world.app.getHttpServer())
+        .post('/auth/mfa/verify')
+        .send({
+          challengeToken: login.body.challengeToken,
+          methodId: user.methodId,
+          code: currentCodeFor(user.totpSecret, new Date(Date.now() - STEP_MS)),
+        })
+        .expect(200);
+      return verified.body.accessToken as string;
+    }
+
+    /** Begins unconfirmed TOTP enrollments until the account holds `total` rows. */
+    async function fillTo(user: SeededMfaUser, total: number): Promise<void> {
+      while (methodsOf(user.userId).length < total) {
+        await world.mfa.beginTotpEnrollment(user.userId, 'Abandoned');
+      }
+    }
+
+    const attestationVerifies = (): void => {
+      registrationVerifier.mockResolvedValue({
+        verified: true,
+        registrationInfo: {
+          credential: { id: CREDENTIAL_ID, publicKey: PUBLIC_KEY_BYTES, counter: 0 },
+        },
+      });
+    };
+
+    const proofOf = (user: SeededMfaUser): object => ({
+      methodId: user.methodId,
+      code: currentCodeFor(user.totpSecret),
+    });
+
+    it('refuses to start a ceremony for an account that holds the most it may', async () => {
+      const user = await world.seedUserWithConfirmedTotp();
+      const token = await signIn(user);
+      await fillTo(user, MAX_MFA_METHODS);
+
+      const refused = await options().set('Authorization', bearer(token)).send({}).expect(409);
+
+      expect(refused.body.code).toBe('MFA_TOO_MANY_METHODS');
+      expect(challengesOf(user.userId).filter(
+        (row) => row.purpose === MfaChallengePurpose.WEBAUTHN_ENROLLMENT,
+      )).toHaveLength(0);
+    });
+
+    it('refuses to register the passkey that would be one too many, and writes nothing', async () => {
+      const user = await world.seedUserWithConfirmedTotp();
+      const token = await signIn(user);
+      await fillTo(user, MAX_MFA_METHODS - 1);
+      await options().set('Authorization', bearer(token)).send({}).expect(200);
+      // Another enrollment, begun between the options and the attestation.
+      await fillTo(user, MAX_MFA_METHODS);
+      attestationVerifies();
+
+      const refused = await verify()
+        .set('Authorization', bearer(token))
+        .send({ response: { id: CREDENTIAL_ID }, label: 'One too many', proof: proofOf(user) })
+        .expect(409);
+
+      expect(refused.body.code).toBe('MFA_TOO_MANY_METHODS');
+      expect(methodsOf(user.userId)).toHaveLength(MAX_MFA_METHODS);
+      expect(auditOf(AuditAction.MFA_METHOD_ADDED)).toHaveLength(0);
+    });
+
+    it('still registers a passkey one short of the bound', async () => {
+      const user = await world.seedUserWithConfirmedTotp();
+      const token = await signIn(user);
+      await fillTo(user, MAX_MFA_METHODS - 1);
+      await options().set('Authorization', bearer(token)).send({}).expect(200);
+      attestationVerifies();
+
+      await verify()
+        .set('Authorization', bearer(token))
+        .send({ response: { id: CREDENTIAL_ID }, label: 'Last one', proof: proofOf(user) })
+        .expect(200);
+
+      expect(methodsOf(user.userId)).toHaveLength(MAX_MFA_METHODS);
+    });
+  });
+
   describe('login', () => {
     /** Drives a whole passkey sign-in and returns the final response. */
     async function signInWithPasskey(account: SeededAccount): Promise<request.Response> {
@@ -554,6 +837,31 @@ describe('WebAuthn ceremonies', () => {
       expect(rest).toHaveLength(0);
       expect(entry.actorUserId).toBe(account.userId);
       expect(entry.metadata).toMatchObject({ methodId, methodType: MfaMethodType.WEBAUTHN });
+    });
+
+    it('does not extend the challenge\'s life across ceremonies', async () => {
+      const account = await world.seedUserWithoutMfa();
+      seedPasskey(account.userId, CREDENTIAL_ID);
+      const challengeToken = await challengeTokenOf(account);
+
+      // The login challenge has a minute left, which is deliberately not the
+      // default window: a replacement that is given a fresh window cannot land
+      // on this value by accident.
+      const remaining = new Date(Date.now() + 60_000);
+      world.source.update(MfaChallengeRecord, {}, { expiresAt: remaining });
+
+      const offered = await options().send({ challengeToken }).expect(200);
+      const replacement = challengesOf(account.userId)
+        .find((row) => row.tokenHash === hashOpaqueToken(offered.body.challengeToken as string));
+      expect(replacement?.expiresAt.getTime()).toBe(remaining.getTime());
+
+      // And again: the second replacement inherits it from the first.
+      const again = await options()
+        .send({ challengeToken: offered.body.challengeToken })
+        .expect(200);
+      const second = challengesOf(account.userId)
+        .find((row) => row.tokenHash === hashOpaqueToken(again.body.challengeToken as string));
+      expect(second?.expiresAt.getTime()).toBe(remaining.getTime());
     });
 
     it('spends the login challenge the options were fetched with', async () => {
@@ -662,11 +970,13 @@ describe('WebAuthn ceremonies', () => {
      * on a two-ceremony endpoint means the *more powerful* branch, chosen by
      * sending something broken.
      *
-     * **Two independent things enforce it**, and the tests below observe the
-     * outcome rather than either mechanism: the guard delegates to
-     * `AuthGuard('jwt')` whenever a header is present, and
-     * `MfaController.callerOf` reads the header's *presence* rather than
-     * `request.user`. Because they are independent, weakening either one alone
+     * **The rule is enforced by more than one independent mechanism**, and the
+     * tests below observe the outcome rather than any of them: the global guard
+     * verifies a presented credential first (`@ReadsSession()`, which is what
+     * the bad-bearer cases below now mostly pass through), the route's
+     * `OptionalJwtAuthGuard` delegates to `AuthGuard('jwt')` whenever a header is
+     * present, and `MfaController.callerOf` reads the header's *presence* rather
+     * than `request.user`. Because they are independent, weakening any one alone
      * changes none of the answers the other cases here assert. That is the
      * point of the arrangement and also its cost: a weakening is invisible to
      * a test that only reads outcomes.

@@ -82,6 +82,18 @@ onMounted(async () => {
   passkeysAvailable.value = await mfa.passkeySupported();
 });
 
+/**
+ * At or below this many unspent recovery codes the screen warns. The number is a
+ * presentation choice and not a rule of the server's: it only decides when a
+ * count is worth interrupting for.
+ */
+const LOW_RECOVERY_CODES = 3;
+
+const recoveryCodesLow = computed(
+  () => mfa.recoveryCodesRemaining.value !== null
+    && mfa.recoveryCodesRemaining.value <= LOW_RECOVERY_CODES,
+);
+
 const hasConfirmedMethod = computed(
   () => mfa.methods.value.some((method) => method.confirmedAt !== null),
 );
@@ -190,6 +202,9 @@ async function submit(): Promise<void> {
         <template v-else>
           <AppHeading as="h2" size="md">{{ t('account.mfa.title') }}</AppHeading>
           <AppText color="muted">{{ t('account.mfa.subtitle') }}</AppText>
+          <AppAlert v-if="mfa.passkeyRestart.value" variant="warning">
+            {{ t('account.mfa.passkeyRestart') }}
+          </AppAlert>
           <AppAlert v-if="mfa.passkeyDismissed.value" variant="warning">
             {{ t('account.mfa.passkeyDismissed') }}
           </AppAlert>
@@ -206,6 +221,23 @@ async function submit(): Promise<void> {
             :busy="mfa.loading.value"
             @remove="(methodId) => mfa.remove(methodId)"
           />
+          <!--
+            Only an account with a confirmed method holds codes to count; for any
+            other a zero would be a warning about something it never had. `null`
+            is "not read yet", which is not zero and shows nothing.
+          -->
+          <template v-if="hasConfirmedMethod && mfa.recoveryCodesRemaining.value !== null">
+            <AppText>
+              {{ t('account.mfa.recoveryRemaining', { count: mfa.recoveryCodesRemaining.value }) }}
+            </AppText>
+            <AppAlert v-if="recoveryCodesLow" variant="warning" data-test="recovery-codes-low">
+              {{
+                mfa.recoveryCodesRemaining.value === 0
+                  ? t('account.mfa.recoveryNone')
+                  : t('account.mfa.recoveryLow', { count: mfa.recoveryCodesRemaining.value })
+              }}
+            </AppAlert>
+          </template>
           <AppStack as="form" gap="md" @submit.prevent="startTotp">
             <FormField id="totp-label" :label="t('account.mfa.addTotpLabel')">
               <AppInput id="totp-label" v-model="totpLabel" :disabled="mfa.loading.value" />

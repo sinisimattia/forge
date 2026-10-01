@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApiClient, DEFAULT_API_TIMEOUT_MS } from '../client';
+import { ApiError, createApiClient, DEFAULT_API_TIMEOUT_MS } from '../client';
 
 /**
  * The one place a *hung* backend — as opposed to a down one — is bounded.
@@ -78,5 +78,46 @@ describe('createApiClient — the bound on a hung backend', () => {
     });
 
     await expect(client({ method: 'GET', path: '/health' })).resolves.toEqual({ ok: true });
+  });
+});
+
+describe('createApiClient — a body that is not JSON', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const answering = (status: number, statusText: string, text: string): void => {
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve({
+        status,
+        ok: status >= 200 && status < 300,
+        statusText,
+        text: () => Promise.resolve(text),
+        headers: { getSetCookie: () => [] },
+      } as unknown as Response),
+    );
+  };
+  const client = createApiClient({ baseUrl: 'http://backend.test', credential: () => null });
+
+  it('turns a proxy HTML error page into an ApiError carrying the status', async () => {
+    answering(502, 'Bad Gateway', '<html><body>502 Bad Gateway</body></html>');
+
+    const failure: unknown = await client({ method: 'GET', path: '/users/me' }).catch(
+      (error: unknown) => error,
+    );
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect((failure as ApiError).status).toBe(502);
+    expect((failure as ApiError).body).toEqual({ error: 'Bad Gateway', message: 'Bad Gateway' });
+  });
+
+  it('refuses a success whose body is not JSON rather than returning it as a value', async () => {
+    answering(200, 'OK', '<html>please sign in to the wifi</html>');
+
+    const failure: unknown = await client({ method: 'GET', path: '/users/me' }).catch(
+      (error: unknown) => error,
+    );
+
+    expect(failure).toBeInstanceOf(ApiError);
   });
 });

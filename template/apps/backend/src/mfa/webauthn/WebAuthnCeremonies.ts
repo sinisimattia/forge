@@ -23,12 +23,15 @@ import type {
 } from '@simplewebauthn/server';
 import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import type { ClientContext } from '__FORGE_SCOPE__/core/auth/types';
-import { MfaMethodType } from '__FORGE_SCOPE__/core/mfa/enums';
+import { MfaEnrollmentDecision, MfaMethodType } from '__FORGE_SCOPE__/core/mfa/enums';
 import {
   MfaLabelRequiredError,
+  MfaReauthenticationRequiredError,
   MfaVerificationFailedError,
+  TooManyMfaMethodsError,
 } from '__FORGE_SCOPE__/core/mfa/errors';
-import type { MfaMethodJSON } from '__FORGE_SCOPE__/core/mfa/types';
+import { decideMfaEnrollment } from '__FORGE_SCOPE__/core/mfa/policies';
+import type { MfaMethodJSON, MfaProof } from '__FORGE_SCOPE__/core/mfa/types';
 import { UserNotFoundError } from '__FORGE_SCOPE__/core/users/errors';
 import type { UserId } from '__FORGE_SCOPE__/core/users/types';
 import { AuditService } from '../../audit/audit.service';
@@ -38,6 +41,7 @@ import { UserRecord } from '../../users/user-record.entity';
 import { MfaMethodRecord } from '../entities/mfa-method-record.entity';
 import { MfaChallengePurpose } from '../enums/MfaChallengePurpose';
 import { mapMfaMethodRecord } from '../mapMfaMethodRecord';
+import { MAX_MFA_METHODS } from '../mfa-limits';
 import { MfaChallengeService } from '../mfa-challenge.service';
 import type { MfaLoginCompletion } from '../mfa-verification.service';
 import { MfaVerificationService } from '../mfa-verification.service';
@@ -319,6 +323,7 @@ export class WebAuthnCeremonies {
     caller: WebAuthnCaller,
     response: Record<string, unknown>,
     label: string | undefined,
+    proof: MfaProof | null,
     client: ClientContext,
   ): Promise<WebAuthnVerification> {
     if (caller.purpose === WebAuthnCeremonyPurpose.ENROLLMENT) {
@@ -326,6 +331,7 @@ export class WebAuthnCeremonies {
         caller.userId,
         response as unknown as RegistrationResponseJSON,
         label,
+        proof,
       );
     }
     if (caller.purpose === WebAuthnCeremonyPurpose.LOGIN) {
@@ -371,6 +377,7 @@ export class WebAuthnCeremonies {
    * which this list cannot.
    *
    * @throws UserNotFoundError when the session names an account with no row
+   * @throws TooManyMfaMethodsError when the account already holds the most it may
    */
   private async enrollmentOptions(userId: UserId): Promise<WebAuthnOptionsResult> {
     const config = this.configured();
@@ -378,9 +385,12 @@ export class WebAuthnCeremonies {
     const account = await this.users.findOne({ where: { id: userId } });
     if (account === null) throw new UserNotFoundError(userId);
 
-    const enrolled = await this.methods.find({
-      where: { userId, type: MfaMethodType.WEBAUTHN },
-    });
+    const held = await this.methods.find({ where: { userId } });
+    // Refused before a ceremony is started that this account could not finish.
+    // `completeEnrollment` decides again under the account's lock; this is the
+    // early answer, and not the one that bounds the account.
+    if (held.length >= MAX_MFA_METHODS) throw new TooManyMfaMethodsError(MAX_MFA_METHODS);
+    const enrolled = held.filter((row) => row.type === MfaMethodType.WEBAUTHN);
 
     const publicKey = await generateRegistrationOptions({
       rpName: config.rpName,
@@ -412,7 +422,7 @@ export class WebAuthnCeremonies {
 
   /**
    * Authentication options for the account the presented challenge names, and
-   * a fresh challenge carrying this ceremony's nonce.
+   * a replacement challenge carrying this ceremony's nonce.
    *
    * ## Spent, then re-minted, rather than updated in place
    *
@@ -429,25 +439,15 @@ export class WebAuthnCeremonies {
    * signs in again. `MfaVerificationService.completeLoginWithRecoveryCode` says
    * the same about a wrong code.
    *
-   * ## The TTL rolls here, and other comments assume it does not
+   * ## The replacement keeps the original's expiry
    *
-   * **`mint` gives the new row a full `MFA_CHALLENGE_TTL_MS`, measured from
-   * now, not the remainder of the one it replaced.** So whoever holds a login
-   * challenge can call this endpoint every few minutes and keep a half-finished
-   * sign-in alive indefinitely. `MfaChallengeService`'s own TSDoc argues its
-   * window is "the window in which an intercepted or phished second factor is
-   * still worth something", and `MfaChallengeRecord.webauthnChallenge` leans on
-   * the same bound; **neither holds on this path**, and this paragraph exists
-   * so that nobody reads those two and believes it does.
-   *
-   * It is left as it is, deliberately. Rolling grants nothing on its own: each
-   * row is still single-use, still `LOGIN`-only, and completing any of them
-   * still needs an assertion signed by a private key the authenticator never
-   * releases. What a stolen token buys by being kept alive is the same nothing
-   * it bought at minute one. A deployment that wants the bound back would carry
-   * the original `expiresAt` forward rather than minting a fresh window — which
-   * is a change to {@link MfaChallengeService.mint}'s signature, and so not one
-   * to make silently here.
+   * The new row is minted with the `expiresAt` of the one just spent, not a
+   * fresh `MFA_CHALLENGE_TTL_MS`. However many times options are asked for,
+   * the sign-in as a whole lapses when the first challenge would have, which is
+   * the bound `MfaChallengeService`'s own TSDoc argues for and
+   * `MfaChallengeRecord.webauthnChallenge` leans on. A replacement carrying a
+   * fresh window would let whoever holds a login challenge keep a half-finished
+   * sign-in alive for as long as they went on asking.
    *
    * ## Spending a login challenge means re-checking the account
    *
@@ -455,8 +455,8 @@ export class WebAuthnCeremonies {
    * too, and for the same reason: a suspension, a lock or an unverification
    * landing inside the challenge's window binds on every leg that spends one of
    * these rows, not only on the leg that finishes the sign-in. Otherwise this
-   * endpoint hands out an account's passkey credential ids and mints it a fresh
-   * window while a security control is already meant to have taken effect. Same
+   * endpoint hands out an account's passkey credential ids and mints it a
+   * replacement challenge while a security control is already meant to have taken effect. Same
    * predicate — `User.canAuthenticate`, on a freshly read row — same
    * `account_unavailable` reason written down, same refusal the caller is given
    * for every other cause.
@@ -535,7 +535,12 @@ export class WebAuthnCeremonies {
       userVerification: 'preferred',
     });
 
-    const next = await this.challenges.mint(userId, MfaChallengePurpose.LOGIN, publicKey.challenge);
+    const next = await this.challenges.mint(
+      userId,
+      MfaChallengePurpose.LOGIN,
+      publicKey.challenge,
+      row.expiresAt,
+    );
     // After the mint, so the entry describes a challenge that exists rather
     // than one this leg was about to make.
     await recordUserAudit(
@@ -555,11 +560,25 @@ export class WebAuthnCeremonies {
    * transaction with the account's first batch of recovery codes.
    *
    * The order is the order of `MfaService.confirmTotpEnrollment`, and each step
-   * guards the next: the label is refused before anything is spent; the
-   * account's pending enrollment challenge is consumed under a write lock, so
-   * one ceremony cannot be completed twice; the attestation is verified against
-   * the nonce that challenge carried; the credential is refused if any account
-   * already holds it; and only then is a row written.
+   * guards the next: the label is refused before anything is spent; a proof
+   * that is owed and was not offered is refused next, still before the
+   * challenge is touched; the account's pending enrollment challenge is consumed
+   * under a write lock, so one ceremony cannot be completed twice; the
+   * attestation is verified against the nonce that challenge carried; the
+   * credential is refused if any account already holds it; a proof that was
+   * owed is verified; and only then is a row written.
+   *
+   * ## A proof, when the account already holds a factor
+   *
+   * This is one of the two ways a factor becomes confirmed, and it makes the
+   * decision `MfaService.confirmTotpEnrollment` makes, for the same reason: a
+   * session that is not the owner's must not be able to add a factor of its own
+   * and then remove the owner's. `decideMfaEnrollment` is given the account's
+   * methods **as they stand before this passkey is written** — the passkey must
+   * not count itself, or an account's first one would be owed a proof it cannot
+   * produce. The proof is verified by the verifier every other proof-gated call
+   * uses, after the attestation so that a ceremony that fails spends nothing,
+   * and the decision is made again under the account's lock, before the insert.
    *
    * **Three columns and no more.** `webauthn_credential_id`,
    * `webauthn_public_key` and `webauthn_counter` are what an assertion is
@@ -580,8 +599,14 @@ export class WebAuthnCeremonies {
    * it.
    *
    * @throws MfaLabelRequiredError when the label is missing, empty or only whitespace
+   * @throws MfaReauthenticationRequiredError when the account already holds a
+   *   confirmed method and no proof was offered — or, found again under the
+   *   account's lock, when one has been confirmed since the first look
    * @throws MfaVerificationFailedError when the attestation does not verify,
-   *   and when the consumed challenge carries no nonce
+   *   when a proof was owed and does not, and when the consumed challenge
+   *   carries no nonce
+   * @throws RecoveryCodeAlreadyConsumedError when the proof is a recovery code that was spent
+   * @throws TooManyMfaMethodsError when the account already holds the most it may
    * @throws ConflictException when this credential is already registered — see
    *   {@link WebAuthnCeremonies.refuseDuplicateCredential}
    */
@@ -589,6 +614,7 @@ export class WebAuthnCeremonies {
     userId: UserId,
     response: RegistrationResponseJSON,
     label: string | undefined,
+    proof: MfaProof | null,
   ): Promise<WebAuthnVerification> {
     const config = this.configured();
 
@@ -596,6 +622,18 @@ export class WebAuthnCeremonies {
     // domain for the same reason: a label of spaces is not a label.
     const trimmed = label === undefined ? '' : label.trim();
     if (trimmed === '') throw new MfaLabelRequiredError();
+
+    // "Is a proof owed?" — asked with `false`, of the account's methods as they
+    // stand now, **before this passkey exists in any form**: a passkey that
+    // counted itself as an existing factor would owe an account's first one a
+    // proof it has no way to produce. Refused here, ahead of the challenge, so
+    // a person who is told a proof is owed can supply it against the options
+    // they already hold instead of starting the ceremony over.
+    const proofOwed = decideMfaEnrollment(
+      (await this.methods.find({ where: { userId } })).map((row) => mapMfaMethodRecord(row)),
+      false,
+    ) !== MfaEnrollmentDecision.ALLOWED;
+    if (proofOwed && proof === null) throw new MfaReauthenticationRequiredError();
 
     const challenge = await this.challenges.consumePendingFor(
       userId,
@@ -622,6 +660,16 @@ export class WebAuthnCeremonies {
     const { credential } = verified.registrationInfo;
     await this.refuseDuplicateCredential(credential.id);
 
+    // Through the verifier every other proof-gated call uses, so there is one
+    // answer to "is this proof good". After the attestation, so a ceremony that
+    // fails does not spend a recovery code or a TOTP step, and before the
+    // transaction, for the reason `MfaService.removeMethod` gives.
+    let proofVerified = false;
+    if (proofOwed && proof !== null) {
+      await this.verification.proveSecondFactor(userId, proof);
+      proofVerified = true;
+    }
+
     const now = new Date();
     const id = randomUUID();
 
@@ -633,6 +681,21 @@ export class WebAuthnCeremonies {
         where: { id: userId },
         lock: { mode: 'pessimistic_write' },
       });
+
+      // Decided again, under the lock and **before the row below is written**:
+      // the list is the account's as it stood without this passkey. The read
+      // before the transaction is a snapshot, and two first confirmations that
+      // each saw an account with nothing confirmed would otherwise both be owed
+      // nothing.
+      const before = (await manager.find(MfaMethodRecord, { where: { userId } }))
+        .map((row) => mapMfaMethodRecord(row));
+      if (decideMfaEnrollment(before, proofVerified) !== MfaEnrollmentDecision.ALLOWED) {
+        throw new MfaReauthenticationRequiredError();
+      }
+      // Every row counts, confirmed or not, and the count is the one read under
+      // the lock — the same bound `MfaService.beginTotpEnrollment` holds, for the
+      // other way a method comes into being.
+      if (before.length >= MAX_MFA_METHODS) throw new TooManyMfaMethodsError(MAX_MFA_METHODS);
 
       await manager.insert(MfaMethodRecord, {
         id,

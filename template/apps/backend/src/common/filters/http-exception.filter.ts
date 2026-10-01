@@ -36,9 +36,10 @@ import {
   MfaMethodNotFoundError,
   MfaReauthenticationRequiredError,
   MfaVerificationFailedError,
+  TooManyMfaMethodsError,
   RecoveryCodeAlreadyConsumedError,
 } from '__FORGE_SCOPE__/core/mfa/errors';
-import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
+import { DomainError, TooManyAttemptsError } from '__FORGE_SCOPE__/core/shared/errors';
 import {
   DisplayNameRequiredError,
   EmailAlreadyRegisteredError,
@@ -301,10 +302,20 @@ const DOMAIN_ERRORS: {
   // *enough* for this action. A 401 would set off a token renewal that cannot
   // help, and the webapp reads this code as "ask for a second-factor proof".
   { type: MfaReauthenticationRequiredError, status: HttpStatus.FORBIDDEN, messageKey: 'errors.http.forbidden', code: 'MFA_REAUTHENTICATION_REQUIRED' },
+  // 409: state, not shape. The request is well-formed; it is refused because of
+  // how many methods the account holds now, and the same request is accepted once
+  // one has been removed. Its own code, because it is neither a missing proof
+  // (403) nor a wrong one (422), and the person needs to be told to remove a
+  // method rather than to prove anything.
+  { type: TooManyMfaMethodsError, status: HttpStatus.CONFLICT, messageKey: 'errors.mfa.too_many_methods', code: 'MFA_TOO_MANY_METHODS' },
   // 422 like a wrong code, and for the same reason. Distinct from it because the
   // caller is signed in and the difference reveals nothing they could not learn
   // from their own sheet: this code was theirs and is spent.
   { type: RecoveryCodeAlreadyConsumedError, status: HttpStatus.UNPROCESSABLE_ENTITY, messageKey: 'errors.http.unprocessable', code: 'RECOVERY_CODE_ALREADY_CONSUMED' },
+  // 429, with a message that names no bucket, no count and no subject: which
+  // budget refused, or whether the account exists, is exactly what a guesser
+  // would be asking.
+  { type: TooManyAttemptsError, status: HttpStatus.TOO_MANY_REQUESTS, messageKey: 'errors.common.too_many_attempts', code: 'TOO_MANY_ATTEMPTS' },
 ];
 
 /**

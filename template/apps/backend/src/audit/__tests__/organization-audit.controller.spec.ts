@@ -17,7 +17,7 @@ import { PlatformAdminGuard } from '../../auth/guards';
 import { JwtStrategy } from '../../auth/strategies';
 import { PermissionsGuard, PrincipalService } from '../../authorization';
 import { ResourceGrantRecord } from '../../authorization/resource-grant-record.entity';
-import { FakeDataSource } from '../../common/testing';
+import { FakeDataSource, UNMETERED_THROTTLING } from '../../common/testing';
 import { MembershipRecord } from '../../organizations/membership-record.entity';
 import { OrganizationRecord } from '../../organizations/organization-record.entity';
 import { UserRecord } from '../../users/user-record.entity';
@@ -127,6 +127,7 @@ describe('OrganizationAuditController', () => {
         ConfigModule.forRoot({ ignoreEnvFile: true, load: [() => ({ JWT_SECRET: SIGNING_KEY })] }),
         I18N,
         PassportModule,
+        UNMETERED_THROTTLING,
         JwtModule.register({ secret: SIGNING_KEY, signOptions: { expiresIn: '5m' } }),
       ],
       controllers: [AuditController, OrganizationAuditController],

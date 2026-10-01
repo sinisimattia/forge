@@ -8,6 +8,7 @@ import {
   MfaReauthenticationRequiredError,
   MfaVerificationFailedError,
   RecoveryCodeAlreadyConsumedError,
+  TooManyMfaMethodsError,
 } from '__FORGE_SCOPE__/core/mfa/errors';
 import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
 
@@ -56,6 +57,11 @@ const CASES: ReadonlyArray<[string, DomainError, string]> = [
     'RecoveryCodeAlreadyConsumedError',
     new RecoveryCodeAlreadyConsumedError(),
     'That recovery code has already been used.',
+  ],
+  [
+    'TooManyMfaMethodsError',
+    new TooManyMfaMethodsError(5),
+    'An account may hold at most 5 second-factor methods.',
   ],
 ];
 

@@ -32,7 +32,7 @@ import { SessionRecord } from '../entities/session-record.entity';
 import { RefreshTokenService } from '../session/refresh-token.service';
 import { SessionService } from '../session/session.service';
 import { JwtStrategy } from '../strategies';
-import { FakeDataSource, recordingAudit } from '../../common/testing';
+import { FakeDataSource, UNMETERED_THROTTLING, recordingAudit } from '../../common/testing';
 
 /**
  * # D7 — a known address and an unknown one are indistinguishable
@@ -224,6 +224,7 @@ describe('D7: a known address and an unknown one are indistinguishable', () => {
         // equal for a reason that has nothing to do with the property.
         I18N,
         PassportModule,
+        UNMETERED_THROTTLING,
         JwtModule.register({ secret: SIGNING_KEY, signOptions: { expiresIn: '5m' } }),
       ],
       controllers: [AuthController],

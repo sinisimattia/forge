@@ -24,24 +24,26 @@ import {
   MfaReauthenticationRequiredError,
   MfaVerificationFailedError,
 } from '__FORGE_SCOPE__/core/mfa/errors';
-import type { MfaMethodJSON, MfaMethodId } from '__FORGE_SCOPE__/core/mfa/types';
+import type { MfaMethodId } from '__FORGE_SCOPE__/core/mfa/types';
 import { UserNotFoundError } from '__FORGE_SCOPE__/core/users/errors';
 import { AuthService } from '../auth/auth.service';
 import { clientContextOf } from '../auth/client-context';
-import { CurrentUser, Public } from '../auth/decorators';
+import { CurrentUser, Public, ReadsSession } from '../auth/decorators';
 import type { AuthResponseDto } from '../auth/dto';
 import { OptionalJwtAuthGuard } from '../auth/guards';
 import { REFRESH_COOKIE } from '../auth/refresh-cookie';
 import { ACCESS_TOKEN_TTL_SECONDS } from '../auth/session/session.service';
 import type { AuthenticatedActor } from '../auth/strategies';
+import { Throttled } from '../throttling/throttled.decorator';
 import { ConfirmTotpDto } from './dto/confirm-totp.dto';
 import { EnrollTotpDto } from './dto/enroll-totp.dto';
+import type { MfaMethodsResponseDto } from './dto/mfa-methods-response.dto';
 import type {
   ConfirmTotpResponseDto,
   RegenerateRecoveryCodesResponseDto,
   TotpEnrollmentResponseDto,
 } from './dto/totp-enrollment-response.dto';
-import { MfaProofDto, proofOf } from './dto/mfa-proof.dto';
+import { MfaProofDto, nestedProofOf, proofOf } from './dto/mfa-proof.dto';
 import type { WebAuthnVerifyResponseDto } from './dto/webauthn-response.dto';
 import { WebAuthnOptionsDto, WebAuthnVerifyDto } from './dto/webauthn.dto';
 import { MfaService } from './mfa.service';
@@ -73,6 +75,11 @@ import {
  * `Authorization` header whenever one is present. A login caller has no
  * session by definition — that is why it is signing in — and proves possession
  * of a challenge token this server minted after a password verified.
+ *
+ * They also carry `@ReadsSession()`, which has the global guard verify a
+ * presented credential, so that the throttling guard — which runs before any
+ * route-level guard — can see the account and meter an enrollment's proof
+ * guesses against it, a budget a fresh access credential does not reset.
  *
  * **Which of the two a request is, is decided by which credential it carried
  * and by nothing in its body**, by `webAuthnCallerOf`, before any handler work
@@ -106,11 +113,20 @@ export class MfaController {
     private readonly auth: AuthService,
   ) {}
 
-  /** The actor's methods, confirmed and unconfirmed. Carries no secret material. */
+  /**
+   * The actor's methods, confirmed and unconfirmed, and how many recovery codes
+   * they have left. Carries no secret material.
+   *
+   * The count is the account's, so it sits beside `methods` and not on a method.
+   * It is always present, `0` included.
+   */
   @Get('methods')
-  public async list(@CurrentUser() actor: AuthenticatedActor): Promise<MfaMethodJSON[]> {
-    const methods = await this.mfa.listMethods(actor.userId);
-    return methods.map((method) => method.toJSON());
+  public async list(@CurrentUser() actor: AuthenticatedActor): Promise<MfaMethodsResponseDto> {
+    const [methods, recoveryCodesRemaining] = await Promise.all([
+      this.mfa.listMethods(actor.userId),
+      this.mfa.recoveryCodesRemaining(actor.userId),
+    ]);
+    return { methods: methods.map((method) => method.toJSON()), recoveryCodesRemaining };
   }
 
   /**
@@ -121,6 +137,7 @@ export class MfaController {
    * cache between here and the person.
    */
   @Post('totp/enroll')
+  @Throttled('mfa-mint')
   @Header('Cache-Control', 'no-store')
   public async enrollTotp(
     @CurrentUser() actor: AuthenticatedActor,
@@ -133,8 +150,14 @@ export class MfaController {
    * Finishes an enrollment. `recoveryCodes` is the plaintext batch on the
    * account's first confirmation and `null` afterwards — shown once, so also
    * `no-store`.
+   *
+   * An account that already holds a confirmed method answers `403`
+   * `MFA_REAUTHENTICATION_REQUIRED` unless the body carries a fresh `proof` of
+   * it: a factor is admitted only by a factor already trusted. The first factor
+   * needs none.
    */
   @Post('totp/confirm')
+  @Throttled('mfa-proof')
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', 'no-store')
   public async confirmTotp(
@@ -145,6 +168,7 @@ export class MfaController {
       actor.userId,
       body.methodId as MfaMethodId,
       body.code,
+      nestedProofOf(body.proof),
     );
     return { recoveryCodes: batch === null ? null : batch.codes };
   }
@@ -161,6 +185,7 @@ export class MfaController {
    * verb from `DELETE :id`, so it can never be read as a method id.
    */
   @Post('recovery-codes')
+  @Throttled('mfa-proof')
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', 'no-store')
   public async regenerateRecoveryCodes(
@@ -195,8 +220,10 @@ export class MfaController {
    * @throws NotFoundException when this deployment has no WebAuthn
    */
   @Public()
+  @ReadsSession()
   @UseGuards(OptionalJwtAuthGuard)
   @Post('webauthn/options')
+  @Throttled('mfa-mint')
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', 'no-store')
   public async webAuthnOptions(
@@ -233,14 +260,21 @@ export class MfaController {
    * `no-store`: the enrollment body may carry the account's only copy of its
    * recovery codes, and the login body carries an access credential.
    *
+   * An enrollment on an account that already holds a confirmed method answers
+   * `403` `MFA_REAUTHENTICATION_REQUIRED` unless the body carries a fresh
+   * `proof` of it, exactly as {@link MfaController.confirmTotp} does. A login
+   * does not read `proof`.
+   *
    * @throws BadRequestException when the request carried both credentials, and
    *   when it carried neither
    * @throws UnauthorizedException for every way a login can fail
    * @throws NotFoundException when this deployment has no WebAuthn
    */
   @Public()
+  @ReadsSession()
   @UseGuards(OptionalJwtAuthGuard)
   @Post('webauthn/verify')
+  @Throttled('mfa-attempt')
   @HttpCode(HttpStatus.OK)
   @Header('Cache-Control', 'no-store')
   public async webAuthnVerify(
@@ -253,7 +287,13 @@ export class MfaController {
     const client = clientContextOf(request);
 
     if (caller.purpose === WebAuthnCeremonyPurpose.ENROLLMENT) {
-      const done = await this.webauthn.verify(caller, body.response, body.label, client);
+      const done = await this.webauthn.verify(
+        caller,
+        body.response,
+        body.label,
+        nestedProofOf(body.proof),
+        client,
+      );
       if (done.purpose !== WebAuthnCeremonyPurpose.ENROLLMENT) {
         throw new InternalServerErrorException();
       }
@@ -280,6 +320,7 @@ export class MfaController {
    * `MfaService.removeMethod`.
    */
   @Delete(':id')
+  @Throttled('mfa-proof')
   @HttpCode(HttpStatus.NO_CONTENT)
   public async remove(
     @CurrentUser() actor: AuthenticatedActor,
@@ -303,7 +344,9 @@ export class MfaController {
     response: Response,
   ): Promise<AuthResponseDto> {
     return MfaController.flattenRefusals(async () => {
-      const done = await this.webauthn.verify(caller, body.response, body.label, client);
+      // No proof: a sign-in adds a factor to nothing, and a `proof` the body
+      // carried is not read, so it cannot be a way to make a login refuse.
+      const done = await this.webauthn.verify(caller, body.response, body.label, null, client);
       if (done.purpose !== WebAuthnCeremonyPurpose.LOGIN) throw new InternalServerErrorException();
 
       REFRESH_COOKIE.set(response, done.completion.credentials.refreshToken);

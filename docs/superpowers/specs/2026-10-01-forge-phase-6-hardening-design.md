@@ -166,24 +166,84 @@ absence. Closing it needs a trusted-proxy layer, which is Phase 7's to weigh.
 
 ### 4.3 The buckets
 
+**The decorators are the authority, not this table.** Which bucket a route draws on is the
+`@Throttled(...)` on it in `auth.controller.ts` and `mfa.controller.ts`; what each bucket
+counts against is `BUCKET_SUBJECT` in `throttling.config.ts`; what each one allows is
+`buildBuckets` beside it. A table restated here can fall behind all three, and has. Read it
+as a map, and settle any disagreement against those files.
+
 | Name | Subject | Routes | Default limit |
 |---|---|---|---|
-| `mfa-attempt` | challenge id | `POST /auth/mfa/verify`, `POST /mfa/webauthn/verify` | 5 per challenge |
-| `mfa-mint` | user id | `POST /auth/mfa/methods`, `POST /mfa/webauthn/options` | 10 / 15 min |
-| `mfa-proof` | user id | `POST /mfa/totp/confirm`, `POST /mfa/recovery-codes`, `DELETE /mfa/:id` | 10 / 15 min |
-| `credential` | submitted email, normalized | `POST /auth/login`, `/auth/forgot-password`, `/auth/reset-password`, `/auth/resend-verification` | 10 / 15 min |
+| `mfa-attempt` | `ACCOUNT_OR_CHALLENGE` — the signed-in account, else the challenge presented, else a digest of the bearer | `POST /auth/mfa/verify`, `POST /mfa/webauthn/verify` | 5, over the challenge's own lifetime |
+| `mfa-mint` | `ACCOUNT_OR_CHALLENGE` | `POST /auth/mfa/methods`, `POST /mfa/totp/enroll`, `POST /mfa/webauthn/options` | 10 / 15 min |
+| `mfa-proof` | `ACCOUNT_OR_CHALLENGE` | `POST /mfa/totp/confirm`, `POST /mfa/recovery-codes`, `DELETE /mfa/:id` | 10 / 15 min |
+| `credential` | `ADDRESS` — the submitted email, normalized | `POST /auth/login`, `POST /auth/forgot-password`, `POST /auth/resend-verification` | 10 / 15 min |
+| `reset-credential` | `RESET_CREDENTIAL` — the single-use credential presented | `POST /auth/reset-password` | 10 / 15 min |
 
-`mfa-attempt`'s window is the challenge's own time to live, so the budget dies with the
-challenge it belongs to. `mfa-mint` exists because a per-challenge cap alone resets whenever
-a new challenge is minted: an attacker holding the password would otherwise buy a fresh
-budget on demand. The two together take a six-digit grind from roughly half a million
-attempts to tens per hour.
+`reset-credential` is its own bucket rather than a share of `credential`, because a reset
+request carries no address to count against; it reads the same two environment variables for
+its limit and window, so the two move together unless somebody splits them.
+
+**What actually bounds a six-digit grind is `credential`, not `mfa-attempt`.** A `LOGIN`
+challenge is consumed *before* the proof offered against it is checked:
+`MfaVerificationService.completeLogin` and `completeLoginWithRecoveryCode` each call
+`spendChallenge` on their first line, and `WebAuthnCeremonies.loginOptions` consumes before
+it does anything else. **One challenge therefore admits exactly one guess.**
+
+`mfa-attempt`'s five is not unreachable — `d16-throttle-refusal.spec.ts` reaches it by
+presenting the same token six times and gets its `429` — but the four attempts after the
+first are refused as *already consumed*, without the code on them ever being looked at. They
+are not guesses, and nobody grinding a code would spend them; the budget is real and it
+bounds nothing an attacker would do on this leg. Nor are fresh challenges cheap:
+`/mfa/webauthn/options`' login leg spends one and mints one, and `POST /auth/mfa/methods`
+neither spends nor mints. A second *guess* costs a fresh
+`POST /auth/login`, which is metered on `credential`. That is the door —
+ten sign-ins per fifteen minutes per normalized address, so tens of guesses an hour against a
+six-digit code rather than the half a million it would otherwise take. (The one other way a
+`LOGIN` challenge is minted, the federated callback, is unmetered and is the subject of its
+own paragraph below; reaching it means passing the provider's own authentication as that
+account.)
+
+**Which knob an operator turns.** Raising `THROTTLE_CREDENTIAL_LIMIT`, or widening
+`THROTTLE_CREDENTIAL_WINDOW_MS`, raises the MFA grind rate in the same proportion.
+`THROTTLE_MFA_ATTEMPT_LIMIT` does not move it at all, for the reason above. An operator who
+wants to loosen sign-in for a shared address and keep the second factor as hard as it is now
+cannot get that from these two numbers.
+
+**`mfa-attempt` is kept, and it is not dead.** Its subject is the signed-in account whenever
+there is one, so it binds the enrolment leg of `POST /mfa/webauthn/verify` — which proves an
+existing factor and spends no login challenge per guess — where it is the counter doing the
+work. It is also the budget that would bind the login legs the day one of them stops spending
+the challenge before checking the proof; dropping it because it is slack today would make
+that change silently unbounded. Its window is the challenge's own time to live, so where it
+does bind a challenge the budget dies with it.
+
+**`mfa-mint` bounds minting, not guessing.** A per-challenge cap alone resets whenever a new
+challenge is minted, and this bucket is what stops somebody who holds the password from
+buying a fresh per-challenge budget on demand. No route carrying it hands out a net new
+`LOGIN` challenge, so it is not what holds the login door either.
 
 Every limit and window is an environment variable with the default above, read through
 `@nestjs/config` like every other setting. **There is no switch that disables throttling.**
 A deployment-wide "off" is a security control that fails silently when somebody sets it and
 forgets; tests that need different limits supply them through the module's async factory,
 which is the framework's own way of configuring it.
+
+**The federated callback mints a challenge and is not metered.** `oauth.service.ts` mints a
+LOGIN challenge on the federated path as well as the password path, and that route carries no
+budget — it has no server-known subject before the exchange completes, which is the same
+reason `GET /auth/oauth/:provider` has none. It is not a way around the per-challenge budget
+for somebody else's account: reaching it means passing the provider's own authentication as
+that account. It is stated because the sentence "minting is metered" would otherwise be true
+of one path and read as true of both.
+
+**`POST /auth/reset-password`'s budget bounds replay, not guessing.** Its subject is the
+credential presented, so a caller trying a different credential each time is a different
+subject every time, each at one attempt of its allowance. What bounds guessing there is the
+credential's own entropy; this budget bounds a spent or leaked link being retried. Stated
+because the alternative — resolving the credential to an account inside the tracker — would
+put a database lookup where a tracker must not have one and would reintroduce the
+account-existence oracle §4.4 exists to prevent.
 
 `GET /auth/oauth/:provider` is **not** throttled. It carries no server-known subject — there
 is no account yet and no credential in the request — so the only available key is the one
@@ -295,8 +355,9 @@ argument reasons from a count and the property that actually holds is continuity
 - **`loginOptions` rolls the challenge time-to-live indefinitely.** Each ceremony mints a
   fresh challenge, so a caller can hold one open for ever. The fix carries the original
   expiry forward, which is a change to the mint signature.
-- **Nobody is told how many recovery codes remain.** A count joins `GET /mfa/methods` and the
-  security screen, so a person can tell they are on their last one.
+- **Nobody is told how many recovery codes remain.** The count is the account's, not a
+  method's, so `GET /mfa/methods` becomes an envelope, `{ methods, recoveryCodesRemaining }`,
+  and the security screen shows it, so a person can tell they are on their last one.
 - **Recovery codes use a poor alphabet for transcription.** They move to Crockford base32,
   which excludes the characters a person reading from paper confuses. Existing codes are
   hashed and unaffected; only generation changes.

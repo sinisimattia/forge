@@ -99,12 +99,47 @@ restarts itself whenever the database blips is worse than one that reports unrea
 
 - [ ] **Step 1: Add the dependency**
 
-```bash
-cd template/apps/backend && npm pkg set dependencies.@nestjs/terminus="^12.1.0" && cd -
+**`@nestjs/terminus` is held at `^11.1.1`, deliberately.** 12.x is ESM-only
+(`"type": "module"`, with only a `default` export condition) and this package is CommonJS
+under ts-jest, so a spec that imports it fails to load before a single test runs. This is the
+same trap `@nestjs/jwt` and `@nestjs/passport` are already held back for; add the note beside
+theirs in the existing comment block in `template/apps/backend/package.json`, in the same
+voice. 11.1.1's peers are `@nestjs/common`, `@nestjs/core` and `@nestjs/typeorm` at
+`^10 || ^11`, all satisfied here.
+
+Edit `template/apps/backend/package.json` **by hand** — `npm pkg set` rewrites the file's key
+order and mangles the em-dashes in the existing comment block. Add, in dependency order:
+
+```json
+    "@nestjs/terminus": "^11.1.1",
 ```
 
-Do not run `npm install` in `template/` — it is tokenised and cannot resolve
-`__FORGE_SCOPE__/core`. The generated-project gate installs it.
+Then refresh the template lockfile, which is committed and which the generated-project gate's
+`npm ci` depends on:
+
+**`npm install --package-lock-only` does not work in `template/`** — the tokenised package
+names (`__FORGE_SCOPE__/core`) are rejected with `EINVALIDPACKAGENAME`. `npm run
+refresh-lockfile` does run, but it deletes the lock and re-resolves from scratch, which bumps
+unrelated packages; that is not what this task wants.
+
+What works, and what Task 1 used: copy `template/` to a scratch directory, substitute the
+placeholders there (`tools/refresh-lockfile.mjs` holds the token mapping), run
+`npm install --package-lock-only` against the **existing** lock so resolution is incremental,
+then reverse-substitute the result back over `template/package-lock.json`.
+
+Verify the result the same way Task 1 did, and treat a non-zero first number as a problem:
+
+```bash
+git diff -- template/package-lock.json | grep -cE '^-\s+"version":'   # must be 0
+git diff -- template/package-lock.json | grep -cE '^\+\s+"version":'  # the new packages
+```
+
+A large line count is expected and is not by itself churn: adding a dependency with optional
+peers makes npm recompute `dev` / `devOptional` reachability across the file. Zero removed
+`"version"` lines is what proves nothing existing moved.
+
+The diff must contain terminus and its transitive additions and nothing else. Do not run a
+plain `npm install` in `template/` — it is tokenised (`__FORGE_SCOPE__`) and will not resolve.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -126,7 +161,7 @@ async function controllerWith(ping: () => unknown): Promise<HealthController> {
     controllers: [HealthController],
   })
     .overrideProvider(TypeOrmHealthIndicator)
-    .useValue({ pingCheck: () => ({ withTimeout: () => ping() }) })
+    .useValue({ pingCheck: () => ping() })
     .compile();
   return moduleRef.get(HealthController);
 }
@@ -210,7 +245,7 @@ export class HealthController {
   @Get('ready')
   @HealthCheck()
   public async ready(): Promise<ReturnType<HealthCheckService['check']>> {
-    return this.health.check([() => this.database.pingCheck('database').withTimeout(3000)]);
+    return this.health.check([() => this.database.pingCheck('database', { timeout: 3000 })]);
   }
 }
 ```
@@ -252,8 +287,8 @@ line 362, add a readiness assertion in the same test:
 ```js
     const ready = await call(base, 'GET', '/health/ready');
     assert.equal(ready.status, 200, 'readiness answers 200 against a live database');
-    assert.equal(ready.body.status, 'ok');
-    assert.equal(ready.body.info.database.status, 'up');
+    assert.equal(ready.json.status, 'ok');
+    assert.equal(ready.json.info.database.status, 'up');
 ```
 
 - [ ] **Step 8: Run the gates**
@@ -293,8 +328,10 @@ and forwarded like any other request option. Verified against `ofetch@1.5.1`.
 
 **This task does not assume the conclusion.** There may be a sound reason to keep the
 platform's `fetch`: `$fetch` rejects on a non-2xx response and parses the body on the way,
-and this client's whole job is to inspect a `401` and decide whether to renew — the one case
-where being handed an exception instead of a response is a cost. Establish which is true by
+and this client's whole job is to inspect a `401` and decide whether to renew. Both are
+answerable with options (`ignoreResponseError`, `.raw`), so the honest question is not
+whether `$fetch` *can* do it but whether routing through those options is clearer than the
+platform call it replaces. Establish which is true by
 reading the dependency, then do exactly one of the two things below. Not both, and not
 neither: a false justification left in place is worse than none, because it reads as having
 been checked.
@@ -320,8 +357,15 @@ the task report in one sentence: whether `$fetch` can express what this client n
 
 - [ ] **Step 2a: If `$fetch` fits — migrate, and keep the behaviour identical**
 
-Replace the `fetch(...)` call with `$fetch.raw(...)`, which returns the response rather than
-the parsed body and does not reject on a non-2xx status, keeping the `401` path a value.
+Replace the `fetch(...)` call with `$fetch.raw(url, { ignoreResponseError: true, ... })`.
+
+**Both options are load-bearing and I verified each against `ofetch@1.5.1` rather than
+recalling it.** `.raw` returns the response object instead of the parsed body. It does *not*
+by itself keep a `401` from throwing — ofetch rejects on any status in 400-599 at
+`dist/shared/ofetch.*.mjs:320` unless `ignoreResponseError` is set. An earlier draft of this
+plan said `.raw` alone was enough; that was wrong, and it is the same mistake this task
+exists to correct.
+
 Carry `credentials`, `signal` and `headers` across unchanged. Then run the webapp suite and
 confirm the renewal tests still pass — they are the ones that would catch a regression:
 
@@ -917,20 +961,23 @@ export class PostgresThrottlerStorage implements ThrottlerStorage {
          VALUES ($1, 1, now() + $2::double precision * interval '1 millisecond', NULL)
          ON CONFLICT (key) DO UPDATE SET
            hits = CASE
-             WHEN c.expires_at <= now() THEN 1
              WHEN c.blocked_until IS NOT NULL AND c.blocked_until >  now() THEN c.hits
              WHEN c.blocked_until IS NOT NULL AND c.blocked_until <= now() THEN 1
+             WHEN c.expires_at <= now() THEN 1
              ELSE c.hits + 1
            END,
            expires_at = CASE
+             WHEN c.blocked_until IS NOT NULL AND c.blocked_until >  now() THEN c.expires_at
+             WHEN c.blocked_until IS NOT NULL AND c.blocked_until <= now()
+               THEN now() + $2::double precision * interval '1 millisecond'
              WHEN c.expires_at <= now()
                THEN now() + $2::double precision * interval '1 millisecond'
              ELSE c.expires_at
            END,
            blocked_until = CASE
-             WHEN c.expires_at <= now() THEN NULL
              WHEN c.blocked_until IS NOT NULL AND c.blocked_until >  now() THEN c.blocked_until
              WHEN c.blocked_until IS NOT NULL AND c.blocked_until <= now() THEN NULL
+             WHEN c.expires_at <= now() THEN NULL
              WHEN c.hits + 1 > $3
                THEN now() + $4::double precision * interval '1 millisecond'
              ELSE NULL
@@ -952,6 +999,16 @@ export class PostgresThrottlerStorage implements ThrottlerStorage {
   }
 }
 ```
+
+**An active block is checked before the window, and that ordering is the whole point.** An
+earlier draft of this SQL led every `CASE` with `WHEN c.expires_at <= now()`, which cleared
+`blocked_until` on the rollover. Because Task 6 configures `blockDuration` equal to `ttl`, a
+subject that tripped the limit late in its window had the block wiped almost immediately —
+trip at 14m59s, block to 29m59s, window rolls at 15m00s and erases it. The rate bound
+survived, since a fresh window still permits only `limit` attempts, but `blockDuration`
+became decorative and any prose promising a retry window would have been false. An active
+block now wins over the rollover, which is also what the bundled store does: its own eviction
+skips records whose block has not expired.
 
 - [ ] **Step 4: Run the tests**
 
@@ -1035,11 +1092,21 @@ library publishes:
 - Produces: `Throttled(bucket: ThrottleBucket)` — a method decorator; `ThrottleBucket` is
   `'mfa-attempt' | 'mfa-mint' | 'mfa-proof' | 'credential' | 'reset-credential'`. Task 7 applies it.
 
-- [ ] **Step 1: Add the dependency**
+- [ ] **Step 1: Confirm the dependency is already declared**
+
+`@nestjs/throttler` was declared, and `template/package-lock.json` refreshed, as part of
+Task 5's fix round — it had to be, because Task 5's source imports it and the plan's original
+ordering left a commit whose generated project did not typecheck. **There is nothing to add
+here.** Confirm and move on:
 
 ```bash
-cd template/apps/backend && npm pkg set dependencies.@nestjs/throttler="^6.7.1" && cd -
+grep -n '"@nestjs/throttler"' template/apps/backend/package.json
+grep -c 'node_modules/@nestjs/throttler"' template/package-lock.json
 ```
+
+Both must be non-empty. For the record, `@nestjs/throttler@6.7.1` ships CommonJS — no
+`"type": "module"` — so the ESM trap that holds `@nestjs/terminus`, `@nestjs/jwt` and
+`@nestjs/passport` back does not apply. Verify that again if you bump the version.
 
 - [ ] **Step 2: Write the buckets and the subject kinds**
 
@@ -2193,11 +2260,32 @@ Run before the whole-branch review, on a project generated into a scratch direct
 template is tokenised and cannot be installed in place:
 
 ```bash
-npm test                                    # the generator-s own suite
+npm test                                    # the generator's own unit suite — THIS IS UNIT ONLY
 npm run sanitize                            # the extraction gate
-npx nx run-many -t test lint typecheck      # in the generated project
-FORGE_E2E=1 npm test                        # the docker tier, including the two-connection case
+FORGE_E2E=1 npm run test:integration        # generated-project AND docker tiers
 ```
+
+and, inside the generated project, **every** target the gate list names — not a subset:
+
+```bash
+npx nx run-many -t lint typecheck test build build-storybook purity layers coverage
+```
+
+**Two traps here, both of which bit this phase.**
+
+`FORGE_E2E=1 npm test` runs **nothing extra**. The root `test` script is
+`node --test 'tests/unit/**/*.test.mjs'`; the integration and docker tiers live in
+`test:integration`. It exits 0 in about a second and looks like a green end-to-end run.
+`phase-5-decision-log.md` §2 recorded this and the error was repeated here anyway.
+
+`coverage` is a **separate nx target**, so `-t test lint typecheck` passes while it fails.
+`libs/core` enforces 100%, so any export added there without a core test breaks it — which is
+exactly how this phase shipped an error class to core with no core test through fourteen task
+reviews and a whole-branch review. Run the full list above; `package.json`'s `affected` script
+is the canonical copy of it.
+
+Also note `timeout` is not a macOS builtin: prefixing a command with it can fail in a way a
+shell helper swallows, so the command never runs at all.
 
 Measure Docker headroom with `docker run --rm alpine df -h /` before the e2e tier. Never stop,
 remove or reconfigure a container this work did not create.

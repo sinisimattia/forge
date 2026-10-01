@@ -15,10 +15,14 @@ import type { MfaMethodId } from '../types/MfaMethodId';
  * makes the removal of a last confirmed method equivalent, for an attacker,
  * to defeating the second factor outright — so it must cost at least as much
  * as defeating it would. Removing *one of several* remaining confirmed
- * methods costs nothing extra: the account still requires a second factor
- * afterward, just not that particular one, so the requesting session —
- * already the proof that a caller is allowed to manage this account's
- * methods at all — is sufficient on its own.
+ * methods is permitted on the session alone. What makes that safe is not the
+ * count but continuity of control: {@link decideMfaEnrollment} admits a new
+ * factor only on a proof from one the account already holds, so every
+ * confirmed method on an account traces back to the first. Without that rule
+ * this decision would be sufficient to count and insufficient to protect — a
+ * session that is not the owner's could add its own factor and then remove
+ * theirs, and the account would still hold a confirmed method, which is all
+ * this function checks.
  *
  * ## Removing an unconfirmed method is always allowed
  *

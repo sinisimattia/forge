@@ -4,7 +4,6 @@ import {
   MfaVerificationFailedError,
   RecoveryCodeAlreadyConsumedError,
 } from '__FORGE_SCOPE__/core/mfa/errors';
-import type { MfaMethodJSON } from '__FORGE_SCOPE__/core/mfa/types';
 import {
   ApiError,
   deleteMfaMethod,
@@ -23,6 +22,7 @@ import type {
   ApiClient,
   AuthResponseBody,
   MfaChallengeMethodBody,
+  MfaMethodsBody,
   MfaProofBody,
   MfaVerifyProof,
   RecoveryCodesBody,
@@ -146,8 +146,11 @@ export class MfaHttpService {
     return postWebAuthnLoginVerify(this.client, challengeToken, assertion);
   }
 
-  /** The actor's own methods, confirmed and not. Carries no secret material. */
-  public listMethods(): Promise<MfaMethodJSON[]> {
+  /**
+   * The actor's own methods, confirmed and not, and how many recovery codes they
+   * have left to spend. Carries no secret material.
+   */
+  public listMethods(): Promise<MfaMethodsBody> {
     return getMfaMethods(this.client);
   }
 
@@ -164,24 +167,39 @@ export class MfaHttpService {
   /**
    * Finishes a TOTP enrollment.
    *
+   * @param proof - a proof of a factor the account already holds; `null` sends
+   * none, which the backend accepts only for the account's first
    * @returns the recovery batch on the account's first confirmation, `null` after
-   * @throws MfaVerificationFailedError when the code is wrong
+   * @throws MfaReauthenticationRequiredError when a proof was owed and none was sent
+   * @throws MfaVerificationFailedError when the code is wrong, or the proof was
+   * (the route answers both the same way)
+   * @throws RecoveryCodeAlreadyConsumedError when the proof was a spent recovery code
    */
-  public confirmTotp(methodId: string, code: string): Promise<TotpConfirmationBody> {
-    return named(() => postTotpConfirm(this.client, methodId, code));
+  public confirmTotp(
+    methodId: string,
+    code: string,
+    proof: MfaProofBody | null,
+  ): Promise<TotpConfirmationBody> {
+    return named(() => postTotpConfirm(this.client, methodId, code, proof));
   }
 
   /**
    * Registers a passkey the authenticator produced. Its options come from
    * {@link MfaHttpService.passkeyEnrollmentOptions}.
    *
+   * @param proof - a proof of a factor the account already holds; `null` sends
+   * none, which the backend accepts only for the account's first
    * @throws MfaLabelRequiredError when the label is blank
+   * @throws MfaReauthenticationRequiredError when a proof was owed and none was sent
+   * @throws MfaVerificationFailedError when the proof was wrong
+   * @throws RecoveryCodeAlreadyConsumedError when the proof was a spent recovery code
    */
   public enrollPasskey(
     label: string,
     attestation: Record<string, unknown>,
+    proof: MfaProofBody | null,
   ): Promise<WebAuthnEnrollmentBody> {
-    return named(() => postWebAuthnEnrollVerify(this.client, label, attestation));
+    return named(() => postWebAuthnEnrollVerify(this.client, label, attestation, proof));
   }
 
   /** The options for enrolling a passkey; carries the session and no challenge. */

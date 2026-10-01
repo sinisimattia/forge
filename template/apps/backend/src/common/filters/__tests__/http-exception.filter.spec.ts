@@ -19,7 +19,7 @@ import {
   InvitationNoLongerOpenError,
   InvitationNotFoundError,
 } from '__FORGE_SCOPE__/core/organizations/errors';
-import { DomainError } from '__FORGE_SCOPE__/core/shared/errors';
+import { DomainError, TooManyAttemptsError } from '__FORGE_SCOPE__/core/shared/errors';
 import { InvalidCredentialsError } from '__FORGE_SCOPE__/core/auth/errors';
 import {
   DOMAIN_ERROR_CODES,
@@ -416,6 +416,7 @@ describe('HttpExceptionFilter', () => {
         'MFA_METHOD_ALREADY_CONFIRMED',
         'MFA_METHOD_NOT_FOUND',
         'MFA_REAUTHENTICATION_REQUIRED',
+        'MFA_TOO_MANY_METHODS',
         'MFA_VERIFICATION_FAILED',
         'ORGANIZATION_NAME_REQUIRED',
         'ORGANIZATION_NOT_FOUND',
@@ -423,6 +424,7 @@ describe('HttpExceptionFilter', () => {
         'SESSION_NOT_FOUND',
         'TOKEN_CONSUMED',
         'TOKEN_EXPIRED',
+        'TOO_MANY_ATTEMPTS',
         'USER_NOT_FOUND',
         'WEAK_PASSWORD',
       ]);
@@ -478,6 +480,25 @@ describe('HttpExceptionFilter', () => {
       expect(statusMock).toHaveBeenCalledWith(HttpStatus.UNAUTHORIZED);
       expect(body().code).toBe('INVALID_CREDENTIALS');
     });
+  });
+
+  it('answers 429 with a translated message for TooManyAttemptsError', () => {
+    filter.catch(new TooManyAttemptsError(900), host);
+
+    expect(statusMock).toHaveBeenCalledWith(HttpStatus.TOO_MANY_REQUESTS);
+    expect(body().code).toBe('TOO_MANY_ATTEMPTS');
+    // The stub translator above decorates whatever key it is given, so
+    // "is not the raw key" holds for ANY key and proves nothing about this
+    // one. Two checks that do: the key it was asked to translate, and that
+    // this key resolves to prose in the file `I18nModule` loads — an
+    // unresolved key is emitted verbatim as the message a person reads.
+    expect(body().message).toBe('t:errors.common.too_many_attempts');
+    const english = JSON.parse(
+      readFileSync(join(__dirname, '..', '..', '..', 'i18n', 'en', 'errors.json'), 'utf8'),
+    ) as { common: Record<string, string> };
+    expect(english.common.too_many_attempts).toEqual(expect.any(String));
+    expect(english.common.too_many_attempts).not.toBe('errors.common.too_many_attempts');
+    expect(english.common.too_many_attempts).not.toBe('');
   });
 
   it('falls back to the raw key when no i18n context is available', () => {

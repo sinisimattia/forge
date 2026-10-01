@@ -26,3 +26,25 @@ export const IS_PUBLIC = 'auth:isPublic';
  * endpoint's own decorators.
  */
 export const Public = (): MethodDecorator & ClassDecorator => SetMetadata(IS_PUBLIC, true);
+
+/** The metadata key {@link ReadsSession} sets, read by `JwtAuthGuard`. */
+export const READS_SESSION = 'auth:readsSession';
+
+/**
+ * On a `@Public()` route: **a session credential that is offered is verified at
+ * the global guard, so the guards that run after it can see who it is.**
+ *
+ * It exists for one reason, and it is ordering. Route-level guards run after
+ * every global one, so on a route that is public but also serves signed-in
+ * callers, `request.user` is still empty when `ForgeThrottlerGuard` decides what
+ * to count a request against — and a budget that cannot see the account falls
+ * back to the credential presented, which a caller resets by obtaining another.
+ * Verifying here puts the account where that guard can read it.
+ *
+ * It changes nothing about who is let in: no `Authorization` header carries on
+ * with no actor, and a header that does not verify is refused, exactly as
+ * `OptionalJwtAuthGuard` does. It is not a softer `JwtAuthGuard` and is no
+ * substitute for it; apply it only alongside `@Public()` and
+ * `OptionalJwtAuthGuard`.
+ */
+export const ReadsSession = (): MethodDecorator => SetMetadata(READS_SESSION, true);

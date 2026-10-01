@@ -2,7 +2,8 @@ import { ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { Observable } from 'rxjs';
-import { IS_PUBLIC } from '../decorators/public.decorator';
+import type { Request } from 'express';
+import { IS_PUBLIC, READS_SESSION } from '../decorators/public.decorator';
 
 /**
  * The guard registered as `APP_GUARD`, so it runs ahead of every route this
@@ -35,7 +36,22 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       context.getClass(),
     ]);
 
-    if (isPublic === true) return true;
+    if (isPublic === true) {
+      // A public route that also serves signed-in callers has its credential
+      // verified here when one is offered, so that the guards after this one see
+      // the account. The decision is the presence of the header, as
+      // `OptionalJwtAuthGuard` makes it: an invalid credential is a refusal and
+      // never an absence. See `ReadsSession`.
+      const readsSession = this.reflector.get<boolean | undefined>(
+        READS_SESSION,
+        context.getHandler(),
+      );
+      const request = context.switchToHttp().getRequest<Request>();
+      if (readsSession === true && request.get('authorization') !== undefined) {
+        return super.canActivate(context);
+      }
+      return true;
+    }
 
     return super.canActivate(context);
   }

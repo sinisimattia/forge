@@ -23,8 +23,11 @@ export type ProofReason = 'required' | 'wrong';
 
 /** What the proof form is being asked for. */
 export interface ProofRequest {
-  /** The action the proof will unlock. */
-  readonly action: 'remove' | 'regenerate';
+  /**
+   * The action the proof will unlock. `confirmTotp` and `enrollPasskey` are the
+   * two ways a factor is added to an account that already holds one.
+   */
+  readonly action: 'remove' | 'regenerate' | 'confirmTotp' | 'enrollPasskey';
   /** The method being removed, for `remove`. */
   readonly methodId: string | null;
   /** Why the form is showing. */
@@ -35,6 +38,12 @@ export interface ProofRequest {
 export interface UseMfaMethods {
   /** The actor's own methods. Carry no secret material. Empty until {@link load} resolves. */
   readonly methods: Ref<MfaMethodJSON[]>;
+  /**
+   * How many recovery codes the account has left to spend, or `null` until a
+   * read has answered. `null` means *not known* and `0` means *none left*: the
+   * two are different facts and the screen treats them differently.
+   */
+  readonly recoveryCodesRemaining: Ref<number | null>;
   /** Whether a request is in flight. */
   readonly loading: Ref<boolean>;
   /** Whether the last request failed for a reason the screen has no name for. */
@@ -58,6 +67,12 @@ export interface UseMfaMethods {
    */
   readonly passkeyDismissed: Ref<boolean>;
   /**
+   * Whether a passkey ceremony was spent without registering it, so the person
+   * has to touch their key again. Not a fault: the proof that went with it was
+   * refused after the server had already used up the ceremony.
+   */
+  readonly passkeyRestart: Ref<boolean>;
+  /**
    * The recovery codes to show, or `null`.
    *
    * **Shown once.** Set by the confirmation that gives the account its first
@@ -72,8 +87,12 @@ export interface UseMfaMethods {
   readonly load: () => Promise<void>;
   /** Begins a TOTP enrollment under `label`. */
   readonly beginTotp: (label: string) => Promise<void>;
-  /** Finishes it with the code the authenticator now shows. */
-  readonly confirmTotp: (code: string) => Promise<void>;
+  /**
+   * Finishes it with the code the authenticator now shows. An account that
+   * already holds a confirmed method is asked for a proof first, through
+   * {@link proofRequest}; `proof` is that proof, on the retry.
+   */
+  readonly confirmTotp: (code: string, proof?: MfaProofBody) => Promise<void>;
   /** Abandons an enrollment. The method it created stays unconfirmed and gates nothing. */
   readonly cancelEnrollment: () => void;
   /** Enrols a passkey under `label`. */
@@ -104,19 +123,46 @@ export interface UseMfaMethods {
  * the `403` would change what the person sees and nothing about what is allowed
  * — it would leave them with a button that does nothing.
  *
+ * **Adding a factor follows the same pattern, and the rule is the server's here
+ * too.** Confirming a method on an account that already has one costs a proof of
+ * it, for either way in — an authenticator app or a passkey. The client does not
+ * decide who is owed one: it sends none, and a `MFA_REAUTHENTICATION_REQUIRED`
+ * raises the proof form, so an account's first factor, which the server admits
+ * free, is never asked. What the person already did is held until the proof
+ * arrives — the typed code for an app, and for a passkey the attestation the
+ * authenticator produced, so the key is touched once and not again. They are held
+ * in this closure and dropped on success, on backing out, and on cancelling the
+ * enrollment.
+ *
+ * **What a retry survives depends on where the server refused.** A *missing*
+ * proof is refused before the passkey ceremony's challenge is spent, so the held
+ * attestation is still good and is sent again with the proof. Every refusal
+ * *after* a proof was sent — a wrong one, a spent recovery code, an attestation
+ * that did not verify — comes after the challenge was spent, so that attestation
+ * can never succeed and is dropped: the person is told to touch the key again
+ * ({@link UseMfaMethods.passkeyRestart}). An authenticator app's held code has no
+ * such limit; it is simply stale after a minute or so.
+ *
  * @returns the state and the verbs a screen needs
  */
 export function useMfaMethods(): UseMfaMethods {
   const store = useAuthStore();
   const methods = ref<MfaMethodJSON[]>([]);
+  const recoveryCodesRemaining = ref<number | null>(null);
   const loading = ref(false);
   const failed = ref(false);
   const enrollment = ref<TotpEnrollmentBody | null>(null);
   const wrongCode = ref(false);
   const labelMissing = ref(false);
   const passkeyDismissed = ref(false);
+  const passkeyRestart = ref(false);
   const recoveryCodes = ref<readonly string[] | null>(null);
   const proofRequest = ref<ProofRequest | null>(null);
+  /** The code typed for the enrollment a proof is being asked about. Never exposed. */
+  let heldCode: string | null = null;
+  /** The passkey ceremony a proof is being asked about, already performed. Never exposed. */
+  let heldPasskey: { readonly label: string; readonly attestation: Record<string, unknown> } | null
+    = null;
 
   const service = (): MfaHttpService => new MfaHttpService(store.authenticatedClient());
 
@@ -131,10 +177,13 @@ export function useMfaMethods(): UseMfaMethods {
   async function read(): Promise<void> {
     loading.value = true;
     try {
-      methods.value = await service().listMethods();
+      const listed = await service().listMethods();
+      methods.value = listed.methods;
+      recoveryCodesRemaining.value = listed.recoveryCodesRemaining;
     } catch {
       failed.value = true;
       methods.value = [];
+      recoveryCodesRemaining.value = null;
     } finally {
       loading.value = false;
     }
@@ -166,18 +215,24 @@ export function useMfaMethods(): UseMfaMethods {
     await read();
   }
 
-  async function confirmTotp(code: string): Promise<void> {
+  async function confirmTotp(code: string, proof?: MfaProofBody): Promise<void> {
     const offer = enrollment.value;
     if (offer === null) return;
     wrongCode.value = false;
     loading.value = true;
     failed.value = false;
     try {
-      const confirmed = await service().confirmTotp(offer.methodId, code);
+      const confirmed = await service().confirmTotp(offer.methodId, code, proof ?? null);
       enrollment.value = null;
+      heldCode = null;
+      proofRequest.value = null;
       take(confirmed.recoveryCodes);
     } catch (error) {
-      if (error instanceof MfaVerificationFailedError) wrongCode.value = true;
+      const reason = enrollmentProofReason(error, proof !== undefined);
+      if (reason !== null) {
+        heldCode = code;
+        proofRequest.value = { action: 'confirmTotp', methodId: null, reason };
+      } else if (error instanceof MfaVerificationFailedError) wrongCode.value = true;
       else failed.value = true;
     } finally {
       loading.value = false;
@@ -187,6 +242,7 @@ export function useMfaMethods(): UseMfaMethods {
 
   function cancelEnrollment(): void {
     enrollment.value = null;
+    heldCode = null;
     wrongCode.value = false;
     failed.value = false;
     void read();
@@ -204,30 +260,68 @@ export function useMfaMethods(): UseMfaMethods {
   async function enrollPasskey(label: string): Promise<void> {
     labelMissing.value = false;
     passkeyDismissed.value = false;
+    passkeyRestart.value = false;
     loading.value = true;
     failed.value = false;
+    let attestation: Record<string, unknown>;
     try {
       const { startRegistration } = await import('@simplewebauthn/browser');
       const options = await service().passkeyEnrollmentOptions();
-      let attestation;
       try {
         attestation = await startRegistration({
           optionsJSON: options.publicKey as Parameters<typeof startRegistration>[0]['optionsJSON'],
-        });
+        }) as unknown as Record<string, unknown>;
       } catch {
         // Only the browser's own ceremony is caught here: a person closing the
         // prompt, a timeout, an authenticator that refused. Nothing was sent, so
         // there is no server answer to tell apart from it.
         passkeyDismissed.value = true;
+        loading.value = false;
         return;
       }
-      const enrolled = await service().enrollPasskey(
-        label,
-        attestation as unknown as Record<string, unknown>,
-      );
+    } catch {
+      failed.value = true;
+      loading.value = false;
+      await read();
+      return;
+    }
+    await registerPasskey(label, attestation, undefined);
+  }
+
+  /**
+   * Sends a performed ceremony to the server, with a proof when there is one.
+   * Split from {@link enrollPasskey} so that a proof asked for afterwards can be
+   * sent with the *same* attestation — but only after a **missing** proof, which
+   * the server refuses before it spends the ceremony's challenge. Once a proof
+   * was sent, the refusals that concern it — a wrong proof, a spent recovery
+   * code, a missing-proof answer found again under the lock, an attestation that
+   * did not verify — come after the challenge is spent: the attestation is dead,
+   * is dropped, and the person is asked to touch the key again. A refusal with no
+   * name the screen knows (a conflict, a refusal with no code, a server fault) is
+   * not one of those: it shows the generic failure and leaves the form as it was.
+   */
+  async function registerPasskey(
+    label: string,
+    attestation: Record<string, unknown>,
+    proof: MfaProofBody | undefined,
+  ): Promise<void> {
+    loading.value = true;
+    failed.value = false;
+    try {
+      const enrolled = await service().enrollPasskey(label, attestation, proof ?? null);
+      heldPasskey = null;
+      proofRequest.value = null;
       take(enrolled.recoveryCodes);
     } catch (error) {
-      if (error instanceof MfaLabelRequiredError) labelMissing.value = true;
+      const reason = enrollmentProofReason(error, proof !== undefined);
+      if (reason !== null && proof === undefined) {
+        heldPasskey = { label, attestation };
+        proofRequest.value = { action: 'enrollPasskey', methodId: null, reason };
+      } else if (reason !== null) {
+        heldPasskey = null;
+        proofRequest.value = null;
+        passkeyRestart.value = true;
+      } else if (error instanceof MfaLabelRequiredError) labelMissing.value = true;
       else failed.value = true;
     } finally {
       loading.value = false;
@@ -269,17 +363,31 @@ export function useMfaMethods(): UseMfaMethods {
     } finally {
       loading.value = false;
     }
+    // The count changed with the batch, so it is read again like after every
+    // other verb. Without this the screen would go on warning about codes that
+    // were retired the moment the new ones were issued.
+    await read();
   }
 
   async function submitProof(proof: MfaProofBody): Promise<void> {
     const request = proofRequest.value;
     if (request === null) return;
     if (request.action === 'regenerate') await regenerate(proof);
-    else if (request.methodId !== null) await remove(request.methodId, proof);
+    else if (request.action === 'confirmTotp') {
+      if (heldCode !== null) await confirmTotp(heldCode, proof);
+    } else if (request.action === 'enrollPasskey') {
+      if (heldPasskey !== null) {
+        await registerPasskey(heldPasskey.label, heldPasskey.attestation, proof);
+      }
+    } else if (request.methodId !== null) await remove(request.methodId, proof);
   }
 
   function cancelProof(): void {
     proofRequest.value = null;
+    // Backing out of a passkey drops the ceremony; backing out of an app's proof
+    // returns to the enrollment panel, which still holds its offer.
+    heldPasskey = null;
+    heldCode = null;
     failed.value = false;
   }
 
@@ -289,12 +397,14 @@ export function useMfaMethods(): UseMfaMethods {
 
   return {
     methods,
+    recoveryCodesRemaining,
     loading,
     failed,
     enrollment,
     wrongCode,
     labelMissing,
     passkeyDismissed,
+    passkeyRestart,
     recoveryCodes,
     proofRequest,
     load,
@@ -323,4 +433,20 @@ function reasonFor(error: unknown): ProofReason | null {
   if (error instanceof MfaVerificationFailedError) return 'wrong';
   if (error instanceof RecoveryCodeAlreadyConsumedError) return 'wrong';
   return null;
+}
+
+/**
+ * Which proof-form message a refusal of an *enrollment* calls for, or `null`
+ * when the screen has no proof to ask about.
+ *
+ * Narrower than {@link reasonFor}, because the confirm routes answer one error
+ * for two different faults: `MFA_VERIFICATION_FAILED` means the new method's own
+ * code was wrong, or the proof was. With no proof sent it can only be the code,
+ * which the enrollment panel reports itself; once a proof was sent it is
+ * reported as the proof, and the person can back out to the panel to retype the
+ * code.
+ */
+function enrollmentProofReason(error: unknown, proofSent: boolean): ProofReason | null {
+  if (error instanceof MfaReauthenticationRequiredError) return 'required';
+  return proofSent ? reasonFor(error) : null;
 }

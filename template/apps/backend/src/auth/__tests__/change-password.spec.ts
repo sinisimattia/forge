@@ -35,7 +35,7 @@ import { REFRESH_COOKIE } from '../refresh-cookie';
 import { RefreshTokenService } from '../session/refresh-token.service';
 import { SessionService } from '../session/session.service';
 import { JwtStrategy } from '../strategies';
-import { FakeDataSource } from '../../common/testing';
+import { FakeDataSource, UNMETERED_THROTTLING } from '../../common/testing';
 
 /**
  * # Changing a password: the composed property
@@ -166,6 +166,7 @@ describe('POST /auth/change-password', () => {
         ConfigModule.forRoot({ ignoreEnvFile: true, load: [() => ({ JWT_SECRET: SIGNING_KEY })] }),
         I18N,
         PassportModule,
+        UNMETERED_THROTTLING,
         JwtModule.register({ secret: SIGNING_KEY, signOptions: { expiresIn: '5m' } }),
       ],
       controllers: [AuthController],

@@ -1,9 +1,11 @@
 import { Body, Controller, Get, INestApplication, Post, Req, Type } from '@nestjs/common';
 import { MODULE_METADATA } from '@nestjs/common/constants';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { Test } from '@nestjs/testing';
+import { ThrottlerModule, type ThrottlerStorage } from '@nestjs/throttler';
 import { AuditService } from '../audit/audit.service';
 import { TypeOrmModule, getRepositoryToken } from '@nestjs/typeorm';
 import { IsString } from 'class-validator';
@@ -24,6 +26,7 @@ import {
   OAUTH_PROVIDER_REGISTRY_PROVIDER,
 } from '../auth/auth.module';
 import { Public } from '../auth/decorators';
+import { JwtAuthGuard } from '../auth/guards';
 import { EmailVerificationTokenRecord } from '../auth/entities/email-verification-token-record.entity';
 import { PasswordResetTokenRecord } from '../auth/entities/password-reset-token-record.entity';
 import { RefreshTokenRecord } from '../auth/entities/refresh-token-record.entity';
@@ -46,6 +49,15 @@ import { MfaRecoveryCodeRecord } from '../mfa/entities/mfa-recovery-code-record.
 import { MfaController } from '../mfa/mfa.controller';
 import { MfaModule } from '../mfa/mfa.module';
 import { MfaService } from '../mfa/mfa.service';
+import { ForgeThrottlerGuard } from '../throttling/forge-throttler.guard';
+import { PostgresThrottlerStorage } from '../throttling/postgres-throttler.storage';
+import { RateLimitCounterRecord } from '../throttling/rate-limit-counter.entity';
+import { Throttled } from '../throttling/throttled.decorator';
+import {
+  ThrottlerStorageModule,
+  ThrottlingModule,
+  throttlerOptions,
+} from '../throttling/throttling.module';
 import { RecoveryCodes } from '../mfa/recovery/recovery-codes';
 import { TotpVerifier } from '../mfa/totp/TotpVerifier';
 import { IdentitiesController } from '../identities/identities.controller';
@@ -125,6 +137,11 @@ import { UsersModule } from '../users/users.module';
  * | `mfa.module.ts`: `MfaController`/`MfaService`, its `forFeature` tables, `AuthModule` from `imports` | `MfaModule › …` (four cases) |
  * | `auth.module.ts`: `RecoveryCodes`/`TotpVerifier` from `exports` | `AuthModule › exports RecoveryCodes and TotpVerifier, which MfaService resolves` |
  * | `identities.module.ts`: `IdentitiesController` left in `controllers` (i.e. not moved to `AuthModule`) | `identities/__tests__/identities.controller.spec.ts › who wires it › AuthModule registers the controller` — `beginLink` needs `OAuthService`, which only `AuthModule` can resolve without a module cycle |
+ * | `app.module.ts`: the second `APP_GUARD` provider | `AppModule › registers the throttler guard globally` — and no route in the application is metered, which no behavioural spec can see |
+ * | `app.module.ts`: that provider moved above `JwtAuthGuard` | `AppModule › runs the throttler after authentication` and `GLOBAL_PROVIDERS › refuses an unauthenticated caller before counting them` |
+ * | `app.module.ts`: `ThrottlingModule` from `imports` | `AppModule › imports ThrottlingModule` — the guard then resolves nothing and the application fails to start |
+ * | `throttling.module.ts`: `ThrottlerStorageModule` from the library's own `imports` | `ThrottlingModule › imports the module that provides the store` — the library falls back to its in-memory store with no complaint, and the limit becomes the configured one times the number of instances |
+ * | `throttling.module.ts`: a second throttler added beside the first | `ThrottlingModule › asks the library for one throttler, not one per bucket` — every route would then be metered against every budget |
  *
  * What is still beyond reach: the single line `configureApp(app)` in `main.ts`.
  * Reaching it would mean starting the real `AppModule`, which needs a database.
@@ -223,6 +240,40 @@ class ProbeController {
   public validated(@Body() body: ProbeDto): { name: string } {
     return { name: body.name };
   }
+
+  // Open, and metered. The store below reports it blocked, so what this route
+  // actually answers is the refusal.
+  @Public()
+  @Throttled('credential')
+  @Post('metered')
+  public metered(): { reached: true } {
+    return { reached: true };
+  }
+
+  // Metered and closed, which is the pair that pins the order of the two global
+  // guards against each other.
+  @Throttled('mfa-proof')
+  @Post('metered-and-closed')
+  public meteredAndClosed(): { reached: true } {
+    return { reached: true };
+  }
+}
+
+/** Counts what the throttler asked it to count, and refuses when told to. */
+class ProbeThrottlerStorage implements ThrottlerStorage {
+  public readonly keys: string[] = [];
+
+  public blocked = false;
+
+  public async increment(key: string): Promise<Awaited<ReturnType<ThrottlerStorage['increment']>>> {
+    this.keys.push(key);
+    return {
+      totalHits: 1,
+      timeToExpire: 60,
+      isBlocked: this.blocked,
+      timeToBlockExpire: this.blocked ? 900 : 0,
+    };
+  }
 }
 
 describe('the composition root', () => {
@@ -234,6 +285,7 @@ describe('the composition root', () => {
       ['IdentitiesModule', IdentitiesModule],
       ['AuthModule', AuthModule],
       ['MfaModule', MfaModule],
+      ['ThrottlingModule', ThrottlingModule],
       ['UsersModule', UsersModule],
       ['OrganizationsModule', OrganizationsModule],
     ])('imports %s', (_name, imported) => {
@@ -253,6 +305,73 @@ describe('the composition root', () => {
       // registers `GLOBAL_PROVIDERS`; this is what makes them assertions about
       // the application rather than about an array only the spec uses.
       expect(Reflect.getMetadata(MODULE_METADATA.PROVIDERS, AppModule)).toBe(GLOBAL_PROVIDERS);
+    });
+
+    it('registers the throttler guard globally', () => {
+      const guards = GLOBAL_PROVIDERS.filter(
+        (provider) => typeof provider === 'object' && provider.provide === APP_GUARD,
+      );
+      expect(guards.map((g) => (g as { useClass: unknown }).useClass)).toContain(
+        ForgeThrottlerGuard,
+      );
+    });
+
+    it('runs the throttler after authentication, not before it', () => {
+      // Global guards run in the order this array lists them, and both
+      // directions matter: metering first would read no account off the request
+      // and demote every authenticated route to the shared no-subject budget,
+      // and it would let an unauthenticated caller spend that budget on a route
+      // they cannot reach. `the probe application › GLOBAL_PROVIDERS` asserts
+      // the consequence; this asserts the arrangement that produces it.
+      const guards = GLOBAL_PROVIDERS.filter(
+        (provider) => typeof provider === 'object' && provider.provide === APP_GUARD,
+      ).map((provider) => (provider as { useClass: unknown }).useClass);
+      expect(guards.indexOf(JwtAuthGuard)).toBeLessThan(guards.indexOf(ForgeThrottlerGuard));
+    });
+  });
+
+  /**
+   * The throttling wiring. Registering the module is what configures the
+   * library and binds the counters to Postgres; it is invisible to every spec
+   * that assembles its own testing module, including this file's own probe
+   * application, which cannot register it because the store wants a database.
+   */
+  describe('ThrottlingModule', () => {
+    it('configures the library from the exported factory, not one inlined in the module', () => {
+      expect(usesFactory(dynamicImport(ThrottlingModule, ThrottlerModule), throttlerOptions))
+        .toBe(true);
+    });
+
+    it('imports the module that provides the store, without which the factory has none', () => {
+      // `ThrottlerModule`'s options are built in its own injector context, so a
+      // store provided anywhere else is a store the factory cannot be given —
+      // and the library's silent fallback is its in-memory one, which is the
+      // whole fault `PostgresThrottlerStorage` exists to prevent.
+      const registered = dynamicImport(ThrottlingModule, ThrottlerModule);
+      expect((registered?.imports ?? []) as unknown[]).toContain(ThrottlerStorageModule);
+    });
+
+    it('provides and exports the Postgres store', () => {
+      expect(moduleProviders(ThrottlerStorageModule)).toContain(PostgresThrottlerStorage);
+      expect(Reflect.getMetadata(MODULE_METADATA.EXPORTS, ThrottlerStorageModule)).toContain(
+        PostgresThrottlerStorage,
+      );
+    });
+
+    it('asks the library for one throttler, not one per bucket', () => {
+      // The library applies every configured throttler to every request it does
+      // not skip, so a second one would meter each route against a budget its
+      // decorator never named — and the tightest of them would be the one that
+      // refused.
+      const options = throttlerOptions(new ConfigService({}), {
+        increment: async () => ({
+          totalHits: 0,
+          timeToExpire: 0,
+          isBlocked: false,
+          timeToBlockExpire: 0,
+        }),
+      });
+      expect(Array.isArray(options) ? options : options.throttlers).toHaveLength(1);
     });
   });
 
@@ -328,6 +447,7 @@ describe('the composition root', () => {
         MfaMethodRecord,
         MfaChallengeRecord,
         MfaRecoveryCodeRecord,
+        RateLimitCounterRecord,
       ]);
     });
 
@@ -350,8 +470,9 @@ describe('the composition root', () => {
     it('provides the strategy the global guard resolves', () => {
       // Without this provider passport has no `jwt` strategy registered, and the
       // shape of the failure is the worst in this file: `@Public()` routes still
-      // answer, so `GET /health` returns 200 and the container reports HEALTHY,
-      // while every authenticated route in the application fails. A deployment
+      // answer, so the liveness endpoint returns 200 and a probe that only asks
+      // whether the process is up reports HEALTHY, while every authenticated
+      // route in the application fails. A deployment
       // looks entirely well and nobody can sign in.
       //
       // The probe application below registers `JwtStrategy` itself — it has to,
@@ -536,8 +657,10 @@ describe('the composition root', () => {
 
   describe('a probe application wired the way the real one is', () => {
     let app: INestApplication;
+    let counters: ProbeThrottlerStorage;
 
     beforeEach(async () => {
+      counters = new ProbeThrottlerStorage();
       const moduleRef = await Test.createTestingModule({
         imports: [
           ConfigModule.forRoot({
@@ -545,6 +668,12 @@ describe('the composition root', () => {
             load: [() => ({ JWT_SECRET: SIGNING_KEY, CORS_ORIGIN: CORS_ORIGIN_UNDER_TEST })],
           }),
           PassportModule,
+          // THE SHIPPED OPTIONS, given a store that counts in memory. The real
+          // `ThrottlingModule` cannot be registered here — its store asks for a
+          // database connection — but the options are a pure function of the
+          // configuration and the store, so everything this file asserts about
+          // metering is about the object `app.module.ts` builds.
+          ThrottlerModule.forRoot(throttlerOptions(new ConfigService({}), counters)),
           // THE SHIPPED REGISTRATION, so the rendering assertion below is about
           // the application's own translation setup and not about one this file
           // wrote.
@@ -608,6 +737,51 @@ describe('the composition root', () => {
 
       it('answers a refusal the domain expressed with its own status, not 500', async () => {
         await request(app.getHttpServer()).get('/probe/refusal').expect(410);
+      });
+
+      it('leaves a route that declares no bucket unmetered', async () => {
+        // The throttler guard is global. Without `shouldSkip` every route in
+        // the application would be counted, on whatever subject the request
+        // happened to carry — for most of them, none at all.
+        await request(app.getHttpServer()).post('/probe/validated').send({ name: 'ada' });
+
+        expect(counters.keys).toHaveLength(0);
+      });
+
+      it('meters a route that declares one', async () => {
+        await request(app.getHttpServer())
+          .post('/probe/metered')
+          .send({ email: 'person@example.com' })
+          .expect(201);
+
+        expect(counters.keys).toHaveLength(1);
+      });
+
+      it('answers a refused attempt with 429 and the application’s own message', async () => {
+        // The whole path: the store says blocked, the guard raises the domain
+        // error rather than the library's exception, the filter maps it and
+        // translates it. The library's own would have answered here directly,
+        // with its own untranslated prose.
+        counters.blocked = true;
+
+        const response = await request(app.getHttpServer())
+          .post('/probe/metered')
+          .send({ email: 'person@example.com' })
+          .expect(429);
+
+        expect(response.body.message).not.toMatch(/^errors\./);
+        expect(response.body.message).toBe('Too many attempts. Wait a moment and try again');
+        expect(response.headers['retry-after']).toBe('900');
+      });
+
+      it('refuses an unauthenticated caller before counting them', async () => {
+        // The order of the two global guards, from the outside. With the
+        // throttler first this route would be counted against the shared
+        // no-subject budget by somebody who cannot reach it at all, and that
+        // budget is shared with everybody who can.
+        await request(app.getHttpServer()).post('/probe/metered-and-closed').send({}).expect(401);
+
+        expect(counters.keys).toHaveLength(0);
       });
 
       it('renders the message rather than emitting the translation key', async () => {

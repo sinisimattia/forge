@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { Test } from '@nestjs/testing';
+import type { ThrottlerStorage } from '@nestjs/throttler';
 import { randomUUID } from 'node:crypto';
 import type { DataSource, ObjectLiteral, Repository } from 'typeorm';
 import { AuthProvider } from '__FORGE_SCOPE__/core/identities/enums';
@@ -50,6 +51,7 @@ import {
 import { MembershipRecord } from '../../organizations/membership-record.entity';
 import { UserRecord } from '../../users/user-record.entity';
 import { FakeDataSource } from './fake-data-source';
+import { UNMETERED_THROTTLING, meteredThrottling } from './unmetered-throttling';
 
 /**
  * The name of the cookie a session is carried in, re-exported so a spec can
@@ -148,6 +150,12 @@ export interface MfaWorldOptions {
    * all, which is what `buildWebAuthnConfig` returns when the feature is off.
    */
   readonly webauthn?: WebAuthnConfig | null;
+  /**
+   * The store attempts are counted in. Omitted, nothing is ever refused — see
+   * {@link UNMETERED_THROTTLING} — and a spec that signs in wrongly as often as
+   * it likes is not metered. Pass one that counts to assert a refusal.
+   */
+  readonly throttling?: ThrottlerStorage;
 }
 
 /**
@@ -404,6 +412,9 @@ export async function makeMfaWorld(options: MfaWorldOptions = {}): Promise<MfaWo
       }),
       I18N,
       PassportModule,
+      options.throttling === undefined
+        ? UNMETERED_THROTTLING
+        : meteredThrottling(options.throttling),
       JwtModule.register({ secret: SIGNING_KEY, signOptions: { expiresIn: '5m' } }),
     ],
     controllers: [AuthController, OAuthController, MfaController],

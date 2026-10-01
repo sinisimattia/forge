@@ -8,15 +8,16 @@ import { AuditAction } from '__FORGE_SCOPE__/core/audit/enums';
 import type { MfaMethod } from '__FORGE_SCOPE__/core/mfa/entities';
 import type { IMfaService } from '__FORGE_SCOPE__/core/mfa/contracts';
 import { MfaMethodType } from '__FORGE_SCOPE__/core/mfa/enums';
-import { MfaRemovalDecision } from '__FORGE_SCOPE__/core/mfa/enums';
+import { MfaEnrollmentDecision, MfaRemovalDecision } from '__FORGE_SCOPE__/core/mfa/enums';
 import {
   MfaLabelRequiredError,
   MfaMethodAlreadyConfirmedError,
   MfaMethodNotFoundError,
   MfaReauthenticationRequiredError,
   MfaVerificationFailedError,
+  TooManyMfaMethodsError,
 } from '__FORGE_SCOPE__/core/mfa/errors';
-import { decideMfaRemoval } from '__FORGE_SCOPE__/core/mfa/policies';
+import { decideMfaEnrollment, decideMfaRemoval } from '__FORGE_SCOPE__/core/mfa/policies';
 import type {
   MfaMethodId,
   MfaProof,
@@ -29,6 +30,7 @@ import { AuditService } from '../audit/audit.service';
 import { UserRecord } from '../users/user-record.entity';
 import { MfaMethodRecord } from './entities/mfa-method-record.entity';
 import { mapMfaMethodRecord } from './mapMfaMethodRecord';
+import { MAX_MFA_METHODS } from './mfa-limits';
 import { MfaVerificationService } from './mfa-verification.service';
 import { RecoveryCodes } from './recovery/recovery-codes';
 import { TotpVerifier } from './totp/TotpVerifier';
@@ -61,6 +63,24 @@ import { buildOtpauthUri, renderQrSvg } from './totp/totp-enrollment';
  * nothing else. {@link MfaService.listMethods} returns entities, and `MfaMethod`
  * has no field one could be carried in.
  *
+ * ## Enrollment: a factor is admitted by a factor already trusted
+ *
+ * Confirming a method is how a factor starts to count, and a live session is
+ * all that starting an enrollment takes. So a session that is not the owner's
+ * could enrol a factor of its own, confirm it, and remove the owner's —
+ * permitted by {@link MfaService.removeMethod}, because a confirmed method would
+ * survive. The account would still have a second factor, and it would belong to
+ * the attacker.
+ *
+ * Confirming therefore costs a fresh proof of a method the account already holds
+ * whenever it holds one (`decideMfaEnrollment`), and costs nothing for its first,
+ * which has nothing to prove with. The decision is made over the account's
+ * methods **as they stand before the method being confirmed is marked confirmed**:
+ * made afterwards, the method would count itself and an account's first factor
+ * would be owed a proof it cannot produce. The other way a factor becomes
+ * confirmed, the WebAuthn ceremony, makes the same decision in
+ * `WebAuthnCeremonies`.
+ *
  * ## Removal: the proof is the second factor, and it is checked by the sign-in's own verifier
  *
  * Taking off the last confirmed method turns the second factor off, so it costs
@@ -71,8 +91,9 @@ import { buildOtpauthUri, renderQrSvg } from './totp/totp-enrollment';
  * `POST /mfa/recovery-codes` carries the same requirement, because a fresh
  * batch invalidates the codes the rightful owner is holding.
  *
- * The proof is verified by {@link MfaVerificationService.verifyProof} — the
- * method `POST /auth/mfa/verify` uses — and this class contains no second
+ * Every proof here is verified by {@link MfaVerificationService.proveSecondFactor},
+ * which is {@link MfaVerificationService.verifyProof} — the method
+ * `POST /auth/mfa/verify` uses — and this class contains no second
  * implementation of it. Only the *verdict* reaches `decideMfaRemoval`, which is
  * pure and cannot verify anything; handing it "a proof was attached" would make
  * every removal allowed.
@@ -120,6 +141,18 @@ export class MfaService implements IMfaService {
   }
 
   /**
+   * How many recovery codes the actor has left to spend.
+   *
+   * A property of the account, not of any one method: it is not on `MfaMethod`
+   * or `MfaMethodJSON`, and {@link MfaController.list} reports it beside the
+   * methods rather than inside them. `0` is a real answer — an account with no
+   * codes, or with every one spent — and is returned as `0`.
+   */
+  public async recoveryCodesRemaining(actorId: UserId): Promise<number> {
+    return this.recoveryCodes.remaining(actorId);
+  }
+
+  /**
    * Mints a secret and an unconfirmed method to hold it.
    *
    * The id is minted here rather than left to the column's default, so that it
@@ -134,8 +167,19 @@ export class MfaService implements IMfaService {
    * item 7) would otherwise have let the insert through and only Postgres would
    * have refused it.
    *
+   * ## The bound
+   *
+   * The account's rows are counted — confirmed or not — and the insert is
+   * refused at {@link MAX_MFA_METHODS}. The count and the insert share one
+   * transaction that holds the account's `users` row lock, the lock every other
+   * method-writing path takes, so overlapping calls take turns and the count each
+   * one reads includes the rows the others wrote. The check is here, on the way
+   * in, and not on confirmation: confirming adds no row, and an account holding
+   * nothing must still be able to enrol its first factor.
+   *
    * @throws MfaLabelRequiredError when the label is empty or only whitespace
    * @throws UserNotFoundError when the actor has no user row
+   * @throws TooManyMfaMethodsError when the account already holds the most it may
    */
   public async beginTotpEnrollment(actorId: UserId, label: string): Promise<TotpEnrollmentOffer> {
     const trimmed = label.trim();
@@ -147,20 +191,31 @@ export class MfaService implements IMfaService {
     const secret = generateTotpSecret();
     const id = randomUUID();
 
-    await this.methods.insert({
-      id,
-      userId: actorId,
-      type: MfaMethodType.TOTP,
-      label: trimmed,
-      totpSecret: secret,
-      totpLastStep: null,
-      webauthnCredentialId: null,
-      webauthnPublicKey: null,
-      webauthnCounter: null,
-      // The line the whole class TSDoc is about.
-      confirmedAt: null,
-      lastUsedAt: null,
-      createdAt: new Date(),
+    await this.dataSource.transaction(async (manager) => {
+      await manager.findOne(UserRecord, {
+        where: { id: actorId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      const held = await manager.find(MfaMethodRecord, { where: { userId: actorId } });
+      if (held.length >= MAX_MFA_METHODS) {
+        throw new TooManyMfaMethodsError(MAX_MFA_METHODS);
+      }
+
+      await manager.insert(MfaMethodRecord, {
+        id,
+        userId: actorId,
+        type: MfaMethodType.TOTP,
+        label: trimmed,
+        totpSecret: secret,
+        totpLastStep: null,
+        webauthnCredentialId: null,
+        webauthnPublicKey: null,
+        webauthnCounter: null,
+        // The line the whole class TSDoc is about.
+        confirmedAt: null,
+        lastUsedAt: null,
+        createdAt: new Date(),
+      });
     });
 
     const otpauthUri = buildOtpauthUri({ issuer: this.issuer, account: account.email, secret });
@@ -196,6 +251,21 @@ export class MfaService implements IMfaService {
    * the read above it, and exactly one of them updates a row. The other is told
    * the method is already confirmed, as it would have been a moment later.
    *
+   * ## A proof, when the account already holds a factor
+   *
+   * The account's methods are read and `decideMfaEnrollment` is asked, with
+   * `false`, whether a proof is owed — **before this method is confirmed**, so it
+   * is not counted among the factors that could supply one. If one is owed and
+   * none was offered the answer is `MfaReauthenticationRequiredError`, before
+   * anything is verified or spent. A proof that was offered is verified after
+   * the new method's own code and before the transaction opens — so a mistyped
+   * code does not spend a recovery code, and the verification's second
+   * connection is not taken while holding the account's lock. The transaction
+   * then decides **again**, under the lock and before the `UPDATE`, with the
+   * verdict it was handed: two confirmations that each read an account with
+   * nothing confirmed are both owed nothing at the first read, and only the
+   * second read, which follows the lock, sees the other land.
+   *
    * ## Recovery codes: once per account
    *
    * A batch is minted when, after this confirmation, the account has exactly one
@@ -209,12 +279,18 @@ export class MfaService implements IMfaService {
    * @throws MfaMethodNotFoundError when the id is not a UUID, is not theirs, or
    *   names a method that is not a TOTP method
    * @throws MfaMethodAlreadyConfirmedError when it was already confirmed
-   * @throws MfaVerificationFailedError when the code does not verify
+   * @throws MfaReauthenticationRequiredError when the account already holds a
+   *   confirmed method and no proof was offered
+   * @throws MfaVerificationFailedError when the code does not verify, or when a
+   *   proof was owed and does not, including one that names a method that is not
+   *   the actor's confirmed one
+   * @throws RecoveryCodeAlreadyConsumedError when the proof is a recovery code that was spent
    */
   public async confirmTotpEnrollment(
     actorId: UserId,
     methodId: MfaMethodId,
     code: string,
+    proof: MfaProof | null,
   ): Promise<RecoveryCodeBatch | null> {
     // Before the lookup, not by it: `mfa_methods.id` is a `uuid` column, and
     // Postgres answers a malformed id with `22P02` — a driver error and a `500` —
@@ -229,6 +305,15 @@ export class MfaService implements IMfaService {
     }
     if (method.confirmedAt !== null) throw new MfaMethodAlreadyConfirmedError(methodId);
 
+    // "Is a proof owed?" — asked with `false`, of the methods **as they stand
+    // now, with this one still unconfirmed**, and not a verdict on anything. It
+    // is the account's own list before this confirmation: the method being
+    // confirmed must not count as one the account already trusts, or an
+    // account's first factor would be owed a proof it has no way to produce.
+    const proofOwed = decideMfaEnrollment(await this.listMethods(actorId), false)
+      !== MfaEnrollmentDecision.ALLOWED;
+    if (proofOwed && proof === null) throw new MfaReauthenticationRequiredError();
+
     const seed = method.totpSecret;
     // `mapMfaMethodRecord` would refuse this row on sight, and this path does not
     // go through it. Nothing can be proven against no seed.
@@ -237,6 +322,16 @@ export class MfaService implements IMfaService {
     const now = new Date();
     const result = this.totp.verify(seed, code, null, now);
     if (!result.accepted) throw new MfaVerificationFailedError();
+
+    // After the new method's own code, so a mistyped code does not spend the
+    // proof; and before the transaction, for the reason `removeMethod` gives.
+    // Only reached with a proof when one is owed, so an account's first factor
+    // never spends one.
+    let proofVerified = false;
+    if (proofOwed && proof !== null) {
+      await this.verification.proveSecondFactor(actorId, proof);
+      proofVerified = true;
+    }
 
     return this.dataSource.transaction(async (manager) => {
       // The account's row, locked: two confirmations for one account take
@@ -247,6 +342,18 @@ export class MfaService implements IMfaService {
         where: { id: actorId },
         lock: { mode: 'pessimistic_write' },
       });
+
+      // Decided again, under the lock, **before this method is marked
+      // confirmed** — the list is the account's as it stood without this
+      // confirmation — with the verdict the verification above produced. The
+      // read before the transaction is a snapshot, and two first confirmations
+      // that each saw an account with nothing confirmed would otherwise both be
+      // owed nothing.
+      const before = (await manager.find(MfaMethodRecord, { where: { userId: actorId } }))
+        .map((row) => mapMfaMethodRecord(row));
+      if (decideMfaEnrollment(before, proofVerified) !== MfaEnrollmentDecision.ALLOWED) {
+        throw new MfaReauthenticationRequiredError();
+      }
 
       const updated = await manager.update(
         MfaMethodRecord,
@@ -361,7 +468,7 @@ export class MfaService implements IMfaService {
     ) {
       // Throws when the proof is not good; there is no path past this line
       // with an unverified proof.
-      await this.proveSecondFactor(actorId, proof);
+      await this.verification.proveSecondFactor(actorId, proof);
       proofVerified = true;
     }
 
@@ -429,7 +536,7 @@ export class MfaService implements IMfaService {
     actorId: UserId,
     proof: MfaProof,
   ): Promise<RecoveryCodeBatch> {
-    await this.proveSecondFactor(actorId, proof);
+    await this.verification.proveSecondFactor(actorId, proof);
 
     return this.dataSource.transaction(async (manager) => {
       await manager.findOne(UserRecord, {
@@ -450,26 +557,5 @@ export class MfaService implements IMfaService {
       });
       return { codes };
     });
-  }
-
-  /**
-   * Judges a proof through {@link MfaVerificationService.verifyProof} and
-   * answers a refusal in the contract's own terms.
-   *
-   * A proof naming a method that is not the actor's confirmed one comes back
-   * from the verifier as `MfaMethodNotFoundError`, which is right for a sign-in
-   * and wrong here: on these two calls the method a `MfaMethodNotFoundError`
-   * names is the one in the *path*, and a caller must be able to tell a bad
-   * target from a bad proof. Every way a proof can fail to hold is
-   * `MfaVerificationFailedError` — a spent recovery code alone keeps its own
-   * error, which is a distinct, useful fact to a signed-in person.
-   */
-  private async proveSecondFactor(actorId: UserId, proof: MfaProof): Promise<void> {
-    try {
-      await this.verification.verifyProof(actorId, proof);
-    } catch (error) {
-      if (error instanceof MfaMethodNotFoundError) throw new MfaVerificationFailedError();
-      throw error;
-    }
   }
 }

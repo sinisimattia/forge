@@ -131,12 +131,15 @@ services:
         required: false
     # The slim runtime images ship no curl; Node 22 has a global fetch.
     healthcheck:
+      # Readiness, not liveness: this gate exists so that whatever waits on
+      # `service_healthy` waits for a backend that can actually serve, and the
+      # liveness endpoint answers `ok` with its database gone.
       test:
         [
           'CMD',
           'node',
           '-e',
-          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 5s
       timeout: 5s

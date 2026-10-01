@@ -5,5 +5,16 @@
   // this such a file is compiled into the production image — where it is dead
   // weight at best and, since it exists to stand in for a real database, a thing
   // somebody could import by mistake at worst.
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts", "**/__tests__/**"]
+  //
+  // `src/common/testing/**` for the same reason and a sharper one. Nothing in
+  // there sits under `__tests__`, so the two rules above do not reach it, and
+  // it holds doubles that stand in for the things a deployment most needs to be
+  // real: a data source, and a throttler store that reports no subject ever
+  // blocked. `ThrottlerModule` is `@Global()`, so one import of the latter does
+  // not weaken one module — it replaces the store for the whole application,
+  // and nothing logs that it has.
+  "exclude": [
+    "node_modules", "test", "dist", "**/*spec.ts", "**/__tests__/**",
+    "src/common/testing/**"
+  ]
 }
