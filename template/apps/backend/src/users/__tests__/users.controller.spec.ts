@@ -342,7 +342,7 @@ describe('UsersController', () => {
       expect(response.body.memberships).toEqual([]);
     });
 
-    it('carries only the grants that are live, which is R2 reaching the wire', async () => {
+    it('carries only the grants that are live, the hydrator filter reaching the wire', async () => {
       seedGrant('live', ADA, new Date(Date.now() + 60 * 60 * 1000));
       seedGrant('lapsed', ADA, new Date(Date.now() - 1000));
 
@@ -446,7 +446,7 @@ describe('UsersController', () => {
       // answers an unentitled reader with `UserNotFoundError`, which is also a
       // 404, so deleting `@UseGuards` from this route changes no status. What it
       // does change is that an administrator reads somebody else's profile and
-      // nothing records it — which spec §9.5 requires and which was measured to
+      // nothing records it — which ADR-0006 requires and which was measured to
       // stay green before this assertion existed.
       const overrides = source
         .all(AuditEntryRecord)

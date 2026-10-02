@@ -14,9 +14,11 @@ import { AuthIdentityRecord } from '../auth-identity-record.entity';
  *
  * The actor holds two identities because the suite needs one it can unlink
  * without meeting the last-identity rule. **Only one of them can be created
- * through this backend's own code**: `IdentitiesService` grows a password
- * identity at registration and offers no way to link a second, because federated
- * sign-in is not in this phase. The second is therefore a seeded `GOOGLE` row.
+ * through the surface this suite drives**: `IdentitiesService` grows a password
+ * identity at registration, and the only way it grows a federated one is
+ * `createFederatedIdentityIn`, which takes an `EntityManager` and is called from
+ * inside `OAuthService.complete`'s transaction, after a provider round-trip this
+ * suite has no way to make. The second is therefore a seeded `GOOGLE` row.
  *
  * That is worth being uncomfortable about and is the right trade. The
  * alternative — giving the actor two accounts' worth of password identities —

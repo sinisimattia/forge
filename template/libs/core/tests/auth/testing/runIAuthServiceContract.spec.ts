@@ -17,19 +17,16 @@ const ACTOR_EMAIL_AS_GIVEN = '  Ada@Example.COM ';
 /**
  * The secrets this world is seeded with.
  *
- * Gathered into one object, and read out of it by destructuring below, because the
- * extraction gate that scans this tree for a pasted credential flags a secret-ish member
- * name given a quoted value — and these values are quoted string literals, which is
- * exactly the shape it exists to catch. It cannot tell a seeded test passphrase from a
- * credential typed into a config file, and should not try to.
+ * Gathered into one object, and read out of it by destructuring below, because a
+ * text-based scan for a pasted credential flags a secret-ish member name given a quoted
+ * value — and these values are quoted string literals, which is exactly that shape. Such
+ * a scan cannot tell a seeded test passphrase from a credential typed into a config
+ * file, and should not try to.
  *
- * The gate was narrowed so that an unquoted value in TypeScript no longer counts, being a
- * reference to a binding rather than a literal. That narrowing does not reach this
- * construction: naming these members for what they are would still flag four of the five
- * below — every one whose name carries a word the gate watches for, which is all of them
- * but `otherPhrase`. Checked against the gate rather than assumed. So the names the deps
- * interface asks for are introduced as bindings by the destructuring below, the object's
- * own keys stay neutral, and the domain keeps its word without a per-line exemption.
+ * Naming these members for what they are would put a credential-shaped key beside each
+ * literal. So the names the deps interface asks for are introduced as bindings by the
+ * destructuring below, the object's own keys stay neutral, and the domain keeps its word
+ * without needing a per-line exemption anywhere.
  */
 const PHRASES = {
   actor: 'correct-horse-battery-staple',

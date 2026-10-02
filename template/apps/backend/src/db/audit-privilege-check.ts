@@ -61,7 +61,7 @@ export const OVER_PRIVILEGED_MESSAGE
  * `GRANT UPDATE (action) ON audit_entries TO <app>` — for which
  * `has_table_privilege` reports `f` while the role can execute
  * `UPDATE audit_entries SET action = 'TAMPERED'`, which is the literal statement
- * the e2e's D13 block asserts is refused. This file used to claim in this
+ * a proof of D13 would assert is refused. This file used to claim in this
  * paragraph that no third state existed. It did, and the claim is what kept
  * anyone from looking for it.
  *

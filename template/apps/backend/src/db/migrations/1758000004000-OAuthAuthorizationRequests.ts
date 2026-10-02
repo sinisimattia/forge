@@ -62,6 +62,25 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * says when it was spent, rather than one that is deleted and leaves nothing
  * to distinguish reuse from a state nobody ever issued.
  *
+ * ## Which columns carry a `COMMENT ON`
+ *
+ * A column is commented when a reader holding the *value* of it would handle
+ * that value wrongly without being told what it is: a hash standing in for the
+ * value (`state_hash`), a secret deliberately held in the clear
+ * (`code_verifier`), a value fixed at creation against later edit (`purpose`),
+ * and a tombstone that has to stay readable (`consumed_at`). Each comment is
+ * about how to treat what is found in the column.
+ *
+ * `user_id` is not commented, and not because it is obvious: its subtlety is
+ * a different kind. It is about *when a row has one at all* — NULL means the
+ * request is a sign-in, not that the user is not yet known — and that belongs
+ * with the request's purpose, which the `## purpose` and `## user_id` sections
+ * above state. `id`, `provider`, `redirect_to`, `created_at` and `expires_at`
+ * are what their names say, and a comment repeating the name would only be a
+ * second place to keep in step with it. For a column added later: comment it if
+ * the value, once read, could be mishandled; put it in prose if the trap is in
+ * when the column is set.
+ *
  * ## No foreign key to `audit_entries`, and nothing here reads or writes it
  *
  * The rule from `IdentityFoundation1758000001000` and

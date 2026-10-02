@@ -44,13 +44,10 @@ const REPLACEMENT_PLAINTEXT = 'yet another perfectly fine phrase';
 /**
  * The first one, spoilt, for the attempt that has to be refused.
  *
- * Named rather than written inline at its one use, for the same reason core's
- * conformance suites give for their `attempt` helper. The extraction gate strips
- * every interpolation from a template literal before judging what remains, so
- * spoiling the phrase inline under a secret-shaped key leaves a short quoted
- * remainder and reads as a populated credential. Checked against the gate rather
- * than assumed: written inline it flagged, and this binding is what stops it —
- * an unquoted reference is not a populated value.
+ * Built from `PLAINTEXT` and bound to a name rather than spelt out at its one
+ * use, so the correct phrase has a single spelling and this one is visibly
+ * derived from it. A second literal here would be a second thing to keep in
+ * step with the first.
  */
 const WRONG_PLAINTEXT = `${PLAINTEXT}-not`;
 

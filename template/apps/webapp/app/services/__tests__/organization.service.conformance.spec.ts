@@ -105,9 +105,8 @@ runIOrganizationServiceContract({
   // A well-formed opaque value that redeems nothing — this stub's own
   // invitation credentials are minted by `nextId`, and this one never is.
   // Named `NEVER_MINTED` rather than inlined so the value is a reference
-  // here, not a quoted literal next to a key spelled `...Token` — the shape
-  // `tools/sanitize.mjs`'s populated-secret rule looks for, on a value that
-  // is not a secret at all.
+  // here, not a quoted literal next to a key spelled `...Token` — the shape a
+  // text-based secret scan looks for, on a value that is not a secret at all.
   absentToken: NEVER_MINTED,
   makeContext: async () => {
     // Once per context, not once per request — the world behind this client

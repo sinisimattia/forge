@@ -294,7 +294,7 @@ describe('the composition root', () => {
 
     it('registers I18nModule, without which every message is a translation key', () => {
       // The plumbing (`i18n/en/*.json`, `common/i18n/`, the interceptor) shipped
-      // from the first phase and went unregistered, so `HttpExceptionFilter`'s
+      // before anything registered it, so `HttpExceptionFilter`'s
       // `i18n ? translate(key) : key` fallback answered every request with the
       // key itself. Nothing noticed, because nothing asserted the module existed.
       expect(moduleImports(AppModule)).toContain(I18N);
@@ -825,6 +825,33 @@ describe('the composition root', () => {
 
         expect(response.headers['access-control-allow-credentials']).toBe('true');
         expect(response.headers['access-control-allow-origin']).toBe(CORS_ORIGIN_UNDER_TEST);
+      });
+
+      it('serves the API document outside production', async () => {
+        await request(app.getHttpServer()).get('/api/docs-json').expect(200);
+      });
+
+      it('does not mount the API document in production', async () => {
+        const previous = process.env.NODE_ENV;
+        process.env.NODE_ENV = 'production';
+        try {
+          const production = await Test.createTestingModule({
+            imports: [ConfigModule.forRoot({ ignoreEnvFile: true })],
+            controllers: [ProbeController],
+          }).compile();
+          const productionApp = production.createNestApplication();
+          configureApp(productionApp);
+          await productionApp.init();
+          try {
+            await request(productionApp.getHttpServer()).get('/api/docs').expect(404);
+            await request(productionApp.getHttpServer()).get('/api/docs-json').expect(404);
+          } finally {
+            await productionApp.close();
+          }
+        } finally {
+          if (previous === undefined) delete process.env.NODE_ENV;
+          else process.env.NODE_ENV = previous;
+        }
       });
     });
   });

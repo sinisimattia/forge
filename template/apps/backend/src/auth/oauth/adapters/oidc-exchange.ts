@@ -43,6 +43,7 @@ export function buildAuthorizationUrl(
     code_challenge_method: 'S256',
     scope: 'openid email profile',
   });
+  // The `?` join assumes `authorizationEndpoint` carries no query of its own.
   return `${authorizationEndpoint}?${query.toString()}`;
 }
 
@@ -73,9 +74,8 @@ export function buildAuthorizationUrl(
  * out as `emailVerified: false`. This is the single most important line in
  * this function: a provider genuinely does send `email_verified: false` for
  * an address it has not itself proven, and coercing, defaulting, or omitting
- * that check would turn this phase's central refusal (D11 — a
- * provider-asserted address must not link to an existing account on its
- * say-so alone) into a silent sign-in.
+ * that check would turn D11 — a provider-asserted address must not link to
+ * an existing account on its say-so alone — into a silent sign-in.
  *
  * **A userinfo response with no subject identifies nobody.** `sub` must be a
  * non-empty string or this throws before returning anything — an identity

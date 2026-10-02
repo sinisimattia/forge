@@ -4,13 +4,12 @@ The **Nuxt 4 / Vue 3** frontend for __FORGE_TITLE__ — Tailwind CSS, i18n, and 
 Design component structure. It talks to the [backend API](../backend/README.md). Part of
 the [__FORGE_TITLE__ monorepo](../../README.md). Ships a generic, domain-free component
 library — atoms, molecules and one page template, each with a Storybook story — on a
-named colour palette that replaces Tailwind's stock one, plus a placeholder index page.
+named colour palette that replaces Tailwind's stock one, plus a home page composed from those atoms.
 
-It also ships the client half of the identity foundation end to end: fetchers, the three
+It also ships the client half of the identity foundation end to end: fetchers, the
 `I*Service` implementations over the wire, the auth store, `useAuth()`, the `auth` and
 `guest` route middleware, the server-side session renewal, and the pages a person actually
-uses — sign in, register, verify an address, request and complete a password reset, and an
-account area for the profile, the password, the sessions and the linked identities.
+uses. The route is the file path under `app/pages/`, so `ls` it for the list.
 
 ## Running
 

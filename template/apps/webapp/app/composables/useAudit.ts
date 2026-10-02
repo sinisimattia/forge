@@ -19,8 +19,8 @@ export interface UseAudit {
 /**
  * The active organization's own audit history, as a screen holds it.
  *
- * Read-only, unlike every other composable this task adds: there is nothing
- * for a viewer of this screen to do to an entry, only to read it.
+ * Read-only: there is nothing for a viewer of this screen to do to an entry,
+ * only to read it.
  * `~/services/organizationAudit.service.ts` explains why the service behind
  * this composable is not an `IAuditService` implementation.
  *

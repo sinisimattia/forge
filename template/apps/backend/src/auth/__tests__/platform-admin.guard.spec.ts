@@ -192,8 +192,8 @@ describe('PlatformAdminGuard', () => {
     // failing administrative route the one kind of pass that leaves no trace,
     // which is the trace somebody looks for first.
     //
-    // This is the ninth time in this phase that a sentence in a comment was true
-    // and depended on a branch no test exercised. The branch is
+    // This is one of a long run of comments in this codebase that were true and
+    // depended on a branch no test exercised. The branch is
     // `PlatformAdminOverrideInterceptor`'s `catchError`; replacing it with a
     // plain re-raise left all 379 tests green.
     await request(app.getHttpServer())

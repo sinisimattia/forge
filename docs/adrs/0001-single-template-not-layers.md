@@ -14,7 +14,8 @@ appeal was mixing and matching: a `nestjs` layer, a `nuxt` layer, maybe someday 
 or `react` layer, composed per project.
 
 That machinery was never worth its cost here, because Forge only ever needs to produce one
-kind of project. There is no second stack in scope (N3), so a general composition engine
+kind of project. There is no second stack in scope — Forge produces NX + NestJS/TypeORM/
+Postgres + Nuxt 4/Vue 3 and only that — so a general composition engine
 would be solving a problem Forge doesn't have, at the price of a merge algorithm that has to
 be right for every file type it touches (JSON, YAML, TypeScript, Markdown) and a template
 that is no longer a single tree you can read top to bottom.
@@ -34,7 +35,8 @@ like an ordinary monorepo, so generating a project and running `lint`/`typecheck
 generated repo's root. The generator (`tools/create/`) copies this tree wholesale into a
 staging directory, substitutes the `__FORGE_*__` tokens in file contents and path segments,
 and fails if any token survives unresolved. There is no layer graph, no merge step, no
-partial composition of any kind — exactly one way to generate a project (G3).
+partial composition of any kind: exactly one way to generate a project, with no composition,
+no variants and no matrix.
 
 ## Consequences
 
@@ -56,6 +58,7 @@ partial composition of any kind — exactly one way to generate a project (G3).
   additional variant of the same stack — has no first-class path. It means either a second,
   largely-duplicate template tree selected some other way, or forking Forge outright. There
   is no way to mix and match pieces of two stacks.
-- This is accepted deliberately: mixing stacks is explicitly a non-goal (N3 in the design
-  spec). If that ever changes, it is a new design decision that supersedes this one — not a
-  feature to bolt on top of the current generator.
+- This is accepted deliberately: a second stack is explicitly outside what Forge sets out to
+  do. The stack is fixed at NX + NestJS/TypeORM/Postgres + Nuxt 4/Vue 3, and mixing in
+  another is not a capability anyone is owed here. If that ever changes, it is a new design
+  decision that supersedes this one — not a feature to bolt on top of the current generator.

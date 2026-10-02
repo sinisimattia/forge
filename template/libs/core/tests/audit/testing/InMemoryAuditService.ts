@@ -55,8 +55,8 @@ export class InMemoryAuditService implements IAuditService {
 
   // `_actorId` because this reference implementation reads across the whole
   // deployment for anybody: what entitlement means, and what refusal looks like
-  // for an actor who has none, is a question for authorization in a later phase
-  // (ADR-0006), and the conformance suite deliberately pins no answer to it.
+  // for an actor who has none, belongs to authorization (ADR-0006) and not to this
+  // contract, and the conformance suite deliberately pins no answer to it.
   async query(_actorId: UserId, query: AuditQuery): Promise<PaginatedResult<AuditEntry>> {
     const matches = [...this.entries.values()]
       .filter((row) => InMemoryAuditService.matches(row, query))

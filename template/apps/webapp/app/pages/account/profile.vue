@@ -6,7 +6,7 @@ import { DisplayNameRequiredError } from '__FORGE_SCOPE__/core/users/errors';
  *
  * The address is shown and not editable. Changing it means proving the new one,
  * which is re-verification — a different act with a different endpoint, and one
- * this phase does not ship. Rendering it as a disabled input would suggest the
+ * this application does not offer. Rendering it as a disabled input would suggest the
  * ability exists and is merely switched off, so it is rendered as text.
  */
 definePageMeta({

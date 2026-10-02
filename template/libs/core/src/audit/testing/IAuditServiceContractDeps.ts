@@ -34,9 +34,10 @@ export interface AuditServiceContractContext {
    * world's implementation would answer with an empty page — fails there.
    *
    * What this suite deliberately does *not* pin is what happens to an actor who
-   * is **not** entitled. Refusal is a question about authorization, which is a
-   * pure function in core and arrives in a later phase (ADR-0006); pinning an
-   * answer here would fix it before the decision that owns it has been made.
+   * is **not** entitled. Refusal is a question about authorization, which is its
+   * own pure function in core (ADR-0006) and not part of this contract; pinning
+   * an answer here would make every `IAuditService` implementation agree with a
+   * rule it does not own.
    */
   readerId: UserId;
 

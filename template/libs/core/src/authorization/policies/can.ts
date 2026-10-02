@@ -64,7 +64,7 @@ export function can(
   // including the ones added after this line was written.
   if (principal.platformRole === PlatformRole.PLATFORM_ADMIN) return true;
 
-  // Layer two — organization role (ADR-0006, spec §9.5).
+  // Layer two — organization role (ADR-0006).
   //
   // The membership consulted is the one for the RESOURCE's organization. Reading
   // "the principal's role" without saying which organization it is in would give
@@ -84,7 +84,7 @@ export function can(
     if (ROLE_PERMISSIONS[membership.role].includes(permission)) return true;
   }
 
-  // Layer three — resource grant (ADR-0006, spec §9.5). The exceptions a role
+  // Layer three — resource grant (ADR-0006). The exceptions a role
   // cannot express: this one person, this one record, this one permission.
   //
   // Additive only: it can turn a `false` into a `true` and never the reverse,
@@ -93,9 +93,10 @@ export function can(
   //
   // It is reached only by a principal who holds a membership for this
   // organization, because layer two refuses outright when there is none. That
-  // ordering is what makes spec §9.5's sentence true — grants never widen into
-  // another tenant "because `can()` requires the resource's `organizationId` to
-  // match the principal's membership". Fold that refusal into the `if` above and
+  // ordering is what makes ADR-0006's sentence true — grants "never reach
+  // across a tenant boundary" — because `can` requires the resource's
+  // `organizationId` to match a membership the principal holds before a grant
+  // is ever consulted. Fold that refusal into the `if` above and
   // a grant would authorize somebody who belongs to the organization not at all.
   //
   // **`expiresAt` is not read here, and that is deliberate.** Reading it needs a
@@ -115,6 +116,16 @@ export function can(
   // this clause somebody whose authority ends at a tenant could issue the one
   // permission that has no tenant. A grant is an exception *inside* a tenant,
   // never a way out of one.
+  //
+  // The comparison is case-sensitive and tests the *requested* `permission`,
+  // never a stored row. A `permission` argument that reached this function
+  // mis-cased would skip the exclusion, and a grant row spelled the same way
+  // would then match it. The `Permission` union makes that a compile error
+  // today, and nothing calls `can()` with a record, so the layer is not reached
+  // at all. `d12-grant-revocation.spec.ts` ("the claim this partial rests on")
+  // scans the backend source and goes red the day something does. When it goes red, this comparison is one of the things that
+  // becomes real, alongside the D12 test that spec says is owed. That spec's
+  // TSDoc names this comparison back, and it also asserts the literal's casing.
   if (
     permission !== 'platform:administer'
     && resource?.organizationId !== undefined

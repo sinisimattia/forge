@@ -55,10 +55,8 @@ const LINK_VALUE = 'stub-verification-fixture';
 /**
  * What a forged or stale `token`/`accessToken` query parameter looks like: real
  * shapes, naming nothing the world holds. Named bindings rather than literals at
- * their use site, for the reason the seam spec gives — the extraction gate
- * strips interpolations from a template literal before judging the remainder,
- * and a short quoted remainder under a secret-shaped key reads as a populated
- * credential.
+ * their use site, so each use reads as "a credential this world never minted"
+ * rather than as an opaque string.
  */
 const FORGED_CREDENTIAL = 'not-a-real-credential';
 const FORGED_ACCESS_CREDENTIAL = 'also-not-a-real-credential';

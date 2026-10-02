@@ -1,13 +1,17 @@
 /**
- * The one and only time a set of recovery codes is available in the clear.
+ * The only time the codes it carries are readable.
  *
- * Spec §9.3: "Recovery codes are generated once, stored hashed, single-use."
- * A batch is minted the moment an account's first method is confirmed —
- * never again for that account, and never re-derivable from what the store
- * holds afterward, since the store holds only a digest of each code (see
- * `IMfaService.confirmTotpEnrollment` and `.regenerateRecoveryCodes`). A
- * caller that lets this value go without showing or storing it has lost the
- * codes as surely as if they had never been generated.
+ * ADR-0012: recovery codes are "single-use, hashed at rest, shown once, and
+ * regenerating them demands a fresh proof". **"Shown once" is about a batch,
+ * not about an account.** Confirming an account's first second factor mints
+ * one unasked, whichever kind of factor it is; after that a fresh batch comes
+ * only from `IMfaService.regenerateRecoveryCodes`, which supersedes the batch
+ * before it and charges that fresh proof for doing so.
+ *
+ * What holds of every batch is this value: the one moment its codes exist in
+ * the clear. The store keeps only a digest of each, so nothing reads them back
+ * out afterward. A caller that lets this value go without showing or storing
+ * it has lost those codes as surely as if they had never been generated.
  */
 export interface RecoveryCodeBatch {
   /** The plaintext codes, each usable exactly once, in the form the person keeps. */

@@ -398,7 +398,7 @@ export class AuthService implements IAuthService {
       return this.reject(AuthService.rejectionFor(user), user.id, attempt.client, now);
     }
 
-    // Spec §9.3's rehash-on-login. This is the only moment the password is both
+    // Rehash-on-login. This is the only moment the password is both
     // in hand and known to be correct, so it is the only moment a derivation
     // produced under weaker parameters can be replaced. Remove this line and
     // every account that signed in before a parameter change keeps its old
@@ -474,7 +474,7 @@ export class AuthService implements IAuthService {
 
   // ------------------------------------------------------------------- recovery
   //
-  // ## NOT YET EXERCISED BY ANY TEST — treat everything below as unwritten
+  // ## LARGELY UNTESTED — treat everything below as unverified
   //
   // `resendVerification` above, and `requestPasswordReset`, `resetPassword` and
   // `changePassword` below, exist because `IAuthService` is one interface and a

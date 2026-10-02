@@ -31,11 +31,12 @@ import {
  *    service that reached into B and then happened to answer 404 satisfies every
  *    status and body comparison in the suite next door.
  *
- * ## The fault this was watched going red under — and the one design ruling R3 names
+ * ## The fault this was watched going red under — and the one the guard's rule names
  *
- * Design ruling R3 names one candidate fault: hydrating the principal from
- * the route parameter rather than the credential's subject. **That fault is
- * fail-closed, and this file says so rather than pretending otherwise.**
+ * `PermissionsGuard`'s rule names one candidate fault: hydrating the principal
+ * from the route parameter rather than from the credential's subject. **That
+ * fault is fail-closed, and this file says so rather than pretending
+ * otherwise.**
  * `PrincipalService.hydrate` looks a *user* up by id; handed an *organization*
  * id it finds no row and throws, so every guarded request is refused. It is a
  * real rule and a real defect — an unreachable application is a defect — but it
@@ -326,7 +327,7 @@ describe('D9 — tenant isolation, over every guarded route the decorators decla
   });
 
   /**
-   * Design ruling R3, asserted directly rather than through its consequences.
+   * That rule, asserted directly rather than through its consequences.
    *
    * This is the fail-closed one, and it is still worth asserting: the
    * consequence of getting it wrong is an application nobody can use, and an

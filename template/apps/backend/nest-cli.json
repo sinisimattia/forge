@@ -5,6 +5,7 @@
   "entryFile": "apps/backend/src/main",
   "compilerOptions": {
     "deleteOutDir": true,
+    "plugins": ["@nestjs/swagger"],
     "assets": [{ "include": "i18n/**/*", "outDir": "dist/apps/backend/src", "watchAssets": true }]
   }
 }

@@ -2,8 +2,8 @@
 /**
  * The signed-in person's name, and the things they can do with their account.
  *
- * Imported from the project Forge was extracted from and adapted, not renamed.
- * Three of its assumptions were that project's and not this one's:
+ * Adapted from an earlier implementation rather than written fresh, which is why
+ * three of its assumptions had to be replaced rather than simply inherited:
  *
  * - it read `user.firstName` and `user.lastName`. This domain's `User` carries a
  *   single `displayName` and has no name fields at all, so the initials are

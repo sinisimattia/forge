@@ -210,7 +210,7 @@ const DOMAIN_ERRORS: {
   // `errors.http.gone` is a new shared key rather than three domain-specific
   // ones, because this is already the collapse of three domain reasons —
   // revoked, already accepted, expired — into ONE error in core
-  // (`InvitationNoLongerOpenError`'s own TSDoc, spec §9.4): giving the three a
+  // (`InvitationNoLongerOpenError`'s own TSDoc, ADR-0010): giving the three a
   // single message here is completing the same collapse the domain already
   // made, not inventing a new one. 409 was considered and rejected: unlike
   // `LastOwnerError` or `AlreadyAMemberError`, which fail again on an
@@ -464,7 +464,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       const mapped = DOMAIN_ERRORS.find((entry) => exception instanceof entry.type);
       // 422 for a domain error this table does not name, NOT 500. A refusal the
       // domain expressed is a statement about the request; the alternative is
-      // that every core error added in a later phase silently becomes an
+      // that every core error added after this table silently becomes an
       // internal-server-error until somebody notices, which is the failure this
       // whole branch exists to stop.
       status = mapped?.status ?? HttpStatus.UNPROCESSABLE_ENTITY;
@@ -478,8 +478,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
       // The list core built, rendered. `WeakPasswordError` carries every way a
       // password fell short precisely so a caller can show a person all of them
       // at once — core's own comment says the list "is what a caller shows the
-      // person" — and for a phase this filter dropped it, so the person was told
-      // only that something was wrong with a password they could not see.
+      // person" — and this filter once dropped it, so the person was told only
+      // that something was wrong with a password they could not see.
       //
       // When there is exactly one, it becomes the message. That is a rule rather
       // than a special case for `BREACHED`, and it generalises: a single-reason

@@ -30,9 +30,11 @@ describe('decideMfaRemoval', () => {
   });
 
   // Review round 1, Important. An unconfirmed method was never a gate —
-  // decideAuthenticationStep already treats one as costing nothing (spec §3.1)
-  // — so removing it must not demand a proof its owner has no way to produce
-  // (spec §4.2, §11.2). Before the fix, the first row here fails: with no
+  // decideAuthenticationStep already treats one as costing nothing, because
+  // only a confirmed method gates (ADR-0012) — so removing it must not demand
+  // a proof its owner has no way to produce. The proof ADR-0012 asks for is
+  // owed on the last *confirmed* method, which an unconfirmed one never was.
+  // Before the fix, the first row here fails: with no
   // confirmed method anywhere, decideMfaRemoval fell through to the
   // no-confirmed-method-survives branch and demanded a proof forever.
   it.each([

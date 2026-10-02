@@ -37,7 +37,7 @@ The docs are the source of truth — **not** this prompt. On any conflict, the d
 - **TSDoc** on exports — owned by the implementers.
 - **Reference shapes/rules** — RFC entity shapes (`docs/rfcs/*`), `STANDARDS.md`, and the
   executable contract (`libs/core` interfaces). Link to them; never restate them.
-- **`CHANGELOG.md`** — owned by the closer.
+- **`CHANGELOG.md`** (once a package keeps one) — owned by the closer.
 - **ADRs / RFCs** as decision records — human-authored.
 
 ## Single-source guardrails (load-bearing)

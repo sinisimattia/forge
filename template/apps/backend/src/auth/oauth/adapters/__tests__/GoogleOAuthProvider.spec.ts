@@ -6,9 +6,9 @@ const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const USERINFO_ENDPOINT = 'https://openidconnect.googleapis.com/v1/userinfo';
 
 const CLIENT_ID = 'google-client-id';
-// Self-named on purpose (see tools/sanitize.mjs's SELF_NAMED_VALUE): a value
-// identical to its own UPPER_SNAKE key is published in the source by
-// definition, so there is nothing here for the sanitize gate to catch.
+// Self-named on purpose: the value is spelled exactly like its own key, so
+// there is nothing in it the identifier does not already say. A fixture, not a
+// credential.
 const OAUTH_GOOGLE_CLIENT_SECRET = 'OAUTH_GOOGLE_CLIENT_SECRET';
 
 const ACCESS_TOKEN_VALUE = 'stub-access-token-value';

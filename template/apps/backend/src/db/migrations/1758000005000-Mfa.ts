@@ -75,9 +75,9 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * `WEBAUTHN_ENROLLMENT`), never by anything a caller sends on the request
  * that later consumes it — the same mechanism
  * `OAuthAuthorizationRequests1758000004000`'s own `purpose` column
- * established, applied here to the exact shape the roadmap warns this phase
- * about: a value nothing matches falling through a ternary into a session
- * being minted anyway. `webauthn_challenge` is the ceremony nonce and is
+ * established, applied here to the exact shape it exists to prevent: a value
+ * nothing matches falling through a ternary into a session being minted
+ * anyway. `webauthn_challenge` is the ceremony nonce and is
  * `NULL` for a `LOGIN` row that never entered a WebAuthn round.
  * `CONSTRAINT uq_mfa_challenges_token_hash UNIQUE (token_hash)` — named, for
  * the reason `uq_oauth_authorization_requests_state`'s own TSDoc gives: it

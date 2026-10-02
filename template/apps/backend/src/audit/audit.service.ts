@@ -129,6 +129,16 @@ export class AuditService implements IAuditService {
   public async query(actorId: UserId, query: AuditQuery): Promise<PaginatedResult<AuditEntry>> {
     const actor = await this.users.findOne({ where: { id: actorId } });
     if (actor === null) throw new ForbiddenException();
+    // Not `PrincipalService.hydrate`, and the departure is deliberate.
+    // `hydrate` reads the account, every membership and every grant, and
+    // answers an unknown account with `NotFoundException`; this decision reads
+    // none of the two lists (see below) and refuses an unknown account with
+    // `ForbiddenException`, which is the answer this service documents for it.
+    // Using it would add two reads this decision provably ignores and a
+    // different refusal. The cost of building the literal here is that the
+    // `Principal` shape is stated a second time; the type annotation is what
+    // keeps that honest, so a field added to `Principal` fails to compile here.
+    //
     // No memberships, no grants, and no resource either: this is the
     // deployment-wide history, which only layer one answers. With no `resource`
     // argument there is no path into layers two and three at all, so both lists
@@ -136,7 +146,7 @@ export class AuditService implements IAuditService {
     // them was skipped. An organization administrator reading their own
     // organization's entries is the same permission asked *with* an
     // organization, and it is a different call this endpoint does not make yet.
-    const principal = {
+    const principal: Principal = {
       userId: actor.id as UserId,
       platformRole: actor.platformRole,
       memberships: [],
@@ -240,6 +250,11 @@ export class AuditService implements IAuditService {
     const membership = await this.memberships.findOne({
       where: { organizationId, userId: actorId },
     });
+    // Built here rather than by `PrincipalService.hydrate`, for the reason
+    // `query` states at its own literal: `hydrate` would read every membership
+    // and every grant, where this decision needs one membership — the one for
+    // the organization being asked about — and no grants, and it would answer
+    // an unknown account with a different refusal.
     const principal: Principal = {
       userId: actor.id as UserId,
       platformRole: actor.platformRole,

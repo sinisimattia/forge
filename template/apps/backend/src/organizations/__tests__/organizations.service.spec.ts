@@ -182,16 +182,24 @@ describe('OrganizationsService', () => {
       expect(source.all(AuditEntryRecord)).toHaveLength(0);
     });
 
-    // Every one of these is audit-logged (spec §9.6), and the entry carries
-    // the organization — the field shipped nullable and was later made
-    // assertable. An entry recorded with a null organization here is the
-    // exact defect that earlier measurement was about, so this asserts the
-    // field rather than assuming it is populated.
+    // Every one of these is audit-logged, and the entry carries the
+    // organization it happened in — supplied by the caller and never inferred
+    // (ADR-0007). The field is nullable because a platform-level action
+    // belongs to no tenant, and an entry recorded with a null organization
+    // here is the exact defect that earlier measurement was about, so this
+    // asserts the field rather than assuming it is populated.
     it('records ORGANIZATION_CREATED against the organization it created', async () => {
       const created = await organizations.createOrganization(OWNER, {
         name: 'Acme Works',
         slug: 'acme-works',
       });
+
+      // Read back from the store, not from `createOrganization`'s return value:
+      // asserting against what the service returned would pass for a service
+      // that returned an id it never stored.
+      const stored = source.all(OrganizationRecord);
+      expect(stored).toHaveLength(1);
+      expect(created.id).toBe(stored[0].id);
 
       const entries = source
         .all(AuditEntryRecord)
@@ -200,10 +208,10 @@ describe('OrganizationsService', () => {
 
       const entry = entries[0];
       expect(entry.organizationId).not.toBeNull();
-      expect(entry.organizationId).toBe(created.id);
+      expect(entry.organizationId).toBe(stored[0].id);
       expect(entry.actorUserId).toBe(OWNER);
       expect(entry.resourceType).toBe('organization');
-      expect(entry.resourceId).toBe(created.id);
+      expect(entry.resourceId).toBe(stored[0].id);
     });
 
     it('refuses a blank name, and writes nothing', async () => {

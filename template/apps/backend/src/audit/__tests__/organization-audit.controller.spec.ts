@@ -28,7 +28,8 @@ import { AuditService } from '../audit.service';
 import { OrganizationAuditController } from '../organization-audit.controller';
 
 /**
- * The organization-scoped half of spec §9.6: `GET /organizations/:id/audit`.
+ * The organization-scoped one of the audit log's two read surfaces:
+ * `GET /organizations/:id/audit`.
  *
  * `AuditService.query` (the cross-tenant, platform-admin read) already has
  * its own suite in `audit.controller.spec.ts`, and this file does not repeat
@@ -231,7 +232,7 @@ describe('OrganizationAuditController', () => {
     // `PlatformAdminGuard`'s 404 on the deployment-wide route.
     it('still refuses an organization administrator with 404', async () => {
       // Established first: this same account CAN read its own organization's
-      // history through the route this task adds — the refusal below is
+      // history through the per-organization route — the refusal below is
       // about `GET /audit` specifically, not about the account.
       await request(app.getHttpServer())
         .get(`/organizations/${ORG_A}/audit`)

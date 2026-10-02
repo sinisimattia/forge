@@ -165,7 +165,7 @@ export function runIMfaServiceContract(deps: IMfaServiceContractDeps): void {
           expect.equal(
             secondBatch,
             null,
-            'an account\'s recovery codes are minted once, not once per method (spec §9.3)',
+            'an account\'s recovery codes are minted once, not once per method',
           );
         },
       );

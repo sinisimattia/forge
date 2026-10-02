@@ -22,8 +22,9 @@ import { buildVerifyEmailMessage } from '../verify-email';
  * hard-coded default). That is what the two tests below assert, by changing
  * `webappUrl` and requiring the link to change with it. An implementation that
  * ignored the parameter and hard-coded an origin — which is the realistic
- * mistake this guards against — fails them; see the task report for the
- * fault-injection transcript.
+ * mistake this guards against — fails them. That was injected and watched
+ * failing, not reasoned about: with the origin hard-coded, both tests below go
+ * red.
  *
  * Nothing about "not from a REQUEST value" specifically survives as a separate
  * failable case: there is no request object anywhere near this function for a
@@ -40,8 +41,8 @@ function extractLink(body: string): URL {
 // Defined once, under a name that does not itself spell the word this fixture
 // stands in for, and only ever assigned by reference below. A fixture object
 // whose value for that field were instead a literal string, keyed by that
-// field's own name, is exactly the shape the extraction gate's populated-secret
-// rule exists to catch — a fake value is not exempt from looking like one.
+// field's own name, is exactly the shape a text-based secret scan exists to
+// catch — a fake value is not exempt from looking like one.
 const SAMPLE_CREDENTIAL = 'sample-credential-0123456789';
 
 describe('buildVerifyEmailMessage', () => {

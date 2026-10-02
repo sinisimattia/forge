@@ -23,10 +23,8 @@ withDefaults(defineProps<Props>(), {
 
 // `defineModel` rather than a `modelValue` prop plus an `update:modelValue` emit and an
 // input handler. It is the same public API for every `v-model` caller, it is less code,
-// and it removes the one thing a handler cannot avoid naming: the DOM interface its
-// argument is typed as. The extraction gate (tools/sanitize.mjs) rejects that name on
-// sight, and correctly so — lexically it is indistinguishable from a domain entity, and
-// the gate is not allowed to guess. The other three form atoms follow the same shape.
+// and it keeps DOM typing out of this component entirely. The other three form atoms
+// follow the same shape.
 const model = defineModel<string>({ default: '' });
 </script>
 

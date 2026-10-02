@@ -140,8 +140,8 @@ export function accessTokenSigningOptions(config: ConfigService): JwtModuleOptio
  * entity it adds to the `TypeOrmModule.forFeature` list below, and
  * `OAuthProviderRegistry` is what `OAUTH_PROVIDER_REGISTRY_PROVIDER` builds.
  *
- * The last two are the federated path's own half of two-phase login (spec
- * §8.4): both endings under `OAuthService.completeSignIn` ask the policy
+ * The last two are the federated path's own half of two-phase login
+ * (ADR-0012): both endings under `OAuthService.completeSignIn` ask the policy
  * through `SecondFactorSettled` and mint a `LOGIN` challenge before either may
  * issue a session, exactly as `AuthService.signIn` does — `MfaMethodRecord`
  * because that is the table the policy reads, `MfaChallengeService` because

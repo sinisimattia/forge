@@ -55,3 +55,12 @@ than a hand-maintained copy of it.
   reference in the producing package.
 - Until an OpenAPI-style generation step lands, the concrete reference is still
   hand-maintained, though now co-located with the code it documents.
+
+## Amendment (2026-10-02)
+
+The OpenAPI generation this ADR anticipated now exists: the backend serves a document
+generated from its own code (`@nestjs/swagger`, with DTO schemas inferred from their
+TypeScript types) at `/api/docs` outside production. The two statements above that
+generation "once that tooling exists" and that the reference "is still hand-maintained"
+describe the state when this was written, not the current one. The decision itself —
+the concrete reference lives beside the implementation — is unchanged.

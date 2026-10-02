@@ -35,12 +35,15 @@ import { OrganizationsService } from '../../organizations/organizations.service'
 import { UserRecord } from '../../users/user-record.entity';
 
 /**
- * The world the three discriminating specs in this directory share.
+ * The world `d9-tenant-isolation.spec.ts`, `d12-grant-revocation.spec.ts` and
+ * `d15-last-owner.spec.ts` share. The other `dNN-*.spec.ts` files in this
+ * directory build their own.
  *
  * ## Why these three specs exist at all, given the suites next door
  *
- * Spec §11's table names fifteen *discriminating* tests: assertions that fail
- * for a specific wrong implementation, and whose failure has been watched. D9,
+ * A *discriminating* test is one that fails for a specific wrong
+ * implementation, and whose failure has been watched go red; each
+ * `dNN-*.spec.ts` file here is one. D9,
  * D12 and D15 are the tenancy-and-authorization work's three, and the ordinary suites already assert most
  * of what they are about — `tenant-isolation.spec.ts` for D9,
  * `members.controller.spec.ts` and core's own `IOrganizationService` contract

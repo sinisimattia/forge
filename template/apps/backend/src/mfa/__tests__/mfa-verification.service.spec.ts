@@ -163,9 +163,9 @@ describe('MfaVerificationService', () => {
     // `FakeDataSource` does not type its ids (it mints them as
     // `fake-<Entity>-<n>`, which are not UUIDs either), so it neither raises
     // `22P02` nor could tell a malformed id from one of its own. The suite is
-    // structurally blind here — the third time this phase a real property has
-    // hidden behind that double's simplifications, after unique constraints
-    // and foreign keys.
+    // structurally blind here — the third real property found hiding behind
+    // that double's simplifications, after unique constraints and foreign
+    // keys.
     //
     // So this test supplies the typing the fake lacks, in the only form that
     // does not depend on the fake at all: **a repository that throws if it is

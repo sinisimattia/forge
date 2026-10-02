@@ -88,8 +88,8 @@ export class AuthorizationService implements IAuthorizationService {
    * `grant:create`, an organization-scoped permission an ADMIN holds, and
    * without a matching refusal here that ADMIN could persist a grant naming
    * the deployment's one unbounded permission. Nothing consults it today —
-   * layer three fires on no route in this phase (`PermissionsGuard`'s own
-   * TSDoc) — which is exactly why the refusal belongs here rather than
+   * layer three fires on no route in this application (`PermissionsGuard`'s
+   * own TSDoc) — which is exactly why the refusal belongs here rather than
    * nowhere: the alternative is a stored escalation waiting for a future
    * caller of `can()` that does not know to distrust it. Not a `DomainError`:
    * there is no id, no tenant and no membership to consult — this literal

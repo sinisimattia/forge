@@ -9,7 +9,7 @@ export const STEP_SECONDS = 30;
 
 /**
  * Bytes of entropy in a new shared secret — 160 bits, the length RFC 4226 §4
- * (R6) recommends and the length of the HMAC-SHA-1 block the code is derived
+ * recommends and the length of the HMAC-SHA-1 block the code is derived
  * with. `otplib`'s own default is 10 bytes (80 bits), the RFC's stated minimum
  * is 128.
  */

@@ -25,7 +25,8 @@ import { useAuthStore } from '~/stores/auth';
  * Assigning `pinia.state.value.auth` here is that, exactly — which is why the
  * shape assigned is the payload's real shape and why `accessToken` is absent
  * from it rather than set to `null`. A payload with a credential in it is the
- * thing this task removed; a fixture that put one back would test nothing.
+ * thing this design exists to prevent; a fixture that put one back would test
+ * nothing.
  */
 
 /** One instant for the world, which nothing here compares. */

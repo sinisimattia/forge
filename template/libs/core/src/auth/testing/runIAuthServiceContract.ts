@@ -21,18 +21,15 @@ const UNKNOWN_CLIENT: ClientContext = { address: null, label: null };
  * One registration, assembled from shorthand.
  *
  * Shorthand rather than a literal with named keys, here and in {@link attempt}, and the
- * reason is worth writing down because it is not style. The extraction gate that scans
- * this tree for a pasted credential once matched a secret-ish member name followed by
- * any value at all, and could not tell a literal from a reference. It was since narrowed:
- * in TypeScript only a *quoted* value counts as populated, an unquoted bare word being a
- * reference to a binding. Most of the call sites below pass bindings, so inlining those
- * would trip nothing today.
+ * reason is worth writing down because it is not style. A text-based scan for a pasted
+ * credential cannot tell a seeded test value from a real one, so a quoted literal under a
+ * secret-shaped key reads as a populated credential wherever it appears — and building
+ * one out of a template literal does not reliably hide it, since what such a scan judges
+ * is whatever the interpolations leave behind.
  *
- * One would. The wrong-secret attempt below builds its value as a template literal, and
- * the gate strips every interpolation before it judges what remains — here a short quoted
- * remainder, which reads as populated and flags. Checked against the gate rather than
- * assumed. The helpers stay for that, and earn their keep anyway: {@link attempt} supplies
- * the default client, and both spare every call site a named-key literal.
+ * The wrong-secret attempt below is built exactly that way, which is why it stays behind
+ * a helper. The helpers earn their keep anyway: {@link attempt} supplies the default
+ * client, and both spare every call site a named-key literal.
  *
  * @param email - the address as a person would have typed it
  * @param displayName - the name they want shown to other people

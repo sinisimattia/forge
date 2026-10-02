@@ -300,7 +300,7 @@ export class UsersService implements IUserService {
     }
   }
 
-  /** One audit write, with this phase's fixed `organizationId` of `null`. */
+  /** One audit write. These are platform-level acts, so they belong to no organization. */
   private record(
     action: AuditAction,
     actorId: UserId,

@@ -8,9 +8,9 @@ const USER_ENDPOINT = 'https://api.github.com/user';
 const EMAILS_ENDPOINT = 'https://api.github.com/user/emails';
 
 const CLIENT_ID = 'github-client-id';
-// Self-named on purpose (see tools/sanitize.mjs's SELF_NAMED_VALUE): a value
-// identical to its own UPPER_SNAKE key is published in the source by
-// definition, so there is nothing here for the sanitize gate to catch.
+// Self-named on purpose: the value is spelled exactly like its own key, so
+// there is nothing in it the identifier does not already say. A fixture, not a
+// credential.
 const OAUTH_GITHUB_CLIENT_SECRET = 'OAUTH_GITHUB_CLIENT_SECRET';
 
 const ACCESS_TOKEN_VALUE = 'stub-access-token-value';
@@ -200,7 +200,7 @@ describe('GitHubOAuthProvider', () => {
       // A GitHub login can be changed and can be taken over by somebody else
       // after it is released. The numeric id cannot. An identity keyed on the
       // login is an identity that transfers with the name — the account-takeover
-      // path this whole phase exists to close, arriving through a different door.
+      // path D11 exists to close, arriving through a different door.
       const adapter = adapterWith(stubHttp({
         userBody: userBody({ id: 583231, login: 'octocat', name: null }),
       }));

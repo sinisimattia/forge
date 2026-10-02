@@ -52,7 +52,7 @@ import type { IBreachedPasswordRegistry } from '__FORGE_SCOPE__/core/identities/
  * the policy judgement, so a secret that breaks a local rule costs no lookup and
  * so `BREACHED` never arrives mixed with the other four violations.
  *
- * It was registration only, for one phase. That is worth knowing for two
+ * It was registration only at first. That is worth knowing for two
  * reasons: it is why `PasswordPolicyViolation` grew a `BREACHED` member — one
  * error type carrying every reason a password was refused, instead of a
  * transport-level special case that two of the three paths had simply never

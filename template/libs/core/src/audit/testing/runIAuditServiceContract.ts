@@ -121,9 +121,9 @@ function memberNames(service: IAuditService): string[] {
  *
  * What this suite deliberately does *not* assert is who may read. `query` takes
  * an actor because entitlement is real and about to matter, but what refusal
- * looks like for an actor who has none belongs to authorization, which is a
- * pure function in core and arrives in a later phase (ADR-0006). Pinning an
- * answer here would settle that question in the wrong place.
+ * looks like for an actor who has none belongs to authorization, which is its
+ * own pure function in core (ADR-0006). Pinning an answer here would settle
+ * that question in the wrong place.
  *
  * @param deps - the host runner's primitives and a fresh-world factory
  */
@@ -267,7 +267,7 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
         expect.equal(
           entry.organizationId,
           null,
-          'nothing this phase records belongs to a tenant, and belonging to none is a fact, not a gap (ADR-0007)',
+          'an entry recorded under no tenant must come back under none — belonging to none is a fact, not a gap (ADR-0007)',
         );
 
         // The one a mapping loses most often, and the loss is not cosmetic.
@@ -534,9 +534,10 @@ export function runIAuditServiceContract(deps: IAuditServiceContractDeps): void 
       // `purgeOlderThan` — and it catches it the same day rather than in an
       // incident. What it cannot catch is a statement issued anywhere else, and
       // there is no shape of test that could: the guarantee is a database grant
-      // that refuses the application role `UPDATE` and `DELETE` on this table,
-      // added in the task after this one and proven against a live database by
-      // D13. This assertion is the cheap half. Do not read it as the guarantee.
+      // that refuses the application role `UPDATE` and `DELETE` on this table
+      // (discriminating test D13), and nothing in this repository exercises it
+      // against a live database. This assertion is the cheap half. Do not read
+      // it as the guarantee.
       it('offers record and query, and no member that could change an entry', async () => {
         const { service } = await makeContext();
         const names = memberNames(service);

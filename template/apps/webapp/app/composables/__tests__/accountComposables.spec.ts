@@ -21,8 +21,8 @@ import { stubNuxtAutoImports } from '~/test/stubNuxtAutoImports';
 import type { ApiClient, ApiRequest } from '~/types';
 
 /**
- * The five composables this task wrote so that a component would not have to
- * touch a service.
+ * The five account composables, which exist so that a component would not
+ * have to touch a service.
  *
  * They shipped with no specs at all, and three of them hold state or a decision:
  * `useSessions` re-reads after a revoke, `useIdentities` separates the one

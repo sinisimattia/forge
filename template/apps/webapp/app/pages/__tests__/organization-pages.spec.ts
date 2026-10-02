@@ -24,7 +24,7 @@ import OrganizationsIndexPage from '../organizations/index.vue';
  * The three organization pages that hold a decision of their own —
  * `organizations/index.vue`, `[organizationId]/settings.vue` and
  * `invitations/[token].vue` — the same reasoning `account-pages.spec.ts`
- * gives for choosing exactly these three among the six this task ships:
+ * gives for choosing exactly these three among the six organization pages:
  * `members.vue`, `invitations.vue` and `audit.vue` map a list straight onto
  * an organism with no branch of their own, and their branches are
  * `MemberList`'s, `InvitationList`'s, `GrantList`'s and the composables'.

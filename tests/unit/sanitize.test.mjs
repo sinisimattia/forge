@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import {
   lineFindings,
   pathFindings,
+  ruleDefinitionRegion,
+  assertScannerOutsideRegion,
   DOM_AND_PLATFORM_IDENTIFIERS,
   isTypeScriptFile,
 } from '../../tools/sanitize.mjs';
@@ -202,8 +204,9 @@ test('an unquoted value in TypeScript is a reference to a binding, not a credent
 // written for YAML and env files, where an unquoted value after a colon or equals genuinely is
 // a literal. Every shape below is a reference or an annotation, not a credential, and each one
 // is the mirror image of a case already pinned above for `.ts`; only the file extension
-// differs. See task-17-report.md §10.1, which named this residual and restructured three
-// files around it instead of the gate being fixed.
+// differs. Before the classifier was corrected, three template files were restructured to
+// work around these false positives rather than the gate being fixed — which is why the
+// cases are pinned here: the misclassification is the kind that gets accommodated silently.
 test('a .vue file is judged as TypeScript, not as YAML — the misclassification is fixed', () => {
   assert.ok(isTypeScriptFile('component.vue'));
   assert.ok(isTypeScriptFile('Nested/Path/Thing.vue'));
@@ -511,8 +514,82 @@ test('the entry point is recognised through a symlink', () => {
   }
 });
 
-// Spec §9.4 makes organization invitations a first-class concept in every generated
-// project, so the gate can no longer treat the noun as evidence of a leak. What it must
+// The gate used to skip its own file entirely, which meant a clean run said nothing at all
+// about this one script — the rules that apply to every other file under `tools/` were
+// unenforced exactly where the vocabulary is most likely to be typed. It is scanned now, with
+// one marked region allowed: the rule definitions, which cannot avoid spelling the terms.
+// Everything outside that region is held to the rules like any other file.
+test('the gate scans its own file outside its rule-definition region', () => {
+  const lines = fs.readFileSync(gate, 'utf8').split('\n');
+  const region = ruleDefinitionRegion(lines);
+  assertScannerOutsideRegion(lines, region);
+  const unexpected = [];
+  lines.forEach((line, index) => {
+    const lineNumber = index + 1;
+    if (lineNumber >= region.start && lineNumber <= region.end) return;
+    if (line.includes('sanitize:allow')) return;
+    for (const label of lineFindings(line, gate)) {
+      unexpected.push(`${lineNumber}  ${label}  ${line.trim()}`);
+    }
+  });
+  assert.deepEqual(unexpected, []);
+  assert.deepEqual(pathFindings(gate), []);
+});
+
+// The region is an allowance, not a second exclusion: it has to be visible in the run's own
+// output, the same way every inline marker is, or it becomes a whole-file skip wearing a
+// narrower name.
+test('the run reports the rule-definition region as a deliberate allowance', () => {
+  const output = execFileSync(process.execPath, [gate], { encoding: 'utf8' });
+  assert.match(output, /sanitize\.mjs:\d+-\d+ {2}rule definitions/);
+});
+
+// A region delimited by markers can be silently widened by moving one of them, or silently
+// deleted by dropping one. Neither is allowed to degrade into a pass.
+test('a malformed rule-definition region is refused, not tolerated', () => {
+  const begin = '// sanitize:rule-definitions-begin';
+  const end = '// sanitize:rule-definitions-end';
+  assert.throws(() => ruleDefinitionRegion(['a', 'b']), /exactly one/);
+  assert.throws(() => ruleDefinitionRegion([begin, 'b']), /exactly one/);
+  assert.throws(() => ruleDefinitionRegion([begin, begin, end]), /exactly one/);
+  assert.throws(() => ruleDefinitionRegion([end, begin]), /before/);
+  assert.deepEqual(ruleDefinitionRegion(['x', begin, 'y', end, 'z']), { start: 2, end: 4 });
+});
+
+// Counting the markers and ordering them says nothing about how much they enclose, and the
+// failure that matters is extent: move the end marker to the bottom of the file and the
+// whole-file exemption is back, wearing a region's name and changing nothing visible but a
+// number in the run's output. The oracle below is the gate's own scanner declarations, read
+// out of the source independently of where the markers sit — so a marker that moves over one
+// of them fails here instead of quietly redefining what the test expects.
+test('the region cannot be widened over the scanner machinery', () => {
+  const lines = fs.readFileSync(gate, 'utf8').split('\n');
+  const region = ruleDefinitionRegion(lines);
+  const declaration = (text) => {
+    const index = lines.findIndex((line) => line.startsWith(text));
+    assert.notEqual(index, -1, `no line starts with ${text}`);
+    return index + 1;
+  };
+  for (const text of ['export function pathFindings(', 'async function main(', 'function isEntryPoint(']) {
+    const line = declaration(text);
+    assert.ok(line > region.end, `${text} is at ${line}, inside the region ${region.start}-${region.end}`);
+  }
+  assert.ok(declaration('const ROOTS =') < region.start);
+
+  // The same check the gate runs on every scan, against the widened region a moved end
+  // marker would produce.
+  assert.throws(
+    () => assertScannerOutsideRegion(lines, { start: region.start, end: lines.length }),
+    /encloses .+ the scanner itself is never exempt/,
+  );
+  // An anchor that silently stops matching is a guard that silently stops guarding.
+  assert.throws(() => assertScannerOutsideRegion([], region), /exactly once/);
+  assertScannerOutsideRegion(lines, region);
+});
+
+// The template ships organizations, and an invitation is how somebody joins one, so
+// organization invitations are a first-class concept in every generated
+// project and the gate cannot treat the noun as evidence of a leak. What it must
 // still catch is the shape a leak actually takes — a domain compound — which for this
 // concept is the qualifier in front of it, not the word itself.
 test('the template\'s own invitation vocabulary is admitted', () => {
@@ -569,6 +646,54 @@ test('a word that merely contains the term as a substring is not a violation', (
   assert.equal(flagged('const reorganizerless = 1;', TS), false);
 });
 
+// A digit is a boundary on either side, which is wider than `\b` gives — a digit is a word
+// character, so `\borganizer\b` matches neither spelling below. The widening falls out of
+// `isLetter` being letters-only rather than word-character-wide, so it has always been live
+// and was never written down or exercised. Pinned here so a later narrowing of `isLetter`
+// cannot drop it silently.
+test('a banned term is caught against a digit on either side', () => {
+  assert.equal(labels('const organizer1 = 1;', TS), 'source-domain term');
+  assert.equal(labels('const x1organizer = 1;', TS), 'source-domain term');
+});
+
+// The lowercase-to-uppercase transition is not the only compound boundary an identifier
+// uses: an acronym run supplies one too. `API|Organizer` has no lowercase character before
+// the term, so the leading test's lower-to-upper transition never fires and the whole
+// compound slipped. The standard acronym rule is that a word begins at an uppercase letter
+// followed by a lowercase one — the `O` of `Organizer`, which `r` follows.
+test('a banned term is caught after an acronym run', () => {
+  assert.equal(labels('class APIOrganizerService {}', TS), 'source-domain term');
+  // The trailing side of the same compound: already caught, pinned so the leading-side
+  // widening cannot regress it.
+  assert.equal(labels('class OrganizerAPIService {}', TS), 'source-domain term');
+});
+
+// The other half of what `APIOrganizerService` needed. `organizers?` is case-insensitive, so
+// its optional plural swallows the capital `S` that starts the next word, and the match ends
+// one character inside `Service` — where the trailing-boundary check finds a lowercase `e`
+// and refuses. A match whose last character is uppercase after a lowercase one has over-run
+// into the next word, and that capital is the boundary.
+test('an optional plural that swallows the next word\'s capital still bounds', () => {
+  assert.equal(labels('const organizerService = 1;', TS), 'source-domain term');
+  assert.equal(labels('const refundService = 1;', TS), 'source-domain term');
+  // The same over-run in an all-caps spelling. Recognising the swallowed capital by its own
+  // shape caught only the lowercase spelling; retrying the shorter alternative the pattern
+  // could have matched closes the class instead of one more spelling of it.
+  assert.equal(labels('class REFUNDService {}', TS), 'source-domain term');
+  assert.equal(labels('class ORGANIZERService {}', TS), 'source-domain term');
+});
+
+// An all-caps run offers no boundary, in either direction, for the same reason a lowercase
+// run does not: there is no case transition anywhere in `APIORGANIZER`, so nothing marks the
+// term off from the letters before it. This is the uppercase twin of `reorganizerless`, not
+// a variant of the over-run above — the shorter alternative is retried here too and is still
+// unbounded on its leading side. Pinned because the alternative, treating any uppercase
+// neighbour as a boundary, would flag an ordinary ALL_CAPS word that merely contains a term.
+test('a term buried in an all-caps run is not a violation, either side', () => {
+  assert.equal(flagged('class APIORGANIZERService {}', TS), false);
+  assert.equal(flagged('const REORGANIZERLESS = 1;', TS), false);
+});
+
 // Forge's own process vocabulary. This leaked into template/ three times in one phase
 // despite an explicit instruction not to (task-18's own report) — the briefs handed to
 // implementers are extracted verbatim from a planning document that legitimately contains
@@ -583,19 +708,135 @@ test('a Forge task or phase coordinate is flagged, capitalized and spaced', () =
     'forge-process coordinate',
   );
   assert.equal(labels('See Task 6 for the carried finding.', 'a.md'), 'forge-process coordinate');
+  // Plural with a range — the shape a citation of several at once takes ("Tasks 10–14").
+  // The singular-only form of this rule saw straight past it.
+  assert.equal(
+    labels('// the grant codes of Tasks 10–14 arrived together', TS),
+    'forge-process coordinate',
+  );
+  assert.equal(
+    labels('// Phases 2 and 3 are where the audit table came from', TS),
+    'forge-process coordinate',
+  );
 });
 
 // NOT the bare, lowercase word — ordinary English this template's own comments are full of,
 // and a coincidental digit nearby must not turn it into a false positive either.
 test('the ordinary English word "task"/"phase" is not flagged', () => {
   assert.equal(flagged('This suite exercises none of the invitation mail.', TS), false);
-  assert.equal(flagged('The next phase of rollout adds SSO.', TS), false);
   assert.equal(flagged('Complete the task 12 hours from now.', TS), false);
   assert.equal(flagged('There are 12 open tasks on the board.', TS), false);
+  // Lowercase, so the plural widening above does not reach it either.
+  assert.equal(flagged('Retry the 3 tasks 5 minutes apart.', TS), false);
+});
+
+// The register with no coordinate in it at all. "Task 12" is a citation; "this task" is the
+// same sentence about the work that produced a line, written without numbering it — and it
+// is the shape that actually shipped. Thirty-three of them reached `template/` while
+// `forge-process coordinate` reported clean on every one, because a comment explaining why
+// a line looks the way it does rarely says which numbered unit of work wrote it.
+test('"this task" is flagged — the process register without a coordinate', () => {
+  assert.equal(
+    labels('// Read-only, unlike every other composable this task adds.', TS),
+    'forge-process task provenance',
+  );
+  assert.equal(
+    labels("// which is what this task's own injection proved", TS),
+    'forge-process task provenance',
+  );
+  assert.equal(
+    labels('A webapp-local form is out of scope for this task.', 'a.md'),
+    'forge-process task provenance',
+  );
+  // Case-insensitive, unlike `forge-process coordinate`: there is no capitalized/lowercase
+  // split to exploit here — a sentence opening "This task" is the same register.
+  assert.equal(
+    labels('This task ships six pages and tests three.', 'a.md'),
+    'forge-process task provenance',
+  );
+  // One intervening word, which is all it took to walk past the adjacent-only form of this
+  // rule. Both of these shipped inside `template/` with the gate green.
+  assert.equal(
+    labels('// the ADR-0008 failure this whole task exists to prevent', TS),
+    'forge-process task provenance',
+  );
+  assert.equal(
+    labels("// The brief for this file's task named the debt", TS),
+    'forge-process task provenance',
+  );
+});
+
+// The same register spelled with "phase". Scoped to the qualifiers that can only mean a
+// unit of Forge's build-out, because the bare word cannot be separated from the generated
+// application's own ceremony vocabulary — see the rule's comment.
+test('a qualified Forge "phase" is flagged', () => {
+  assert.equal(
+    labels('// Only PASSWORD is implemented in this phase.', TS),
+    'forge-process phase provenance',
+  );
+  assert.equal(
+    labels('// a question for authorization in a later phase', TS),
+    'forge-process phase provenance',
+  );
+  assert.equal(
+    labels('// An earlier phase modelled this as one string field.', TS),
+    'forge-process phase provenance',
+  );
+  assert.equal(
+    labels('the message behind that phase\'s central security property', 'a.md'),
+    'forge-process phase provenance',
+  );
+  // Plural, and the "a/an + adjective" slot both ways round.
+  assert.equal(labels('// shipped in a previous phase', TS), 'forge-process phase provenance');
+  assert.equal(labels('// two later phases rewrote it', TS), 'forge-process phase provenance');
+  // This one used to be asserted as NOT flagged, on the grounds that it is ordinary
+  // English. It is ordinary English about *planned work*, which is the register a generated
+  // project has no use for, so it is now a finding.
+  assert.equal(
+    labels('The next phase of rollout adds SSO.', 'a.md'),
+    'forge-process phase provenance',
+  );
+  // Relative-time words and a demonstrative that the first cut of this rule missed, though
+  // the principle it states — a qualifier, never an ordinal — covers them. None occurs in
+  // the tree; they are here so the rule matches the criterion it claims.
+  assert.equal(labels('// a future phase may add SSO', TS), 'forge-process phase provenance');
+  assert.equal(labels('// a prior phase modelled it that way', TS), 'forge-process phase provenance');
+  assert.equal(labels('// the upcoming phase owns this', TS), 'forge-process phase provenance');
+  assert.equal(labels('// the following phase ships the route', TS), 'forge-process phase provenance');
+  assert.equal(labels('// these phases each added an action', TS), 'forge-process phase provenance');
+});
+
+// The generated application's own vocabulary: a sign-in really does happen in two phases,
+// and every one of these appears in `template/` today. The rule must not reach them.
+test('the ceremony sense of "phase" is not flagged', () => {
+  assert.equal(flagged('// The second half of a two-phase sign-in.', TS), false);
+  assert.equal(flagged("describe('the first phase of a sign-in', () => {", TS), false);
+  assert.equal(flagged("describe('the second phase of a sign-in', () => {", TS), false);
+  assert.equal(flagged('// suspended between the two phases.', TS), false);
+  assert.equal(flagged('// The same second phase, proven by a recovery code.', TS), false);
+  assert.equal(flagged('// makes login two-phase once the method is confirmed', TS), false);
+});
+
+// The rule is the bare phrase and nothing cleverer, so an ordinary English "task" that is
+// not preceded by "this" stays unflagged — which is most of them.
+test('"task" without the demonstrative is not flagged', () => {
+  assert.equal(flagged('The task runner is configured in nx.json.', TS), false);
+  assert.equal(flagged('Each task in the queue is retried once.', TS), false);
+  assert.equal(flagged('const taskQueue = [];', TS), false);
+  // No word boundary between "task" and "Queue", so the demonstrative form does not reach
+  // into a compound identifier either.
+  assert.equal(flagged('// this taskQueue drains on shutdown', TS), false);
+  // The intervening-word allowance is exactly one word, so a "this" further off than that
+  // does not drag an unrelated "task" in with it.
+  assert.equal(flagged('// this is the only task the runner schedules', TS), false);
 });
 
 test('"coordinator" used in the process sense is flagged, including mid-compound', () => {
-  assert.equal(labels('// The coordinator dispatched this task.', TS), 'forge-process role');
+  // Two labels: "this task" is `forge-process task provenance` as well, and both are true.
+  assert.equal(
+    labels('// The coordinator dispatched this task.', TS),
+    'forge-process task provenance,forge-process role',
+  );
   // The same camelCase/PascalCase boundary fix `source-domain term` needed: no separator
   // marks the word off from its neighbour, only a case change.
   assert.equal(labels('class TaskCoordinator {}', TS), 'forge-process role');
@@ -611,7 +852,12 @@ test('"coordinate"/"coordinated"/"coordinates" are not flagged — a different w
 // "brief" alone is ordinary English and must not be flagged — only its process-sense
 // co-occurrence with "task"/"phase"/"coordinator" is unambiguous enough to catch reliably.
 test('"brief" is flagged only beside "task"/"phase"/"coordinator"', () => {
-  assert.equal(labels("// Asserted per this task's brief —", TS), 'forge-process brief');
+  // `forge-process task provenance` is also true of this line — "this task" is in it — so both
+  // fire, for the same reason the coordinator case below reports two.
+  assert.equal(
+    labels("// Asserted per this task's brief —", TS),
+    'forge-process task provenance,forge-process brief',
+  );
   assert.equal(labels('// which the task brief names as the other half', TS), 'forge-process brief');
   assert.equal(labels("// the one the phase's brief names", TS), 'forge-process brief');
   // Both rules are true statements about this line — "coordinator" alone is also flagged by

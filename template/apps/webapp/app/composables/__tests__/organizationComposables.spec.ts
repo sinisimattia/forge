@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
-import { OrgRole } from '__FORGE_SCOPE__/core/organizations/enums';
+import { InvitationStatus, OrgRole } from '__FORGE_SCOPE__/core/organizations/enums';
 import {
   InvalidOrganizationSlugError,
   OrganizationNameRequiredError,
@@ -21,7 +21,7 @@ import { useOrganizationStore } from '~/stores/organization';
 import { stubNuxtAutoImports } from '~/test/stubNuxtAutoImports';
 
 /**
- * `useOrganization` and `useInvitations`, the two composables this task ships
+ * `useOrganization` and `useInvitations`, the two composables that sit
  * beside `useCan` so a switcher and an invitations screen have somewhere to
  * read from other than a fetcher directly (`STANDARDS.md` W2).
  *
@@ -166,6 +166,24 @@ describe('useOrganization / useInvitations', () => {
 
     expect(invitations.failed.value).toBe(false);
     expect(invitations.invitations.value).toEqual([]);
+  });
+
+  it('reads the open invitations by default and the asked-for status when given one', async () => {
+    const auth = useAuthStore();
+    auth.adoptTransport(backend.client);
+    await auth.login(ACTOR.email, PLAINTEXT);
+    useOrganizationStore().setActiveOrganization(ORG_ID);
+    const invitations = useInvitations();
+    await invitations.invite('invitee@example.test', OrgRole.MEMBER);
+    const invitationId = invitations.invitations.value[0]?.id;
+    if (invitationId === undefined) throw new Error('setup did not create an invitation');
+    await invitations.revoke(invitationId);
+
+    await invitations.load();
+    expect(invitations.invitations.value).toEqual([]);
+
+    await invitations.load(InvitationStatus.REVOKED);
+    expect(invitations.invitations.value.map((one) => one.id)).toEqual([invitationId]);
   });
 
   it('finds the active organization\'s own record among the list, not by a second request', async () => {

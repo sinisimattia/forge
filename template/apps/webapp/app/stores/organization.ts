@@ -39,7 +39,8 @@ function toPrincipal(wire: PrincipalResponseBody): Principal {
  * `GET /users/me/principal` is the **only** source: it exists
  * specifically so a client can evaluate the same rule the server does, and the
  * access credential deliberately carries no membership or grant of its own
- * (design ruling R4 on the backend). Assembling one from separate list calls —
+ * (the backend mints it with two claims and nothing else). Assembling one from
+ * separate list calls —
  * "read my memberships, read my grants" — would let this store's idea of its
  * own memberships drift from the server's the moment either list changed
  * underneath it without a fresh read, which is exactly the drift ADR-0006

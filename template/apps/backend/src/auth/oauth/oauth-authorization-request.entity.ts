@@ -42,6 +42,19 @@ export class OAuthAuthorizationRequestRecord {
   /**
    * What this request is for, fixed at creation so the callback cannot infer
    * — or have edited into — its own purpose from anything the caller sent.
+   *
+   * Typed `string`, not `OAuthAuthorizationPurpose`, on purpose. The column is
+   * plain `text` with no SQL constraint, so a row can hold a purpose this
+   * application never wrote — corruption, a writer that does not exist yet, a
+   * botched migration — and the type should say what the database can actually
+   * return, not what this application hopes it holds. `OAuthService.complete`
+   * dispatches explicitly on each known value and *refuses* any other rather
+   * than defaulting to one; narrowing this field would make that refusal
+   * unreachable by type, and `__tests__/oauth.service.complete.spec.ts` ("refuses a
+   * purpose that is neither SIGN_IN nor LINK, rather than defaulting to
+   * sign-in") seeds `'SOMETHING_ELSE'`
+   * precisely to prove it still holds, which only type-checks while this stays
+   * `string`.
    */
   @Column({ name: 'purpose', type: 'text' })
   purpose!: string;

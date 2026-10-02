@@ -69,7 +69,7 @@ export class UsersController {
    * It exists so a client can evaluate the same rule the server does and hide
    * an action rather than offer one that will be refused (ADR-0006). Nothing
    * else can tell it: the access credential carries two claims on purpose
-   * (design ruling R4), so memberships and grants have no other route to a
+   * and no roles or memberships, so those have no other route to a
    * webapp.
    *
    * **It carries no `@RequirePermission`**, because it is about the actor
@@ -78,7 +78,7 @@ export class UsersController {
    * principal with no proven subject is not a question with an answer.
    *
    * The grants it carries are live as of this request and no longer — the
-   * hydrator applies `isGrantLive` (design ruling R2), and a client holding
+   * hydrator is the only place `isGrantLive` runs, and a client holding
    * this payload past a grant's expiry is holding a stale answer, exactly as it
    * would be past a revocation. **A client-side `true` is never a permission**;
    * the server re-derives every answer from its own principal on every request.

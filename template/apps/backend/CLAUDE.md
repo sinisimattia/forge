@@ -49,13 +49,11 @@ All design docs live in the top-level `docs/` folder (paths relative to the repo
 | Agent Playbook (shared)       | `docs/standards/agent-playbook.md` |
 | Guides                        | `docs/guides/README.md`       |
 
-**ADRs:** `docs/adrs/` — conventions: 0001 (single-source docs), 0002 (consolidated agent
-roster), 0003 (architecture docs describe boundaries), 0004 (API reference lives with
-implementation). Platform: 0005 (identity is separate from user), 0006 (authorization is a
-pure function in core), 0007 (tenancy is explicit, never ambient), 0008 (ports, not
-vendors — including **where a port lives**, which is why `IMailer` and `IPasswordHasher` are
-in this package and not in core), 0009 (two database roles), 0010 (organization invitations
-are single-use, expiring, hashed and address-checked).
+**ADRs:** `docs/adrs/` holds one record per decision that is expensive to reverse,
+numbered in the order it was made; `docs/adrs/README.md` is the index. Read the ones whose
+subject you are about to touch before you touch it.
+The one most likely to be needed here is ADR-0008, which says **where a port lives** — which
+is why `IMailer` and `IPasswordHasher` are in this package and not in core.
 
 ## Module structure
 
@@ -76,10 +74,10 @@ src/<module>/
 `/auth` endpoints including recovery, the global `JwtAuthGuard`, `PlatformAdminGuard`,
 `@Public()`/`@CurrentUser()`, the session and rotation services, and the one
 `REFRESH_COOKIE` constant); `identities/` (the password identity, the argon2id hasher, the
-breached-password port, and `/users/me/identities`); `users/` (`/users/me`, the four
+breached-password port, and `/users/me/identities`); `users/` (`/users/me`, the
 platform-admin endpoints, and `GET /users/me/principal`); `mail/` (the `IMailer` port, the
 file-writing development adapter, and the message templates); `organizations/`
-(`/organizations`, `/organizations/:id/members`, the four invitation routes including the
+(`/organizations`, `/organizations/:id/members`, the invitation routes including the
 unscoped `POST /invitations/:token/accept`); `authorization/` (`PermissionsGuard`,
 `@RequirePermission`, `PrincipalService` — the one hydrator of a `Principal` — and
 `/organizations/:id/grants`); `audit/` (`GET /audit` and `GET /organizations/:id/audit`);
@@ -97,8 +95,8 @@ both in one file.
 > case, for `PrincipalService`. A guard is instantiated in the module context of the
 > controller that names it, so **every module hosting a guarded controller must register
 > every repository that guard injects**. That is not a type error and not a lint error: it
-> is an `UnknownDependenciesException` at start-up, and for one commit in this phase the
-> generated application did not boot at all while every fast tier stayed green.
+> is an `UnknownDependenciesException` at start-up, and for one commit the generated
+> application did not boot at all while every fast tier stayed green.
 > `__tests__/guard-wiring.spec.ts` is what turns red — it *discovers* guards from
 > `@UseGuards` metadata rather than reading a list, so a new guard on a new controller is
 > covered without anyone remembering to add it.
@@ -121,14 +119,21 @@ both in one file.
   described above. **`app.module.ts`'s own `imports` and `entities` arrays are that list and
   neither is restated here**: a copy of either falls behind the first module or entity added
   after it was written, and both have. The `entities` array in particular is not a free list
-  — the schema-drift probe in `tests/integration/docker.test.mjs` asserts the exact *set* of
-  tables TypeORM maps, so a record class registered late turns it red, and one registered
-  early costs nothing. Everything that can be module metadata IS, because module metadata is
-  assertable without starting anything; `__tests__/composition-root.spec.ts` reads this list
-  off the decorator and its table says which fault each assertion catches.
-- `app.setup.ts` — `cookie-parser` and CORS from `CORS_ORIGIN`, which are the two things
-  the framework has no declarative form for. A spec calls **this function**, not a copy.
-- `main.ts` — four statements: create, `configureApp`, read `PORT` (default `3000`),
+  — `__tests__/composition-root.spec.ts` asserts it entity by entity, so a record class
+  registered late turns it red, and one registered early costs nothing. Everything that can
+  be module metadata IS, because module metadata is assertable without starting anything;
+  that same spec reads this list off the decorator and its table says which fault each
+  assertion catches.
+- `app.setup.ts` — **everything the framework has no declarative form for, and nothing
+  else**: whatever can be module metadata is in `app.module.ts` instead, so this file is
+  defined by that rule rather than by a list, and the file itself is what to read for its
+  current contents. As written: `cookie-parser`, CORS from `CORS_ORIGIN`, and the OpenAPI
+  document at `/api/docs`, mounted unless `NODE_ENV` is exactly `production`. That last one
+  goes through the HTTP adapter rather than a controller, so the global guard never sees
+  those routes — any environment not labelled `production` serves the full API map
+  anonymously, which this package's own `README.md` spells out. A spec calls **this
+  function**, not a copy.
+- `main.ts` — a handful of statements: create, `configureApp`, read `PORT` (default `3000`),
   listen. Deliberately almost empty: it is excluded from coverage and no spec imports it,
   so anything added there is invisible to the whole suite. That was measured.
   There is **no** global route prefix — the health endpoints are polled unprefixed, by
@@ -144,7 +149,7 @@ both in one file.
   `MFA_ISSUER` (the name an authenticator app shows beside the code, in the enrollment
   URI). `OAuthService` is an ordinary provider of `AuthModule`, so `PUBLIC_API_URL` is
   required at construction whether or not any federated provider is actually configured,
-  and `MfaService` reads `MFA_ISSUER` at construction likewise. All five are `getOrThrow`
+  and `MfaService` reads `MFA_ISSUER` at construction likewise. Each of these is a `getOrThrow`
   with no default in the code, deliberately — see `.env.example`.
 - `nest-cli.json` carries `"entryFile": "apps/backend/src/main"` **and**
   `"outDir": "dist/apps/backend/src"` on its `assets` entry, and both are load-bearing.
@@ -154,7 +159,7 @@ both in one file.
   reporting a clean compile**, so the container reports "Up", never healthy, and everything
   waiting on `service_healthy` stalls.
 
-  **Five places name that layout, and every one of them has to agree:**
+  **These places name that layout, and every one of them has to agree:**
 
   1. `package.json` → `start:prod`
   2. `package.json` → `migration:run:prod`
@@ -165,17 +170,18 @@ both in one file.
      would sit in between and not forward it.
   5. `nest-cli.json` → `outDir` on the `assets` entry
 
-  Two of the five were missed when `rootDir` was pinned, and both failures were invisible
-  to every fast tier. Adding a sixth consumer means adding it to this list.
+  Two of them were missed when `rootDir` was pinned, and both failures were invisible
+  to every fast tier. Adding another consumer means adding it to this list.
 
   Without (5) the `i18n/**/*` files are copied to
   `dist/i18n/`, while `app.module.js` — which resolves them with `join(__dirname, 'i18n')`
   — sits in `dist/apps/backend/src/`. The build succeeds and then **the production image
   does not boot at all**: `nestjs-i18n` throws `I18nError: i18n path (...) cannot be found`
   from `onModuleInit`, after every route has been mapped. Measured by running the compiled
-  output directly. Nothing in the fast test tiers can see it — jest runs against `src/`,
-  where the files already sit beside the module — and neither can the docker e2e, which
-  boots the *dev* target and therefore also runs from `src/`.
+  output directly. **No test in this repository can see it** — jest runs against `src/`,
+  where the files already sit beside the module — and neither can the dev container, which
+  also runs from `src/`. Building and starting the production target (`npm run prod:build`,
+  `npm run prod:up`) is what catches it.
 - `src/db/data-source.ts` — the TypeORM CLI data source for `migration:generate` /
   `migration:run`, reading `MIGRATION_DATABASE_URL` and falling back to `DATABASE_URL`.
   **Two roles, on purpose:** migrations run as the schema owner, the application connects
@@ -183,13 +189,13 @@ both in one file.
   revoked from that role — which a non-owner cannot grant back to itself. That is the
   whole of the append-only audit guarantee. **Read
   [ADR-0009](../../docs/adrs/0009-two-database-roles.md) before touching this schema**: it
-  lists the four ways to make the revoke decorative while every test stays green, and the
+  lists the ways to make the revoke decorative while every test stays green, and the
   one most likely to be reached for by accident is adding a foreign key to `audit_entries`.
 - `src/i18n/en/*.json` + `src/common/i18n/` — translation plumbing, **registered** as the
-  exported `I18N` dynamic module in `app.module.ts`. It was not, for a phase, and the
+  exported `I18N` dynamic module in `app.module.ts`. It was not, for a time, and the
   consequence was concrete: `HttpExceptionFilter` fell back to emitting the raw key, so a
   refused sign-in answered `{"message":"errors.auth.invalid_credentials"}` rather than the
-  English beside it. Two specs now assert that a body carries prose rather than a key, so
+  English beside it. Specs now assert that a body carries prose rather than a key, so
   the registration cannot silently go away again. See `STANDARDS.md` — nestjs-i18n
   mechanics.
 
@@ -217,11 +223,11 @@ there rather than assuming they are alike.
 ## Common utilities
 
 The **Location** column is where the class is defined. Where a utility is *registered*
-is a separate question and the answer is the same for the first three: they are `APP_*`
-entries in `GLOBAL_PROVIDERS` in `app.module.ts`, **not** imperative calls in `main.ts`.
+is a separate question and the answer is the same for every row below whose *Registered
+as* is `APP_*`: those are entries in `GLOBAL_PROVIDERS` in `app.module.ts`, **not** imperative calls in `main.ts`.
 That distinction is the whole reason they are assertable — see `app.setup.ts`'s own
-comment for what it cost when they lived in `bootstrap()`. There are two
-`APP_INTERCEPTOR` entries, not one; `app.module.ts` is the list.
+comment for what it cost when they lived in `bootstrap()`. `APP_INTERCEPTOR` has more
+than one entry; `app.module.ts` is the list.
 
 | Utility                | Defined in                  | Registered as | Purpose                                                  |
 | ----------------------- | ---------------------------- | --- | --------------------------------------------------------- |

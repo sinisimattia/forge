@@ -3,9 +3,9 @@
  * The bar across the top: the wordmark, and either who is signed in or the two
  * ways to become so.
  *
- * Imported from the project Forge was extracted from. Both routes it links to —
- * `/login` and `/register` — are shipped by this phase, and it references no
- * other; `UserMenu` behind `isAuthenticated` is the only other thing it renders.
+ * Both routes it links to — `/login` and `/register` — exist in this
+ * application, and it references no other; `UserMenu` behind `isAuthenticated`
+ * is the only other thing it renders.
  *
  * `isAuthenticated` is `false` while the answer is still `unknown`, so the first
  * server-rendered frame of a signed-in person's page shows the signed-out pair.

@@ -270,9 +270,9 @@ describe('GrantsController', () => {
       expect(entry!.actorUserId).toBe(OWNER);
     });
 
-    // The write-side half of "grants never widen into another tenant" — the
-    // read end is `can()`'s own organization match, and both halves are
-    // needed: either alone leaves a path (spec §9.5).
+    // The write-side half of ADR-0006's "grants ... never reach across a
+    // tenant boundary" — the read end is `can()`'s own organization match, and
+    // both halves are needed: either alone leaves a path.
     it('refuses a grant for somebody who is not a member, and issues nothing', async () => {
       seedOrganization(ORG_1, OWNER);
       // OUTSIDER belongs to no organization at all — real account, no membership.

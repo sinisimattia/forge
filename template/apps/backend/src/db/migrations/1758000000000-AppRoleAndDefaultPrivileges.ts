@@ -85,7 +85,7 @@ async function exec(
  *
  * `ALTER DEFAULT PRIVILEGES` applies only to objects created *after* it. It is
  * run here, in the first migration, before any table exists, so that the schema
- * migration and every schema migration a later phase adds are covered with no
+ * migration and every schema migration added after it are covered with no
  * accompanying `GRANT`. Verified: a table created before the statement carries
  * no privileges for the role, and one created after carries all four.
  *
@@ -172,7 +172,7 @@ export class AppRoleAndDefaultPrivileges1758000000000 implements MigrationInterf
     // of the ordering this migration depends on).
     //
     // It is here for exactly the reason the TABLES line above is: both exist
-    // for objects that do not exist yet. The first later phase to add a
+    // for objects that do not exist when it runs. The first migration to add a
     // `serial` or `GENERATED … AS IDENTITY` column would otherwise get
     // `permission denied for sequence` at its first insert, with the fix living
     // in a migration nobody would think to look at.
@@ -198,8 +198,8 @@ export class AppRoleAndDefaultPrivileges1758000000000 implements MigrationInterf
    *
    * `DROP OWNED BY` would make the drop succeed unconditionally and is
    * rejected for that reason: it destroys every object the role owns, so a
-   * later phase that gave the application role anything of its own would lose
-   * it to a routine revert.
+   * later migration that gave the application role anything of its own would
+   * lose it to a routine revert.
    */
   public async down(queryRunner: QueryRunner): Promise<void> {
     const role = requireAppRoleName();

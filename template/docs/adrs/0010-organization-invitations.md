@@ -76,9 +76,9 @@ person, who clicked a forwarded or since-revoked link, the only comprehensible a
 available to them: *this invitation is no longer open*, rather than *no such invitation*,
 which is false.
 
-**The distinction is therefore conditional on the token, not on the endpoint.** If a later
-phase ever shortens the token, makes it human-typable, derives it from anything guessable,
-or exposes invitations under a sequential identifier, this argument stops holding and both
+**The distinction is therefore conditional on the token, not on the endpoint.** If the
+token is ever shortened, made human-typable, derived from anything guessable, or if
+invitations are exposed under a sequential identifier, this argument stops holding and both
 the error and its wire mapping must be revisited together.
 
 The three *closed* reasons are collapsed for the opposite reason, and that one is

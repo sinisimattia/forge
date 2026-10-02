@@ -185,7 +185,7 @@ describe('can', () => {
 
     // Layer one is unconditional and runs before layer two, so a platform
     // administrator passes for an organization they have no membership in. That
-    // is spec §9.5's first layer and the reason every such pass is recorded.
+    // is ADR-0006's first layer, and the reason every such pass is recorded.
     it('lets a platform administrator through with no membership at all', () => {
       const principal: Principal = {
         userId: ADA,
@@ -222,8 +222,8 @@ describe('can', () => {
   describe('layer three — resource grant', () => {
     // A grant names one organization and one record. This is the assertion that
     // stops it widening: the same grant, asked about the same record id in a
-    // DIFFERENT organization, must not answer true. Spec §9.5 states it as
-    // "grants never widen into another tenant", and without this assertion an
+    // DIFFERENT organization, must not answer true. ADR-0006 states it as
+    // grants "never reach across a tenant boundary", and without this assertion an
     // implementation matching on the record id alone passes every other test
     // here — two tenants are free to issue the same id.
     it('never lets a grant reach into another tenant', () => {
@@ -258,8 +258,10 @@ describe('can', () => {
     // anyway. Layer three is a route to `true` that runs after it, so folding
     // that refusal into the `if` above it now means a grant authorizes somebody
     // who is not a member of the organization at all — which is precisely what
-    // spec §9.5 says cannot happen, "because `can()` requires the resource's
-    // `organizationId` to match the principal's membership".
+    // ADR-0006's "grants ... never reach across a tenant boundary" forbids. What
+    // makes that sentence true here is the ordering: `can` requires the
+    // resource's `organizationId` to match a membership the principal holds
+    // before any grant is consulted.
     it('refuses a matching grant to a principal with no membership there', () => {
       const principal: Principal = {
         userId: ADA,

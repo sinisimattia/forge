@@ -46,8 +46,8 @@ const SIGNING_KEY = 'auth-controller-spec-signing-key';
  * Fixture values, named rather than written inline at each use.
  *
  * Partly because one name is easier to follow than six copies, and partly
- * because the extraction gate that produced this project reads a quoted literal
- * assigned to a credential-shaped key as a populated credential wherever it
+ * because a text-based secret scan reads a quoted literal assigned to a
+ * credential-shaped key as a populated credential wherever it
  * appears. That is exactly the shape it should flag, and it is also the shape a
  * test fixture written inline takes, so the fixtures are named instead.
  * `Argon2PasswordHasher.spec.ts` established the same idiom.
@@ -295,7 +295,7 @@ describe('AuthController', () => {
 
   describe('recovery', () => {
     // The third of the three endpoints that take an address without proving
-    // anything, and the one that had no route at all for a phase while
+    // anything, and the one that had no route at all for a time while
     // `AuthService.resendVerification` existed and was tested. `IAuthService`
     // names the method, so a caller implementing that contract over this API
     // could not honour it — which is where the gap surfaced.
@@ -437,7 +437,7 @@ describe('AuthController', () => {
       // Neither proof, which `AuthController.completeSecondFactor` refuses
       // before anything is reached — so this says nothing about the stub above.
       // Assembled rather than written out: a quoted literal on a field of this
-      // name is a populated credential to the extraction gate's text scan, the
+      // name is a populated credential to a text-based secret scan, the
       // reason `mfa/__tests__/mfa-audit.spec.ts` assembles its own.
       const nothingMinted = ['nothing', 'this', 'suite', 'minted'].join('-');
       const response = await request(app.getHttpServer())

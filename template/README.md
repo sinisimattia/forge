@@ -20,7 +20,7 @@ Running `npm install` on the host first is optional (useful for editor tooling l
 in-IDE typechecking), not required — the containers install from `package-lock.json` on
 their own via `npm ci`.
 
-- Backend API: [http://localhost:3000](http://localhost:3000) (liveness at `/health`, readiness at `/health/ready`)
+- Backend API: [http://localhost:3000](http://localhost:3000) (liveness at `/health`, readiness at `/health/ready`, OpenAPI document at `/api/docs`)
 - Webapp: [http://localhost:3001](http://localhost:3001)
 
 Tear the stack down with `npm run dev:down`, or wipe its volumes too with `npm run dev:reset`.

@@ -35,7 +35,7 @@ export const PLATFORM_ADMIN_PASS = 'auth:platformAdminPass';
  * Writes the `PLATFORM_ADMIN_OVERRIDE` entry a platform-administrative pass
  * owes — **after the handler has run, not before it**.
  *
- * Spec §9.5 requires every such pass to be recorded, and the guard is where the
+ * ADR-0006 requires every such pass to be recorded, and the guard is where the
  * pass is decided. Recording it *there* had one consequence nobody wants and
  * one nobody had noticed: `GET /audit` is itself guarded, so a read of the
  * history wrote a row before the handler queried, and **the newest row of page 1

@@ -10,7 +10,7 @@ import type { OrganizationProps } from '../types/OrganizationProps';
  *
  * The entity carries no role of its own: `OrgRole` lives on `Membership`,
  * because the same organization can have many members and each may hold a
- * different role (spec §9.4).
+ * different role.
  */
 export class Organization {
   readonly id: OrganizationId;
@@ -24,9 +24,9 @@ export class Organization {
    * Lowercase letters, digits and single hyphens, never leading or trailing.
    * **Not currently used in any URL** — nothing in this project builds a path
    * or a link from it today. The rule stays narrower than what a URL permits
-   * anyway, and deliberately: it is *reserved* for that use, not put to it yet,
-   * so a later phase can start putting it in a path with no migration and no
-   * loosened regex to reconsider first. Say it that way and no other, or the
+   * anyway, and deliberately: it is *reserved* for that use rather than put to
+   * it, so that putting it in a path later costs no migration and no loosened
+   * regex to reconsider first. Say it that way and no other, or the
    * next reader inherits a claim this file no longer keeps.
    *
    * The entity does **not** derive this from the name. Two organizations

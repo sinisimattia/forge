@@ -24,11 +24,10 @@ signed-out flash. The client plugin `dependsOn` pinia's, and that ordering is lo
 renewing before the server render's answer has landed spends a rotation whose result is then
 discarded, and the backend's reuse detection revokes the session family.
 
-On top of *that* sits the user-facing surface: `app/components/organisms/` (`LoginForm`,
-`RegisterForm`, `AppHeader`, `SessionList`, `IdentityList`), two layouts, and the pages —
-sign in, register, verify an address, request and complete a password reset, and an
-`account/` area for the profile, the password, the active sessions and the linked
-identities.
+On top of *that* sits the user-facing surface: `app/components/organisms/` (the forms, lists
+and panels a page is assembled from), `app/layouts/`, and `app/pages/`, where the route is the
+directory and file path. `ls` them: a prose list of the pages would be true on the day it was
+written and wrong the day after.
 
 Feature domains (e.g. `articles`, `comments`, `tags`) land here once `libs/core` defines
 their entities and `I*Service` contracts (see `libs/core/CLAUDE.md`).
@@ -74,11 +73,9 @@ All design docs live in the top-level `docs/` folder (paths relative to the repo
 | Agent Playbook (shared)            | `docs/standards/agent-playbook.md` |
 | Guides                             | `docs/guides/README.md`        |
 
-**ADRs:** `docs/adrs/` — conventions: 0001 (single-source docs), 0002 (consolidated agent
-roster), 0003 (architecture docs describe boundaries), 0004 (API reference lives with
-implementation). Platform: 0005 (identity is separate from user), 0006 (authorization is a
-pure function in core), 0007 (tenancy is explicit, never ambient), 0008 (ports, not
-vendors), 0009 (two database roles).
+**ADRs:** `docs/adrs/` holds one record per decision that is expensive to reverse,
+numbered in the order it was made; `docs/adrs/README.md` is the index. Read the ones whose
+subject you are about to touch before you touch it.
 
 ## Directory structure
 
@@ -90,7 +87,7 @@ webapp/
 │   └── check-atomic-layers.mjs # the W1 gate (`npm run layers`)
 ├── app/
 │   ├── app.vue                 # Root component
-│   ├── pages/                  # index.vue (placeholder) + the auth and account/ pages
+│   ├── pages/                  # index.vue (the home page) + the auth and account/ pages
 │   ├── layouts/                # auth, account — chosen by `definePageMeta`
 │   ├── components/
 │   │   ├── atoms/              # the generic library — AppButton, AppInput, AppTable*, …
@@ -142,8 +139,8 @@ reporting a clean scan of zero files.
   package will not pick it up automatically — update `nuxt.config.ts`'s `typescript` block
   to match.
 - `app/app.vue` — `<NuxtLayout><NuxtPage /></NuxtLayout>`, nothing else.
-- `app/pages/index.vue` — renders the translated home title/subtitle via `useI18n` and
-  sets the page title via `useHead`.
+- `app/pages/index.vue` — composes the home page from atoms — translated title, subtitle and
+  sign-in/register links via `useI18n` — and sets the page title via `useHead`.
 - Storybook — one story per component, under `Atoms/`, `Molecules/` and `Templates/`;
   `storybook dev -p 6006` / `storybook build`.
 - `npm run layers` — the Atomic Design layering gate (W1 in `STANDARDS.md`). It runs in CI

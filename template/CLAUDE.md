@@ -23,7 +23,7 @@ authorization (organizations, memberships, invitations, organization roles, per-
 grants, and `PermissionsGuard` over core's `can()`). No business domain of its own — that is
 what a generated project adds.
 
-**Five decisions here bind everything built on top**, and each has an ADR because getting it
+**The decisions below bind everything built on top**, and each has an ADR because getting it
 wrong later is a migration rather than an edit: authorization is a pure function in core
 ([ADR-0006](docs/adrs/0006-authorization-is-a-pure-function-in-core.md)), tenancy is explicit
 and never ambient ([ADR-0007](docs/adrs/0007-tenancy-is-explicit-never-ambient.md)), the

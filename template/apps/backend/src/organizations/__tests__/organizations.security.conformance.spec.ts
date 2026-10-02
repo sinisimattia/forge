@@ -28,7 +28,7 @@ import { adaptJestToConformanceExpect, makeTenancyWorld } from '../../common/tes
  * The suite's own preamble names it, and it is worth repeating where the
  * implementation is, because it is not the fault this project first went looking
  * for. Hydrating the principal from the route's organization rather than the
- * credential's subject — design ruling R3, asserted at `PermissionsGuard` — is a
+ * credential's subject — the rule `PermissionsGuard` asserts — is a
  * real rule and a *fail-closed* one: looking a user up by an organization's id
  * finds nobody and refuses everything.
  *
@@ -46,9 +46,11 @@ import { adaptJestToConformanceExpect, makeTenancyWorld } from '../../common/tes
  * `uq_memberships_org_user`, `uq_organizations_slug` and
  * `uq_organization_invitations_token_hash` do not exist for this run, so no
  * assertion below covers one. What is asserted here is the predicate the
- * implementation *asks for* — which is the half a unit test can own — and the
- * docker end-to-end suite's walk against a real database is where the
- * constraints themselves are exercised.
+ * implementation *asks for* — which is the half a unit test can own. The
+ * statements that create those constraints are asserted in
+ * `db/__tests__/migration-sql.spec.ts`; executing them against a real database,
+ * which is the only thing that shows a constraint actually bites, is not done
+ * anywhere in this repository.
  */
 
 runIOrganizationServiceSecurityContract({

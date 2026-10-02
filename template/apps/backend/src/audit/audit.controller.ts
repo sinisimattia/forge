@@ -10,6 +10,7 @@ import type { Request } from 'express';
 import { PLATFORM_ADMIN_PASS, PlatformAdminGuard, type PlatformAdminPass } from '../auth/guards';
 import type { AuthenticatedActor } from '../auth/strategies';
 import { AuditService } from './audit.service';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
  * How a caller asks for one page of the history.
@@ -26,6 +27,7 @@ export class AuditQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @ApiPropertyOptional()
   readonly page: number = 1;
 
   @IsOptional()
@@ -33,6 +35,7 @@ export class AuditQueryDto {
   @IsInt()
   @Min(1)
   @Max(100)
+  @ApiPropertyOptional()
   readonly limit: number = 20;
 
   /** Only entries this person is recorded as the actor of. */
@@ -72,7 +75,7 @@ export class AuditQueryDto {
  * ## Reading this log appends to it, and that is not a mistake
  *
  * `PlatformAdminGuard` records a `PLATFORM_ADMIN_OVERRIDE` for every pass, so
- * every read of the history adds an entry to the history. Spec §9.5 requires
+ * every read of the history adds an entry to the history. ADR-0006 requires
  * every platform-administrative pass to be logged and this is exactly such a
  * pass, so the entry is owed. Carving out an exception here — "except when the
  * thing being read is the log itself" — would be the one exception nobody

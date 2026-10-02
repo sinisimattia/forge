@@ -7,9 +7,10 @@ import { validationMessage } from '../../common/i18n';
  *
  * The deeper rule — that this change may not leave the organization with no
  * OWNER — is `OrganizationsService`'s own invariant, enforced once against a
- * count read inside the write's transaction (spec §9.4, D15). A DTO cannot
- * see the rest of the membership set, so it is not this class's business to
- * try.
+ * count read inside the write's transaction, and asserted by discriminating
+ * test D15 (`apps/backend/src/__tests__/discriminating/d15-last-owner.spec.ts`).
+ * A DTO cannot see the rest of the membership set, so it is not this class's
+ * business to try.
  */
 export class ChangeMemberRoleDto {
   /** The role the member is to hold. */

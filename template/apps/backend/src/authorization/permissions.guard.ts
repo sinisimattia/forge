@@ -29,7 +29,7 @@ export const ORGANIZATION_PARAM = 'id';
  * does: by the time this runs the request has proven who it is, so the only
  * question left is whether that person may do this to this organization.
  *
- * ## The fault this guard is written to make impossible (design ruling R3)
+ * ## The fault this guard is written to make impossible
  *
  * **The principal is hydrated from the credential's subject. The resource is
  * resolved from the stored record. The route parameter builds neither.**
@@ -39,9 +39,10 @@ export const ORGANIZATION_PARAM = 'id';
  * instead and `can` compares the request's organization against itself: the
  * membership it consults is the one the parameter just invented, it always
  * agrees, and tenant isolation passes without testing anything. That is this
- * phase's signature defect one level up — *a claim whose subject has no test is
- * a claim about nothing* — and it was injected into this file and watched
- * turning `permissions.guard.spec.ts`'s own R3 case red before this shipped.
+ * codebase's signature defect one level up — *a claim whose subject has no test
+ * is a claim about nothing* — and it was injected into this file and watched
+ * turning `permissions.guard.spec.ts`'s own "whose request is it" case red before
+ * this shipped.
  *
  * ## Why the organization is read back rather than trusted
  *
@@ -79,7 +80,7 @@ export const ORGANIZATION_PARAM = 'id';
  * the deployment's own records supplies its own type and id; a route about the
  * organization as a whole must not.
  *
- * ## Nothing is cached (design ruling R4)
+ * ## Nothing is cached
  *
  * The principal is hydrated per request, every request. A cache outliving one
  * request would mean a membership or grant revoked mid-session kept authorizing
@@ -154,10 +155,10 @@ export class PermissionsGuard implements CanActivate {
     if (organization === null) throw new NotFoundException();
 
     // THE PRINCIPAL, RESOLVED FROM THE CREDENTIAL'S SUBJECT. `actor.userId` and
-    // never `claimed`: design ruling R3, and the single most important line in
+    // never `claimed` — the single most important line in
     // this file. Hydrating from the parameter makes `can` compare the request's
     // organization against itself — it always agrees, and tenant isolation
-    // passes without testing anything. Per request and never cached (R4).
+    // passes without testing anything. Per request and never cached.
     const principal = await this.principals.hydrate(actor.userId, new Date());
 
     const permitted = can(principal, permission, {

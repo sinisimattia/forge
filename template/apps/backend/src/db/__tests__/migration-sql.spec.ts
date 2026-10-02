@@ -14,8 +14,10 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  * database refuses anything: a migration could contain a perfect `REVOKE` and
  * still be pointed at a role nobody connects as, or be undone by a fourth
  * migration nobody added yet. The proof that a real `UPDATE` on `audit_entries`
- * is rejected by a real Postgres is discriminating test D13, which runs against
- * the booted stack in the docker end-to-end suite, and nowhere else.
+ * is rejected by a real Postgres is discriminating test D13, and it needs a
+ * running database that no test in this repository stands up. The nearest thing
+ * that ships is `db/audit-privilege-check.ts`, which re-checks the privilege at
+ * start-up and refuses to boot if it has come back.
  *
  * What text is good for is the reverse direction: catching the deletion. Every
  * assertion here exists because removing one line from a migration would make
@@ -35,11 +37,16 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  * makes every way of writing a table reference a separate bypass, and the
  * supply of spellings is not finite.
  *
- * So no guard below reads raw SQL. `canonicalStatements` reduces a `query()`
- * argument to a canonical form first, and every guard is written against that
- * one form — which is why a fifth spelling closes itself rather than becoming
- * a fifth round. What canonicalization does, and each of the bypasses it
- * retires, is documented on `canonicalize` itself.
+ * So no security property below rests on a guard that reads raw SQL.
+ * `canonicalStatements` reduces a `query()` argument to a canonical form first, and every
+ * guard that carries a guarantee is written against that one form — which is why a fifth
+ * spelling closes itself rather than becoming a fifth round. What canonicalization does,
+ * and each of the bypasses it retires, is documented on `canonicalize` itself.
+ *
+ * Raw text is still read in two places, neither of them load-bearing: assertions that pin
+ * the *authored* spelling, which canonicalization would erase, and raw duplicates of a
+ * canonical guard kept for the error message they give. "Where the canonical form is not
+ * used" below sets out all three groups and what each one is worth.
  *
  * The normalizer is the single point of failure this buys: a bug in it
  * weakens every guard at once, silently. That is not hypothetical — it
@@ -57,6 +64,38 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  * guard predicates against a constructed offender in every spelling, so
  * "refuses" is a property this suite checks rather than one a reader infers
  * from a regex.
+ *
+ * ## Where the canonical form is not used, and what that does and does not buy
+ *
+ * Not every assertion takes the canonical form, and the difference is
+ * deliberate rather than drift.
+ *
+ * - **Guards over the whole corpus** — a foreign key to `audit_entries`, a
+ *   grant, an ownership change, a rebuild of the table, found in *any*
+ *   migration. These take `canonicalStatements`, because the statement they
+ *   must catch can be spelled in more ways than anyone can list, and a guard
+ *   that misses one spelling is a bypass.
+ * - **Pins on authored text** — that the revoke names its role through a `%I`
+ *   placeholder, that the migration calls `requireAppRoleName()` rather than
+ *   writing a role name, that a named constraint is spelled as written. These
+ *   read raw source (or the uncanonicalised statement from `sqlStatements`)
+ *   because what they pin is the *authored text itself*, and canonicalization
+ *   would erase it: it lower-cases the statement and strips the default schema.
+ *   Written positively (`toContain`), the failure is loud — if the spelling
+ *   moves the assertion goes red and somebody reads the migration.
+ * - **Raw duplicates of a canonical guard** — some security assertions over a
+ *   single migration's raw text are kept beside a canonical whole-corpus twin,
+ *   for the sake of the error message they give (`gives audit_entries no foreign
+ *   key in its own CREATE TABLE` is one; its twin runs over the canonical form).
+ *   They are a convenience, and the twin is what carries the guarantee.
+ *
+ * What the raw group does *not* have is the safety this section might seem to
+ * claim for it. A raw **negative** — `not.toContain(...)`, `not.toMatch(...)` —
+ * errs toward green the moment a spelling moves, which is the failure the
+ * canonical form exists to remove. Such an assertion is only as strong as the
+ * single spelling it names, so it should not be the only thing standing between
+ * a migration and a security property; where one is, the canonical guard is the
+ * one to extend.
  *
  * ## And the lexer fails closed, because modelling constructs does not
  * converge either
@@ -155,9 +194,8 @@ import { requireAppRoleName, requireAppRolePassword } from '../app-role';
  *   alternative is an extractor that skips regions, which is a place to hide
  *   one.
  *
- * What stands behind all of it is D13: the docker end-to-end suite runs the
- * real statement against the real Postgres, and its fault injections include
- * the foreign-key bypass.
+ * What stands behind all of it is D13, which needs the real statement run
+ * against a real Postgres — not something this repository does.
  * If a change to the audit table cannot be made obvious in the text, that is a
  * reason to be suspicious of the change, not of the test.
  */
@@ -398,9 +436,9 @@ function endOfQuotedIdentifier(raw: string, at: number): number {
  * There is an irony in the construct. `AppRoleAndDefaultPrivileges` used to
  * wrap its `CREATE ROLE` in a `DO $do$ … $do$` block and that block was
  * deleted, because a password containing the literal text `$do$` broke out of
- * it — demonstrated by dropping a canary table. Two phases later the same
- * construct reappeared as a blind spot in the guard protecting that same
- * table, from the other direction.
+ * it — demonstrated by dropping a canary table. Much later the same construct
+ * reappeared as a blind spot in the guard protecting that same table, from the
+ * other direction.
  *
  * @param raw - the argument being scanned
  * @param at - the index that may open a dollar quote
@@ -2400,7 +2438,7 @@ describe('the oauth authorization requests migration', () => {
   }
 
   it('names the state_hash uniqueness constraint rather than declaring it inline', () => {
-    // PF-4: every other uniqueness rule in this schema is a named
+    // Every other uniqueness rule in this schema is a named
     // `CONSTRAINT`, not an inline `UNIQUE` on the column — a named constraint
     // is what an error message quotes when it fires, and it is what a
     // migration's own `down()` or a later `ALTER TABLE … DROP CONSTRAINT`
@@ -2601,8 +2639,8 @@ describe('the application role configuration', () => {
       // project called `my-app` gets `my-app-app`, one called `blog` gets
       // `blog-app`. A validation rule that rejected the first would fail every
       // generated project whose name has a hyphen, on its first migration —
-      // and the rule originally proposed for this task, which allowed no
-      // hyphen, did.
+      // which is what `ROLE_NAME_RE` would do without the hyphen in its
+      // character class.
       process.env.APP_DB_ROLE = role;
       expect(requireAppRoleName()).toBe(role);
     },

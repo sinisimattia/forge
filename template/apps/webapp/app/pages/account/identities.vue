@@ -27,6 +27,7 @@ const { t } = useI18n();
 useHead({ title: t('account.identities.title') });
 
 onMounted(() => {
+  // `void` is deliberate: both loads settle internally, so neither can reject.
   void load();
   void loadProviders();
 });

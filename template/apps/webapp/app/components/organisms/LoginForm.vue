@@ -5,7 +5,7 @@ import { assertNever, normalizeEmail } from '__FORGE_SCOPE__/core/shared/policie
 /**
  * Proving who you are.
  *
- * ## One message, for every way this can fail (DEC/D7)
+ * ## One message, for every way this can fail (D7)
  *
  * There is a single failure string, it is fixed, and it is shown for a refusal,
  * for a network fault and for anything else. That is not laziness about error

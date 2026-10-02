@@ -32,7 +32,7 @@ describe('AuditEntry', () => {
       expect(new AuditEntry(makeProps({ actorId: null })).actorId).toBeNull();
     });
 
-    it('accepts an entry belonging to no tenant, which every entry in this phase is', () => {
+    it('accepts an entry belonging to no tenant, which a platform-level entry is', () => {
       expect(new AuditEntry(makeProps()).organizationId).toBeNull();
     });
 

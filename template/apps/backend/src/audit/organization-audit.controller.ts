@@ -11,6 +11,7 @@ import { PermissionsGuard, RequirePermission } from '../authorization';
 import { ParseUuidParamPipe } from '../common/pipes';
 import type { PaginatedResponse } from '../common/types';
 import { AuditService } from './audit.service';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
  * How a caller asks for one page of ONE organization's history.
@@ -30,6 +31,7 @@ export class OrganizationAuditQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @ApiPropertyOptional()
   readonly page: number = 1;
 
   @IsOptional()
@@ -37,6 +39,7 @@ export class OrganizationAuditQueryDto {
   @IsInt()
   @Min(1)
   @Max(100)
+  @ApiPropertyOptional()
   readonly limit: number = 20;
 
   /** Only entries this person is recorded as the actor of. */
@@ -66,8 +69,9 @@ export class OrganizationAuditQueryDto {
 }
 
 /**
- * Reading one organization's own history — the organization-scoped half of
- * spec §9.6, `GET /audit`'s cross-tenant read being the other. Mounted under
+ * Reading one organization's own history. The audit log has two read
+ * surfaces and this is the organization-scoped one; `GET /audit`
+ * (`audit.controller.ts`) is the cross-tenant other. Mounted under
  * `/organizations/:id/audit`, guarded by `PermissionsGuard` and
  * `audit:read` exactly as `GrantsController`'s three routes are, rather than
  * by `PlatformAdminGuard`: this route is for an organization's OWN

@@ -41,9 +41,11 @@ nothing, and `UPDATE` and `DELETE` on `audit_entries` are revoked from it.**
 - A non-owner cannot grant a privilege back to itself, so this is not a rule the
   application can undo at runtime. It can still `INSERT` and `SELECT`, which is the whole
   of `IAuditService`.
-- The backend refuses to serve over a connection that holds either privilege. That check is
-  in `src/db/audit-privilege-check.ts` and it runs at start-up, so the guarantee is a
-  property of the running process rather than of somebody's deployment configuration.
+- The backend refuses to serve over a connection that still holds `UPDATE` on that table.
+  One question is enough, because the fault it is looking for is ownership and an owner
+  holds both. That check is in `src/db/audit-privilege-check.ts` and it runs at start-up,
+  so the guarantee is a property of the running process rather than of somebody's
+  deployment configuration.
 
 ## What this ADR exists to stop you doing
 
@@ -145,7 +147,7 @@ A related non-signal worth knowing: the application role attempting to grant the
 back to itself does **not** raise an error. Postgres emits `WARNING: no privileges were
 granted for "audit_entries"`, reports `GRANT`, and exits 0. Nothing is actually granted. A
 test written as "the GRANT fails" would therefore pass today for the wrong reason, and would
-keep passing if the privilege were genuinely regranted — so the end-to-end proof asserts
+keep passing if the privilege were genuinely regranted — so any proof of this must assert
 that the *privilege is unchanged*, never that the statement failed.
 
 ## Consequences

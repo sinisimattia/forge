@@ -16,13 +16,16 @@ If this file and a shared/ADR/RFC document disagree, the document wins.
 - **Entities, not DTOs.** Contract methods speak in domain entities; narrow inputs with `Omit`/`Pick`. The only sanctioned non-entity shapes are per-create input types and the per-entity JSON wire shape + `fromJSON` reviver.
 - **Exhaustive switches.** Every `switch` over an enum or a discriminated union ends in `default: return assertNever(value)` (`shared/policies`), so widening the union turns every site that does not handle the new member into a compile error rather than a silent fall-through. This is a compile-time guarantee only — see *`nx test core` does not type-check* below.
 - **TSDoc is definition-of-done.** Every exported `class`/`interface`/`type`/`enum` and every contract method carries TSDoc.
-- **A `{@link X}` to a symbol this file does not import renders as plain text, and that is accepted here.** It is uniform rather than accidental: every `<Thing>Props` and `<Thing>JSON` links back to `<Thing>`, in all four domains, and none of them can import it — the entity imports the props type, so the import that would make the link resolve is a cycle. Do not "fix" the subset that happens to be importable. Half-fixing it is the only way to end up with two precedents in a package whose domains are meant to be copied from one another, and a naming reference a reader can follow by eye is worth more than an import added for a hover.
+- **A `{@link X}` to a symbol this file does not import renders as plain text, and that is accepted here.** It is uniform rather than accidental: every `<Thing>Props` and `<Thing>JSON` links back to `<Thing>`, in every domain, and none of them can import it — the entity imports the props type, so the import that would make the link resolve is a cycle. Do not "fix" the subset that happens to be importable. Half-fixing it is the only way to end up with two precedents in a package whose domains are meant to be copied from one another, and a naming reference a reader can follow by eye is worth more than an import added for a hover.
 - **Money as integer cents; Dates are UTC `Date` in entities, ISO-8601 strings on the wire.**
 
 ## File layout — per-domain folders
 
 `libs/core/src/` is organized **per domain** (e.g. `articles/`), plus one cross-domain
-`shared/` folder. Each domain folder has exactly seven subfolders:
+`shared/` folder. Each domain folder draws on this set of subfolders and has only the ones
+it needs — except that `contracts/`, `types/` and `testing/` are always present: a domain
+without a contract, the types it moves and a suite that holds its implementations to it is
+not a domain in this package's sense.
 
 | Folder | Contents | Never contains |
 |---|---|---|

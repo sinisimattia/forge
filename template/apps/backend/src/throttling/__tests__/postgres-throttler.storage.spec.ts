@@ -16,7 +16,9 @@ import {
  * statement. A double that re-implemented the decision in TypeScript would be
  * worse than no test: every assertion would be about the double, the SQL could
  * be rewritten to count every attempt as the first, and the suite would stay
- * green. That was measured — see the task report's falsification run.
+ * green. That is measured rather than argued — a TypeScript double was built,
+ * the SQL rewritten to count every attempt as the first, and the suite stayed
+ * green throughout.
  *
  * So this file asserts the two halves that are genuinely in TypeScript, and
  * the shape of what is sent:
@@ -33,16 +35,17 @@ import {
  * an in-memory table, and what is under test here is two literal SQL statements
  * and what is done with the row one of them returns.
  *
- * ## Where the rest lives
+ * ## Where the rest lives — which is not in this repository
  *
  * The counting semantics — up to the limit without blocking, blocked on the
  * attempt after it, a blocked subject not counted further, separate subjects
- * separate, a fresh window after the old one ends — are asserted against a real
- * Postgres in `tests/integration/docker.test.mjs`, which executes
- * {@link RECORD_ONE_ATTEMPT} itself across **two independent connections**.
- * That is the one property no in-process double can demonstrate, because a
+ * separate, a fresh window after the old one ends — are properties of
+ * {@link RECORD_ONE_ATTEMPT} itself, and **nothing here asserts them.** Doing so
+ * needs a real Postgres executing that statement across **two independent
+ * connections**, which is exactly what no in-process double can stand in for: a
  * double shares the process it is supposed to be proving the counter does not
- * live in.
+ * live in. `npm run dev:up` stands that database up for anyone who wants to
+ * close the gap; until something does, those semantics rest on reading the SQL.
  */
 describe('PostgresThrottlerStorage', () => {
   /** 5 attempts per 60s, blocked for 120s once exceeded. Milliseconds, as the library passes them. */
@@ -148,7 +151,7 @@ describe('PostgresThrottlerStorage', () => {
     // What is in TypeScript is the half after the statement: that the reporter is
     // told when, and only when, the row says this call set the block. That the
     // statement says so once per block and never during one is a property of the
-    // SQL, asserted against a real Postgres in `tests/integration/docker.test.mjs`.
+    // SQL, which nothing in this repository asserts against a real Postgres.
     it('tells the reporter, with the key and the retry window in seconds, when the row says this call engaged the block', async () => {
       const reported: [string, number][] = [];
       const { storage } = stub(rowIn(TTL, BLOCK, LIMIT + 1, true), (key, seconds) => {

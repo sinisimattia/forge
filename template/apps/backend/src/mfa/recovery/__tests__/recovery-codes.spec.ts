@@ -29,8 +29,8 @@ const FAKE_TOTP_SEED = 'JBSWY3DPEHPK3PXP';
 
 /**
  * What the stubbed session hands back. Module constants rather than literals
- * beside the keys `accessToken` and `refreshToken`, which the extraction gate's
- * text scan would take for populated secrets — the idiom
+ * beside the keys `accessToken` and `refreshToken`, which a text-based secret
+ * scan would take for populated secrets — the idiom
  * `mapMfaMethodRecord.spec.ts` uses for `FAKE_TOTP_SEED`.
  */
 const STUB_ACCESS = 'stub-access';
@@ -53,8 +53,8 @@ const STUB_RENEWAL = 'stub-renewal';
  *
  * ## What `FakeDataSource` cannot see
  *
- * This phase has lost three properties to the double, and none is asserted
- * here as though it were:
+ * Three properties have been lost to the double, and none is asserted here
+ * as though it were:
  *
  * - **Unique constraints.** Nothing below asserts that
  *   `uq_mfa_recovery_codes_code_hash` refuses two rows sharing a digest; the

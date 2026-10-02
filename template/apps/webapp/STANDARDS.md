@@ -89,10 +89,6 @@ placement — placement is a judgement, and this is the question to ask.
   **only** when no atom fits: it holds a template `ref`/`id` consumed as a DOM element, it
   is an SFC/app root where wrapping adds nothing (as in `app.vue`), or it is a pure
   positioning/`relative`/`absolute`/`overflow` shim — add a short comment explaining why.
-- **Exception — the generated placeholder page.** `app/pages/index.vue` ships raw
-  `h1`/`p` and is exempt from this rule. It exists to prove the app renders and is meant
-  to be deleted when you build your first real page. Do not treat it as the pattern to
-  copy; every page you write composes from atoms.
 - **CSS-only-in-atoms:** raw CSS — `<style>`/`<style scoped>` blocks and inline
   `style=""` / `:style` bindings — appears **exclusively inside atoms**. Everywhere else,
   style only through Tailwind utility classes and atom props — never raw CSS. Global
@@ -141,9 +137,23 @@ app/components/**/*.vue · app/pages/**/*.vue   ← call composables only
   component — who is signed in — belongs there, and a composable over it (`useAuth`) is what
   a component calls. A composable that holds its own `ref` for something two components must
   agree about is the mistake this ordering exists to prevent.
-- The access credential lives **in memory only** (DEC-3): not in `localStorage`, not in a
-  cookie this code writes. `app/stores/__tests__/auth.spec.ts` asserts it by watching the
-  write API of all three, not by reading a key back.
+- **DEC-3 — where each credential lives.** The short-lived **access credential lives in
+  memory only**: not in `localStorage`, not in `sessionStorage`, not in a cookie this code
+  writes. `app/stores/__tests__/auth.spec.ts` asserts it by watching the write API of all
+  three, not by reading a key back. The long-lived **renewal credential is a cookie the
+  backend sets** `httpOnly`, `SameSite=Lax` and scoped to `/auth`
+  (`apps/backend/src/auth/refresh-cookie.ts`), so nothing on this side can read it; a request
+  that needs it is marked `withCookie`, which is what becomes `credentials: 'include'` in
+  `app/fetchers/client.ts`.
+
+  Two consequences the code handles rather than discovers. A full page load starts with no
+  access credential and has to renew during SSR — `app/plugins/auth-init.server.ts` copies the
+  incoming `cookie` header onto the outgoing request and relays the rotated `Set-Cookie` back
+  onto the response, and its own TSDoc says what each omission looks like. And renewal is
+  idempotent under concurrency: `app/stores/auth.ts` keeps the in-flight renewal and returns it
+  to every caller, because several components mounting at once would otherwise each present a
+  credential an earlier renewal had already spent, which the backend's reuse detection
+  correctly reads as theft. Both mistakes reach the person as being signed out at random.
 - A `?redirect=` taken from a URL goes through `localRedirect` (`app/utils/redirect.ts`)
   before anything navigates to it. An unjudged one is an open redirect, and a sign-in page
   is the highest-value place in an application to have one.
@@ -247,22 +257,28 @@ only locale) is in `docs/standards/i18n.md`. The Nuxt-specific mechanics:
 | W3 | Tailwind tokens only, no arbitrary values | `grep -rnE '\b[a-z][a-z0-9-]*-\[[^]]+\]' app/` | warning | STANDARDS.md — Tailwind tokens |
 | W4 | No `any` or `never` escapes | `grep -rnE -e '\bas[[:space:]]+any\b' -e '\bas[[:space:]]+never\b' -e ':[[:space:]]*any\b' -e ':[[:space:]]*never\b' -e '<any>' app/` | blocking | `docs/standards/typing.md` |
 | W5 | Every component has a story | a `.vue` under `components/` with no matching `stories/**/*.stories.ts` | warning | STANDARDS.md — Storybook |
-| W6 | UI strings are translated, never inline. **Signal is two patterns, both broad heuristics — read every hit and judge it; do not treat a match as a violation automatically.** They intentionally over-surface (over-surfacing beats missing a real one); both correctly skip `{{ }}` i18n interpolations since `{`/`}` fall outside the scanned run. Run **both**: the first catches `<Tag>prose</Tag>` on one line, the second catches prose on a line of its own between multi-line tags — which is exactly what fixing a `@stylistic/max-len` warning produces, and what the first one misses | `grep -rnE '>[^<>{}]*[A-Za-z]+[^<>{}]*<' app/ --include='*.vue'` then `grep -rnE "^[[:space:]]*[A-Za-z][A-Za-z ,.!?'-]*[A-Za-z.!?][[:space:]]*$" app/ --include='*.vue'` | blocking | `docs/standards/i18n.md` |
+| W6 | UI strings are translated, never inline. **Signal is two patterns, both broad heuristics — read every hit and judge it; do not treat a match as a violation automatically.** They intentionally over-surface (over-surfacing beats missing a real one); both skip a `{{ }}` i18n interpolation written on one line, since `{`/`}` fall outside the scanned run — but not the middle line of one split across several, whose braces sit on the neighbouring lines. Run **both**: the first catches `<Tag>prose</Tag>` on one line, the second catches prose on a line of its own between multi-line tags — which is exactly what fixing a `@stylistic/max-len` warning produces, and what the first one misses | `grep -rnE '>[^<>{}]*[A-Za-z]+[^<>{}]*<' app/ --include='*.vue'` then `grep -rnE "^[[:space:]]*[A-Za-z][A-Za-z ,.!?'-]*[A-Za-z.!?][[:space:]]*$" app/ --include='*.vue'` | blocking | `docs/standards/i18n.md` |
 | W7 | SSR pages set title and meta | `grep -rL -e "useHead" -e "useSeoMeta" app/pages/ --include='*.vue'` (lists changed pages with neither call) | warning | STANDARDS.md — SEO |
 | W8 | Interactive elements are reachable and labelled | `grep -rn "@click" app/ --include='*.vue'` then check the matched tag is not `button`/`a` (a `<button>`/`<a>` hit is not a violation) | blocking | STANDARDS.md — Accessibility |
 | W9 | Authorization decisions call core's `can()` and never restate a rule | **read and judge** — `grep -rn -e "OrgRole\." -e "\.role ===" -e "platformRole ===" app/composables app/stores app/middleware app/components` and read every hit: a comparison that decides what an actor may *do* — rather than merely what label to render, e.g. a role badge — is a restatement of a layer `can()` already evaluates, unless the file also appears in `grep -rln "from '__FORGE_SCOPE__/core/authorization/policies'"`. `useCan` is the one place this application is meant to ask; a second place that arrives at its own answer is exactly the drift ADR-0006 exists to prevent | blocking | ADR-0006 — authorization is a pure function in core |
 
-**W6's second pattern has a known-benign baseline.** On a clean tree it returns ten hits, and
-all ten are the same three shapes: an HTML comment's continuation line, a class-array or
-expression continuation inside a `:class` binding, and a valueless boolean attribute
-(`check-policy`). None is user-facing prose. A hit that is *not* one of those three is worth
-reading. The first pattern's baseline is zero.
+**W6's second pattern has a known-benign baseline.** On a clean tree, measured from `apps/webapp`,
+it returns 18 hits and none is user-facing prose. The shapes seen today include an HTML
+comment's continuation line, a class-array or expression continuation inside a `:class`
+binding, a valueless boolean attribute (`check-policy`), a bare `v-else`, and the middle line
+of a multi-line `{{ }}` interpolation (`AppRadioGroup.vue`). That list is illustrative, not
+complete: a hit that is not one of those shapes is worth reading, and a new shape is a reason
+to add it here rather than evidence the baseline is wrong. The first pattern returns one hit, a `Promise<void>`
+generic in a script block (`MfaChallengeForm.vue`); it is not markup and not prose. Re-measure
+both when the component set changes, and change these numbers in the same commit.
 
 The final character class is `[A-Za-z.!?]` and not `[A-Za-z]`, which is not a detail: most
 user-facing prose ends in a full stop, and a pattern requiring a letter last misses every
 sentence of it. Measured — `We will send you a link.` was missed by the letter-only form and is
-caught by this one, and the clean-tree baseline is ten either way, so the widening costs nothing. This baseline is recorded because a heuristic
-whose normal output is "ten things" gets ignored unless somebody wrote down which ten.
+caught by this one, and the widening moves the clean-tree baseline from 17 hits to 18, the extra one being a
+sentence-final full stop in `account/security.vue`, so it costs one hit and catches real prose.
+This baseline is recorded because a heuristic whose normal output is a screenful of hits gets ignored unless
+somebody wrote down which shapes they are.
 
 **W1 is a script, not a grep, and that is deliberate.** It used to search the component
 directories for the literal strings `~/components/atoms`, `~/components/molecules` and so on.

@@ -96,8 +96,10 @@ import { UserRecord } from '../../users/user-record.entity';
  * a confirmed second factor **and** a linked federated identity, and a
  * provider round trip for that identity reaches session issuance by a
  * completely different route — one that never consults the policy unless it
- * is made to. Spec §8.4 states the rule structurally for that reason: every
- * path that reaches `sessions.begin` calls `decideAuthenticationStep` first.
+ * is made to. ADR-0012 states the rule structurally for that reason: whether a
+ * second factor is owed is decided about the account, in one place, and a
+ * session is opened only where `SecondFactorSettled` evidence says that
+ * question was settled first.
  *
  * `the federated door` below is that rule asserted where it can actually
  * fail. It is in this file rather than beside D11 because it is D10's own

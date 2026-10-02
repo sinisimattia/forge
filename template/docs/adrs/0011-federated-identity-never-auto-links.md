@@ -67,7 +67,7 @@ to this application, that the caller already controls the account being linked.*
   and links nothing, and the authenticated link endpoint, reached with the same provider and
   the same asserted address, succeeds.
 
-## R2: no ID-token verification, and what a deployment needing one would do
+## No ID-token verification, and what a deployment needing one would do
 
 Every adapter behind `IOAuthProvider` (`apps/backend/src/auth/oauth/IOAuthProvider.ts`)
 resolves an account by exchanging an authorization code for an access credential directly
@@ -99,7 +99,7 @@ and `exp`, and only then proceeds. That is real, additional work, and it belongs
 adapter that needs it — not folded into every provider on the strength of one deployment's
 requirement.
 
-## R10: the development adapter, and its two start-up refusals
+## The development adapter, and its two start-up refusals
 
 `DevOAuthProvider` (`apps/backend/src/auth/oauth/adapters/DevOAuthProvider.ts`) is
 `IOAuthProvider`'s development adapter under ADR-0008: the template binds no developer

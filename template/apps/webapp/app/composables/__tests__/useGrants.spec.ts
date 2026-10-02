@@ -19,9 +19,8 @@ import { stubNuxtAutoImports } from '~/test/stubNuxtAutoImports';
 
 /**
  * `useGrants`. There is no test here for issuing one, because there is no
- * `create` to test — see the composable's own TSDoc for why a webapp-local
- * grant-creation form (and the `Permission` dropdown it would need) is out
- * of scope for this task.
+ * `create` to test — see the composable's own TSDoc for why the webapp has
+ * no grant-creation form, and no `Permission` dropdown to feed one.
  */
 
 const PLAINTEXT = 'a correct horse battery staple';

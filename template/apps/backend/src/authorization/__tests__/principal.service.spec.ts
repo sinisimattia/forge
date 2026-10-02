@@ -14,7 +14,7 @@ import { ResourceGrantRecord } from '../resource-grant-record.entity';
 
 /**
  * The hydrator: the one place the three facts an access decision reads are
- * established, and — design ruling R2 — the one place a grant's expiry is
+ * established, and the one place a grant's expiry is
  * judged at all.
  *
  * That second sentence is why this file is written carefully. `can` never reads
@@ -102,7 +102,7 @@ describe('PrincipalService', () => {
     seedUser(ACTOR);
   });
 
-  describe('grants, which is the only place expiry is judged (R2)', () => {
+  describe('grants, which is the only place expiry is judged', () => {
     it('excludes a grant that has expired as of the instant it was given', async () => {
       seedGrant('live', ACTOR, AT('2026-12-01T00:00:00.000Z'));
       seedGrant('lapsed', ACTOR, AT('2026-05-31T23:59:59.999Z'));
@@ -157,7 +157,7 @@ describe('PrincipalService', () => {
     });
 
     it('hands `can` a grant it honours without re-checking expiry', async () => {
-      // The other half of R2, stated as the consequence rather than the rule:
+      // The other half of that rule, stated as the consequence rather than the rule:
       // `can` does not judge `expiresAt`, so whatever survives the filter above
       // is authority. This is what makes the filter load-bearing rather than
       // belt-and-braces, and it is asserted here so that nobody "simplifies"

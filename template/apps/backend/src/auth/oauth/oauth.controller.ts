@@ -44,7 +44,8 @@ import { OAuthService } from './oauth.service';
  * place a person's browser can be on this origin holding a session that was
  * *just* renewed and a refusal that has somewhere specific to show it. On
  * success it renews through the store (never through a credential in this
- * URL — see this file's own R5 note) and forwards to `redirectTo`; on a
+ * URL — see the note on `callback` below, "why no credential travels in the
+ * redirect URL") and forwards to `redirectTo`; on a
  * refusal it renders the named message and goes nowhere on its own.
  */
 const OAUTH_CALLBACK_PATH = '/oauth/callback';
@@ -64,8 +65,8 @@ const OAUTH_CALLBACK_PATH = '/oauth/callback';
  *
  * ## Why the challenge token travels in this URL, where the access credential must not
  *
- * This file's R5 note keeps the refresh credential out of a redirect URL
- * because a query string lands in browser history, in the `Referer` of
+ * The note on `callback` below keeps the refresh credential out of a redirect
+ * URL because a query string lands in browser history, in the `Referer` of
  * whatever the webapp loads next, and in every proxy log on the way. All of
  * that is equally true of this token, and it is carried here anyway, because
  * what the two are worth to whoever reads them differs completely: a refresh
@@ -165,7 +166,8 @@ export class OAuthController {
    * repository's own opaque codes and never a provider's own error text
    * (attacker-influenced, and this application would be the one rendering it).
    *
-   * R5: the access credential this callback may mint is set as the refresh
+   * **Why no credential travels in the redirect URL:** the access credential
+   * this callback may mint is set as the refresh
    * cookie, exactly as `POST /auth/login` sets it (`REFRESH_COOKIE`, the one
    * place that cookie's options are spelled), and never appears in the
    * redirect URL — a token in a query string lands in browser history, the

@@ -76,8 +76,8 @@ interface PrimaryEmail {
  * GitHub lets its owner rename it, and a released login can be claimed by
  * somebody else afterward. An identity keyed on `login` is an identity that
  * transfers with the name to whoever claims it next — exactly the
- * account-takeover path this phase exists to close, arriving through a
- * different door. `id` is immutable for the life of the account, and is what
+ * account-takeover path D11 exists to close, arriving through a different
+ * door. `id` is immutable for the life of the account, and is what
  * {@link FederatedAccount.subject} is built from.
  */
 export class GitHubOAuthProvider implements IOAuthProvider {

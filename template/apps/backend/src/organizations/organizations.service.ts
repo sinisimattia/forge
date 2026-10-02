@@ -188,8 +188,10 @@ export class OrganizationsService implements IOrganizationService {
    *
    * This is two queries rather than one SQL `JOIN`, because the fake store
    * this backend's unit tests run against (`common/testing/fake-data-source.ts`,
-   * a hand-rolled double with no query builder — see ADR-0002 on zero
-   * dependencies) cannot execute one. The property that matters does
+   * a hand-rolled double that models TypeORM's repository API and not its
+   * query builder, because the suites it serves run in the ordinary `jest`
+   * run, where there is no Postgres — see that file's own TSDoc) cannot
+   * execute one. The property that matters does
    * not depend on which shape the read takes: `organizations` is still gated
    * on a query that names the actor and nothing else, on every path through
    * this method.
@@ -384,7 +386,9 @@ export class OrganizationsService implements IOrganizationService {
    * demoting the sole OWNER is not the owner demoting themselves, and
    * `if (targetUserId === actorId) throw new LastOwnerError()` would let it
    * through while passing every test where the owner acts on their own
-   * membership (spec §9.4, D15).
+   * membership. Discriminating test D15
+   * (`apps/backend/src/__tests__/discriminating/d15-last-owner.spec.ts`) is the
+   * file that tells the two forms apart.
    *
    * The transaction runs at **`SERIALIZABLE`**, not the default `READ
    * COMMITTED`. Under `READ COMMITTED`, two concurrent demotions of two

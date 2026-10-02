@@ -56,8 +56,8 @@ type EntityClass = { name: string };
  *   then sees what the winner committed.
  *
  * What it does **not** model is everything else a database does. It is not
- * evidence that Postgres behaves any particular way; the task report records a
- * separate run against a real Postgres 16 for that. It is evidence that *this
+ * evidence that Postgres behaves any particular way — that was established
+ * separately, by running the same cases against a real Postgres 16. It is evidence that *this
  * implementation asks for the lock*, which is the half a unit test can own.
  *
  * ## Properties this double CANNOT express
@@ -65,8 +65,8 @@ type EntityClass = { name: string };
  * Written out rather than left to be discovered, because the failure mode of an
  * undocumented limit is a test that passes for a reason its author never
  * intended — and a property asserted only here is a property nothing checks.
- * Anything in this list needs a real database (the docker end-to-end suite
- * stands one up); do not
+ * Anything in this list needs a real database, which nothing in this repository
+ * stands up for a test (`npm run dev:up` stands one up by hand); do not
  * reach for this fake to prove it.
  *
  * 1. **Isolation.** A concurrent reader sees this transaction's uncommitted

@@ -3,7 +3,7 @@ import { makeAuthIdentityJSON } from '__FORGE_SCOPE__/core/identities/testing';
 import type { AuthIdentityId } from '__FORGE_SCOPE__/core/identities/types';
 
 describe('makeAuthIdentityJSON', () => {
-  it('defaults to a password identity, which is the only one this phase implements', () => {
+  it('defaults to a password identity, which is the kind password registration creates', () => {
     expect(makeAuthIdentityJSON().provider).toBe(AuthProvider.PASSWORD);
   });
 

@@ -69,8 +69,8 @@ describe('AuditPrivilegeCheck', () => {
    *
    * `GRANT UPDATE (action) ON audit_entries TO <app>` leaves
    * `has_table_privilege` reporting `f` while the role can run
-   * `UPDATE audit_entries SET action = 'TAMPERED'` — the literal statement the
-   * e2e asserts is refused. The old check read only `has_table_privilege`, so
+   * `UPDATE audit_entries SET action = 'TAMPERED'` — the literal statement
+   * D13 is about. The old check read only `has_table_privilege`, so
    * the process booted. Nothing in this template issues a column grant, which is
    * exactly why nothing would have found this by accident.
    */

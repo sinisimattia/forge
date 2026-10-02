@@ -31,8 +31,8 @@ import type { FederatedSignInInput } from '../types/FederatedSignInInput';
  *    the reason this function exists. A provider asserting an address proves it
  *    controls *that address at that provider*; it proves nothing about an
  *    account here that happens to answer to the same string. Silent linking on
- *    a provider-asserted address is a documented account-takeover path (spec
- *    §9.3): anyone able to create an account at any configured provider using
+ *    a provider-asserted address is a documented account-takeover path
+ *    (ADR-0011): anyone able to create an account at any configured provider using
  *    somebody's address would inherit their account here. The remedy a person
  *    is given instead is the authenticated link flow — sign in the way you
  *    already can, then link the provider deliberately — which requires proving

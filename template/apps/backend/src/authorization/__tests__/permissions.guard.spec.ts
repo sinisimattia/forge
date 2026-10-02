@@ -14,7 +14,7 @@ import { RequirePermission } from '../require-permission.decorator';
 import { ResourceGrantRecord } from '../resource-grant-record.entity';
 
 /**
- * The guard, and above all **design ruling R3**: the principal comes from the
+ * The guard, and above all **whose request it is**: the principal comes from the
  * credential's subject and the resource comes from the stored record, and the
  * route parameter builds neither.
  *
@@ -24,8 +24,7 @@ import { ResourceGrantRecord } from '../resource-grant-record.entity';
  * without testing anything. *A claim whose subject has no test is a claim about
  * nothing.* That fault was injected into `permissions.guard.ts` and this file's
  * `hydrates the principal from the credential's subject, not from the route`
- * was watched turning red before any of this shipped; see the task report for
- * the run.
+ * was watched turning red before any of this shipped.
  *
  * ## The controller under test is defined here
  *
@@ -145,7 +144,7 @@ describe('PermissionsGuard', () => {
     seedMembership(ORG_A, VIEWER_OF_A, OrgRole.VIEWER);
   });
 
-  describe('design ruling R3: whose request is it', () => {
+  describe('whose request is it', () => {
     /**
      * The seed that makes the fault observable.
      *
@@ -275,7 +274,7 @@ describe('PermissionsGuard', () => {
     });
   });
 
-  describe('design ruling R4: nothing is cached', () => {
+  describe('nothing is cached', () => {
     it('denies on the next request once the membership is withdrawn', async () => {
       // D12's shape, one layer up from a grant. The access credential is not
       // re-minted when a membership ends, so anything cached for longer than a

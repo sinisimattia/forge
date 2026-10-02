@@ -8,7 +8,7 @@ import { buildOtpauthUri, renderQrSvg } from '../totp-enrollment';
  * A well-formed Base32 seed that guards nothing. Named `..._SEED_...` and held
  * in a constant, not written as a `secret:` property beside a literal, for the
  * reason `mapMfaMethodRecord.spec.ts` names its own `FAKE_TOTP_SEED`: the
- * extraction gate's text scan cannot tell an assignment shape from a credential.
+ * text-based secret scan cannot tell an assignment shape from a credential.
  */
 const FAKE_TOTP_SEED = 'ABC234';
 

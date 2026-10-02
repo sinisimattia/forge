@@ -67,8 +67,8 @@ path that would open a session asks that place first.**
   be produced, which is the structural point above — a path that opens one on a premise
   those factories do not name does not compile. Discriminating test D10
   (`apps/backend/src/__tests__/discriminating/d10-mfa-challenge-only.spec.ts`) counts
-  `sessions` rows rather than trusting a response body, and the Docker walk repeats the
-  count against a real database, including two requests racing on one challenge.
+  `sessions` rows rather than trusting a response body. Two requests racing on one
+  challenge is a property of the database, and nothing in this repository asserts it.
 - **A federated sign-in that owes a factor arrives at the same challenge as a password one.**
   The browser redirect from the callback carries the challenge to `/mfa/challenge`; from
   there the two roads are one road.

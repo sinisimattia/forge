@@ -80,12 +80,12 @@ const WRONG = 'not the password that was chosen';
 /**
  * One that breaks the policy.
  *
- * Named rather than written inline at its one use, because the extraction gate
- * reads a quoted literal assigned to a credential-shaped key as a populated
+ * Named rather than written inline at its one use, because a text-based secret
+ * scan reads a quoted literal assigned to a credential-shaped key as a populated
  * credential wherever it appears — a short literal written straight into a
  * `newSecret:` field is exactly the shape it should flag, and it cannot tell a
  * fixture from the real thing. (This sentence avoids spelling that pair out for
- * the same reason: the gate reads prose too, and it is right to.) The same idiom
+ * the same reason: such a scan reads prose too, and it is right to.) The same idiom
  * is used in `auth.service.spec.ts` and `auth.controller.spec.ts`.
  */
 const TOO_SHORT = 'short';

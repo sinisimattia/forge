@@ -30,9 +30,9 @@ import { PermissionsGuard } from '../authorization/permissions.guard';
  * what makes those specs fast and focused — and it means not one of them ever
  * asks Nest to resolve the real module graph. `composition-root.spec.ts` reads
  * `AppModule`'s decorator metadata and asserts what is *listed*, which was all
- * correct; the failure is in what is *reachable*. The only thing that booted the
- * real graph was the Docker e2e, which was PR-only, so a `main` that could not
- * start was reachable by pushing.
+ * correct; the failure is in what is *reachable*. Nothing else looks at the real
+ * graph at all, which is why this file derives it from the modules' own
+ * metadata rather than booting them.
  *
  * ## What this asserts, and why all three inputs are derived rather than listed
  *
@@ -56,8 +56,9 @@ import { PermissionsGuard } from '../authorization/permissions.guard';
  * fourth was wrong.
  *
  * It is a static check and not a boot: resolving the real graph for real needs a
- * database, which is what the Docker tier is for. This one runs in milliseconds
- * and catches the same class of fault, so both exist.
+ * database, which is what the `docker` job in `.github/workflows/ci.yml` does
+ * when it starts the production stack. This one runs in milliseconds and catches
+ * the same class of fault, so both exist.
  */
 
 /** Nest's own metadata keys. Spelled here because `@nestjs/core` does not export them. */

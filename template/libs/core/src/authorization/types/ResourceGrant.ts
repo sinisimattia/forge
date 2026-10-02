@@ -14,7 +14,7 @@ import type { ResourceType } from './ResourceType';
  * to *that*", which is a question a role cannot be narrowed enough to answer
  * without becoming a role per record.
  *
- * **A grant names one organization and never widens past it** (spec §9.5). The
+ * **A grant names one organization and never widens past it** (ADR-0006). The
  * tenant is a field of the grant rather than something inferred from the record
  * it points at, because `can` has no lookup: given only a resource type and an
  * id it could not tell whose tenant the record is in, and two tenants are free

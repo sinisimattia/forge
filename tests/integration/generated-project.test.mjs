@@ -380,8 +380,8 @@ test('a generated project contains the whole process layer', async () => {
   //
   // They had in fact already split by the time this assertion was written: `coverage` was
   // in `ci.yml` and in neither `affected` nor `targetDefaults`, and had been for a phase.
-  // That is the observed failure this test was added for, and it is recorded in
-  // task-20-report.md rather than being an injection somebody had to invent.
+  // That is the observed failure this test was added for — a drift that had already
+  // happened and gone unnoticed, not an injection somebody had to invent.
   //
   // Both lists are PARSED, neither is restated here. A test carrying its own copy of the
   // list would be a third place to forget.

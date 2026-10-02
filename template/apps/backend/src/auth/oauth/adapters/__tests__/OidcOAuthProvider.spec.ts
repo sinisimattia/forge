@@ -9,9 +9,9 @@ const TOKEN_ENDPOINT = `${ISSUER}/token`;
 const USERINFO_ENDPOINT = `${ISSUER}/userinfo`;
 
 const CLIENT_ID = 'oidc-client-id';
-// Self-named on purpose (see tools/sanitize.mjs's SELF_NAMED_VALUE): a value
-// identical to its own UPPER_SNAKE key is published in the source by
-// definition, so there is nothing here for the sanitize gate to catch.
+// Self-named on purpose: the value is spelled exactly like its own key, so
+// there is nothing in it the identifier does not already say. A fixture, not a
+// credential.
 const OAUTH_OIDC_CLIENT_SECRET = 'OAUTH_OIDC_CLIENT_SECRET';
 
 const ACCESS_TOKEN_VALUE = 'stub-access-token-value';
@@ -96,6 +96,31 @@ describe('OidcOAuthProvider', () => {
       expect(url.searchParams.get('state')).toBe('state-value');
       expect(url.searchParams.get('code_challenge')).toBe('challenge-value');
       expect(url.searchParams.get('code_challenge_method')).toBe('S256');
+    });
+  });
+
+  describe('the issuer URL is normalised before the discovery path is appended', () => {
+    async function discoveryUrlFetchedFor(issuer: string): Promise<string> {
+      const http = jest.fn<Promise<Response>, [string | URL]>(
+        async () => jsonResponse(200, discoveryDocument()),
+      );
+      const adapter = new OidcOAuthProvider(
+        issuer,
+        { clientId: CLIENT_ID, clientSecret: OAUTH_OIDC_CLIENT_SECRET },
+        http as unknown as typeof fetch,
+      );
+      await adapter.authorizationUrl({
+        state: 's', codeChallenge: 'c', redirectUri: 'https://app.example.test/cb',
+      });
+      return String(http.mock.calls[0][0]);
+    }
+
+    it('requests the same single-slash discovery URL with and without a trailing slash', async () => {
+      const without = await discoveryUrlFetchedFor(ISSUER);
+      const withSlash = await discoveryUrlFetchedFor(`${ISSUER}/`);
+
+      expect(withSlash).toBe(without);
+      expect(without).toBe(DISCOVERY_URL);
     });
   });
 

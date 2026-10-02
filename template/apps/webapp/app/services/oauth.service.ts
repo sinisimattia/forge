@@ -33,6 +33,11 @@ import type { ApiClient } from '~/types';
  * separate reason: see `authorizationPathFor` in `~/fetchers` (re-exported
  * below) — it is a `window.location` target, not a request this class could
  * issue, because it never issues a request at all.
+ *
+ * There is no `domainErrorFor`, unlike the sibling services: neither call maps
+ * a transport status onto a domain error. An empty provider list is a normal
+ * answer, and `beginLink` has no domain refusal of its own, so an `ApiError`
+ * reaching the caller unwrapped is the right answer rather than a missing translation.
  */
 export class OAuthHttpService {
   private readonly client: ApiClient;

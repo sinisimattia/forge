@@ -26,15 +26,15 @@
  * configuration-reading time with a message naming the variable rather than
  * somewhere deep in a Postgres syntax error.
  *
- * Hyphens are allowed because they are required: the generator's own project
- * names are `/^[a-z][a-z0-9-]*$/` (`tools/create/args.mjs`) and the compose
- * files name the application role after the project with an `-app` suffix — so
- * a project called `blog` has the role `blog-app`, and one called `my-app` has
- * `my-app-app`.
- * A rule without the hyphen — which is what this task was first given — rejects
- * every role name the template produces. The 63-character ceiling
- * is Postgres's own identifier limit — the generator puts no length cap on a
- * project name, and a longer one would be silently truncated by the server,
+ * Hyphens are allowed because they are required: `compose.yaml` names the
+ * application role after the project with an `-app` suffix — so a project
+ * called `blog` has the role `blog-app`, and one called `my-app` has
+ * `my-app-app`. (`compose.prod.yaml` reads `APP_DB_ROLE` from the environment
+ * instead, so a deployment may supply any name this pattern admits.)
+ * A rule without the hyphen rejects the dev stack's own role name, which is
+ * why the hyphen is in this pattern. The 63-character
+ * ceiling is Postgres's own identifier limit: nothing caps a project name at
+ * that length, and a longer one would be silently truncated by the server,
  * producing a role whose name is not the name anything else was configured with.
  */
 const ROLE_NAME_RE = /^[a-z_][a-z0-9_-]{0,62}$/;

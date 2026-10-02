@@ -9,7 +9,7 @@ describe('makeAuditEntryJSON', () => {
     expect(makeAuditEntryJSON().action).toBe(AuditAction.LOGIN_SUCCEEDED);
   });
 
-  it('defaults to belonging to no tenant, which is every entry this phase writes', () => {
+  it('defaults to belonging to no tenant, which a platform-level entry is', () => {
     expect(makeAuditEntryJSON().organizationId).toBeNull();
   });
 

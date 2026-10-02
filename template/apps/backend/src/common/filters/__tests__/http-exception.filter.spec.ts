@@ -266,8 +266,8 @@ describe('HttpExceptionFilter', () => {
     it('tells the caller every way the password fell short, in code and in prose', () => {
       // Core builds this list on purpose — `WeakPasswordError` carries all of
       // them rather than the first, because the list is what a caller shows the
-      // person. For a phase this filter dropped it, so a person was told only
-      // that something was wrong with a password they could not see.
+      // person. This filter once dropped it, so a person was told only that
+      // something was wrong with a password they could not see.
       filter.catch(new WeakPasswordError(['TOO_SHORT', 'NEEDS_DIGIT']), host);
 
       expect(body().violations).toEqual([
@@ -356,11 +356,11 @@ describe('HttpExceptionFilter', () => {
     });
 
     it('maps a domain error the table does not name to 422, never to 500', () => {
-      // The point of the fallback: a core error added in a later phase must not
+      // The point of the fallback: a core error added after this table must not
       // silently become an internal-server-error until somebody notices.
       class FutureRuleError extends DomainError {
         public constructor() {
-          super('some rule this phase has never heard of');
+          super('some rule this filter has never heard of');
         }
       }
 

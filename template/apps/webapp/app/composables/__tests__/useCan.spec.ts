@@ -31,8 +31,8 @@ import { useCan } from '~/composables/useCan';
  * 2. That the answer is a **prediction**, not an enforcement — asserted by
  *    showing a request `useCan` says no to still reaches this stub's model
  *    of the backend, because nothing on this side of the wire stops it. The
- *    real refusal is the server's, behind `PermissionsGuard`, and is proven
- *    end to end elsewhere, by the docker end-to-end suite.
+ *    real refusal is the server's, behind `PermissionsGuard`, and is asserted
+ *    on the backend side rather than here.
  *
  * `can` is mocked module-wide, defaulting to the real implementation, so
  * every test not about the mock itself still exercises the genuine rule.

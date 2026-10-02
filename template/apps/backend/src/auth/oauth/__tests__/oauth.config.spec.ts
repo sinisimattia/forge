@@ -136,7 +136,21 @@ describe('buildOAuthProviders', () => {
     }))).toThrow(/PUBLIC_API_URL/);
   });
 
-  describe('the development/real-OIDC collision (PF-1)', () => {
+  describe('the PUBLIC_API_URL requirement when only the real OIDC provider is configured', () => {
+    it('refuses to start when only the real OIDC provider is configured but PUBLIC_API_URL is not', () => {
+      // The direct regression case for the same gap: OIDC's three variables must gate
+      // PUBLIC_API_URL exactly as Google's and GitHub's two do (see "refuses to start when
+      // a provider is configured but PUBLIC_API_URL is not" above) — this is that same
+      // assertion, with OIDC as the configured provider instead of Google.
+      expect(() => buildOAuthProviders(configOf({
+        OAUTH_OIDC_CLIENT_ID: 'id',
+        OAUTH_OIDC_CLIENT_SECRET: 'OAUTH_OIDC_CLIENT_SECRET',
+        OAUTH_OIDC_ISSUER_URL: 'https://issuer.example.test',
+      }))).toThrow(/PUBLIC_API_URL/);
+    });
+  });
+
+  describe('the development/real-OIDC collision', () => {
     const collidingEnv = {
       PUBLIC_API_URL: 'http://localhost:3000',
       OAUTH_DEV_ENABLED: '1',
@@ -175,18 +189,6 @@ describe('buildOAuthProviders', () => {
       expect(built.map((p) => p.provider)).toEqual([AuthProvider.OIDC]);
     });
 
-    it('refuses to start when only the real OIDC provider is configured but PUBLIC_API_URL is not', () => {
-      // The direct regression case for the same gap: OIDC's three variables must gate
-      // PUBLIC_API_URL exactly as Google's and GitHub's two do (see "refuses to start when
-      // a provider is configured but PUBLIC_API_URL is not" above) — this is that same
-      // assertion, with OIDC as the configured provider instead of Google.
-      expect(() => buildOAuthProviders(configOf({
-        OAUTH_OIDC_CLIENT_ID: 'id',
-        OAUTH_OIDC_CLIENT_SECRET: 'OAUTH_OIDC_CLIENT_SECRET',
-        OAUTH_OIDC_ISSUER_URL: 'https://issuer.example.test',
-      }))).toThrow(/PUBLIC_API_URL/);
-    });
-
     it('does not refuse when only the development side is configured', () => {
       const built = buildOAuthProviders(configOf({
         PUBLIC_API_URL: 'http://localhost:3000',
@@ -198,30 +200,33 @@ describe('buildOAuthProviders', () => {
   });
 
   describe('the placeholder seam is closed', () => {
-    // `UnimplementedOAuthProvider` (the placeholder Tasks 6-8 replaced branch by
-    // branch) has been deleted outright — this task was its last construction
-    // site, and a placeholder with nothing left constructing it is dead code, not
-    // a safety net. What replaces "no provider is an instanceof the placeholder"
+    // `UnimplementedOAuthProvider` (a stand-in provider that authenticated
+    // nobody) has been deleted outright — nothing constructs it any more, and a
+    // placeholder with nothing left constructing it is dead code, not a safety net. What replaces "no provider is an instanceof the placeholder"
     // is the stronger, positive form: every provider this factory can return is
-    // an instance of a real, named adapter class. A closed accept-list catches
+    // an instance of a real, named adapter class. Pinning the concrete class per slot catches
     // exactly what the negative check caught (a provider that looks registered
     // but authenticates nobody) and additionally catches any *other* stand-in
     // that might be reintroduced later, which a check against one specific
     // deleted class name could not.
     //
     // `OAUTH_DEV_ENABLED` and the real OIDC variables can never be configured
-    // together (the PF-1 guard above throws first) — see `buildOAuthProviders`'s
+    // together (the development/real-OIDC collision guard throws first) — see `buildOAuthProviders`'s
     // own "Two refusals" doc — so "every provider it is legal to enable at once"
-    // is two configurations, not one: dev + Google + GitHub, and real OIDC +
+    // is more than one configuration: dev + Google + GitHub, and real OIDC +
     // Google + GitHub.
-    const REAL_ADAPTER_CLASSES = [
-      DevOAuthProvider, GoogleOAuthProvider, GitHubOAuthProvider, OidcOAuthProvider,
-    ];
+    type AdapterClass = new (...args: never[]) => IOAuthProvider;
 
-    function expectOnlyRealAdapters(providers: IOAuthProvider[]): void {
-      for (const provider of providers) {
-        expect(REAL_ADAPTER_CLASSES.some((Adapter) => provider instanceof Adapter)).toBe(true);
-      }
+    /**
+     * The concrete class per slot, in registry order. A parameter rather than a constant
+     * because the legal configurations differ in the OIDC slot only: the development
+     * adapter occupies it in one, the real generic OIDC adapter in the other.
+     */
+    function expectAdapters(providers: IOAuthProvider[], expected: AdapterClass[]): void {
+      expect(providers).toHaveLength(expected.length);
+      expected.forEach((Adapter, slot) => {
+        expect(providers[slot]).toBeInstanceOf(Adapter);
+      });
     }
 
     it('builds only real adapters with the development provider alongside Google and GitHub', () => {
@@ -236,7 +241,7 @@ describe('buildOAuthProviders', () => {
       expect(built.map((p) => p.provider)).toEqual(
         [AuthProvider.GOOGLE, AuthProvider.GITHUB, AuthProvider.OIDC],
       );
-      expectOnlyRealAdapters(built);
+      expectAdapters(built, [GoogleOAuthProvider, GitHubOAuthProvider, DevOAuthProvider]);
     });
 
     it('builds only real adapters with the real generic OIDC provider alongside Google and GitHub', () => {
@@ -252,7 +257,7 @@ describe('buildOAuthProviders', () => {
       expect(built.map((p) => p.provider)).toEqual(
         [AuthProvider.GOOGLE, AuthProvider.GITHUB, AuthProvider.OIDC],
       );
-      expectOnlyRealAdapters(built);
+      expectAdapters(built, [GoogleOAuthProvider, GitHubOAuthProvider, OidcOAuthProvider]);
     });
   });
 });

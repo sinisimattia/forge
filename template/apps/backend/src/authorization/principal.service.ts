@@ -23,7 +23,7 @@ import { toGrantEntity } from './to-grant';
  * ## Everything comes from the row, nothing from the credential
  *
  * The access credential carries two claims — `userId` and `sessionId` — and
- * that is deliberate (design ruling R4). It is minted once, lives
+ * that is deliberate. It is minted once, lives
  * `ACCESS_TOKEN_TTL_SECONDS`, and is **not** re-issued when a role changes, a
  * membership ends or a grant is withdrawn. A membership copied into it would go
  * on authorizing for the whole of that window after being revoked, which makes
@@ -37,7 +37,7 @@ import { toGrantEntity } from './to-grant';
  * than one request re-creates exactly the window the credential was kept thin
  * to avoid.
  *
- * ## R2: this is the only place a grant's expiry is judged
+ * ## This is the only place a grant's expiry is judged
  *
  * `can` does not read `expiresAt`, because reading it needs a clock and a clock
  * would stop the same principal and resource producing the same answer — which
@@ -75,7 +75,7 @@ export class PrincipalService {
    * @param userId - the subject of the presented credential, and nothing else.
    *   Never a route parameter: an id the request names is a claim about what the
    *   request is *about*, and building the asker out of it makes `can` compare
-   *   the request against itself (design ruling R3).
+   *   the request against itself.
    * @param now - the instant expiry is judged against, supplied rather than read
    *   here so that a test can state it and `isGrantLive` stays a pure rule
    * @returns the whole input an access decision is allowed to read
@@ -103,7 +103,7 @@ export class PrincipalService {
         organizationId: membership.organizationId as OrganizationId,
         role: membership.role,
       })),
-      // R2: the ONLY place the expiry rule runs, in the whole system. An expired
+      // The ONLY place the expiry rule runs, in the whole system. An expired
       // grant that survives this filter is honoured by `can` without complaint.
       grants: grants.map(toGrantEntity).filter((grant) => isGrantLive(grant, now)),
     };

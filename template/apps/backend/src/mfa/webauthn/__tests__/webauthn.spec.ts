@@ -60,7 +60,7 @@ const OTHER_CREDENTIAL_ID = 'Q3JlZGVudGlhbFR3bw';
  * Hoisted out of the `JwtService` call rather than written inline, for the
  * reason `mfa-world.ts` gives for `FIRST_FACTOR`: a quoted literal sitting
  * against a key named `secret` is indistinguishable from a real credential to
- * the extraction gate's text scan, whatever the string says about itself.
+ * a text-based secret scan, whatever the string says about itself.
  */
 const FOREIGN_SIGNING_KEY = 'a-key-no-world-here-signs-with';
 
@@ -468,6 +468,65 @@ describe('WebAuthn ceremonies', () => {
 
       expect(methodsOf(other.userId)).toHaveLength(0);
       expect(methodsOf(owner.userId)).toHaveLength(1);
+    });
+
+    describe('when the unique index refuses the insert after the pre-write check passed', () => {
+      /**
+       * An error shaped like the `pg` driver's. `FakeDataSource` has no unique
+       * constraints, so the violation is simulated rather than raced: the
+       * lookup finds nothing, and only the write refuses.
+       */
+      const violation = (constraint: string): Error => Object.assign(
+        new Error('duplicate key value violates unique constraint'),
+        { code: '23505', constraint },
+      );
+
+      /** Makes the passkey's own insert reject with `error`; every other insert is the fake's. */
+      const refuseMethodInsert = (error: Error): jest.SpyInstance => {
+        const real = world.source.insert.bind(world.source);
+        return jest.spyOn(world.source, 'insert').mockImplementation(
+          (entity, values, journal) => {
+            if (entity === MfaMethodRecord) throw error;
+            return real(entity, values, journal);
+          },
+        );
+      };
+
+      const enrolling = async (): Promise<{ userId: UserId; token: string }> => {
+        const account = await world.seedUserWithoutMfa();
+        const token = await accessTokenOf(account);
+        await options().set('Authorization', bearer(token)).send({}).expect(200);
+        registrationVerifier.mockResolvedValue({
+          verified: true,
+          registrationInfo: {
+            credential: { id: CREDENTIAL_ID, publicKey: PUBLIC_KEY_BYTES, counter: 0 },
+          },
+        });
+        return { userId: account.userId, token };
+      };
+
+      it('answers 409, the status the pre-write check answers, and registers nothing', async () => {
+        const { userId, token } = await enrolling();
+        refuseMethodInsert(violation('uq_mfa_methods_webauthn_credential'));
+
+        await verify()
+          .set('Authorization', bearer(token))
+          .send({ response: { id: CREDENTIAL_ID }, label: 'Raced key' })
+          .expect(409);
+
+        expect(methodsOf(userId)).toHaveLength(0);
+        expect(auditOf(AuditAction.MFA_METHOD_ADDED)).toHaveLength(0);
+      });
+
+      it('does not swallow a unique violation on any other constraint', async () => {
+        const { token } = await enrolling();
+        refuseMethodInsert(violation('uq_some_other_constraint'));
+
+        await verify()
+          .set('Authorization', bearer(token))
+          .send({ response: { id: CREDENTIAL_ID }, label: 'Other' })
+          .expect(500);
+      });
     });
 
     it('never issues a session, however the enrollment ends', async () => {

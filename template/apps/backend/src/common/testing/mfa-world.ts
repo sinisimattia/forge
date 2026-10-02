@@ -70,7 +70,7 @@ export const REFRESH_COOKIE_NAME = REFRESH_COOKIE.name;
  *
  * Named for what it is — the first of two factors — rather than "password" or
  * "secret", because a quoted literal assigned to a key of either name is
- * indistinguishable from a real credential to the extraction gate's text
+ * indistinguishable from a real credential to a text-based secret
  * scan. The same reasoning `mapMfaMethodRecord.spec.ts` gives for
  * `FAKE_TOTP_SEED`.
  */

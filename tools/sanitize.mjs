@@ -3,6 +3,16 @@
  * Extraction gate. The template must carry no trace of the project it was
  * extracted from, and no populated secret. Run before every commit that touches
  * template/, and in CI.
+ *
+ * SCOPE is `template/` and `tools/` (see ROOTS), and `tests/` is deliberately outside it.
+ * A gate's own suite has to spell, verbatim, the exact strings its rules fire on — that is
+ * what a fixture is — so holding `tests/` to these rules would make this gate's own tests
+ * unwritable. The only way to keep them would be an inline allow marker on nearly every
+ * fixture line, which is the whole-file exclusion this script dropped for itself (see the
+ * rule-definition region below) reappearing one directory over. `tests/` is also Forge's
+ * own: nothing under it is copied into a generated project, so a trace or a credential
+ * there cannot ship. Phrases this gate's rules catch therefore do occur in `tests/`, by
+ * design and without a finding.
  */
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -14,15 +24,131 @@ import { fileURLToPath } from 'node:url';
 // script were ever invoked from outside the repo root. `npm run sanitize` always runs from here,
 // but that is exactly the kind of assumption this fix exists to stop relying on.
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// `template/` is what ships and `tools/` is what builds it. `tests/` is not a root, and that
+// is a decision rather than an omission — see the header for why a gate cannot be held to its
+// own fixtures.
 const ROOTS = ['template', 'tools'].map((root) => path.join(REPO_ROOT, root));
 
-// This file's own rule definitions necessarily spell out every forbidden term
-// (in comments and regex literals) — e.g. this comment mentions voku, rsvp,
-// stripe, eventId. Scanning tools/ without excluding this file would make the
-// gate fail on every clean checkout. Exclude only this exact file, the same
-// way a linter excludes its own config from its own rules.
 const SELF = path.resolve(fileURLToPath(import.meta.url));
 
+// This file is scanned like any other file under `tools/`, with one allowance: the region
+// between the two markers below, which holds the rule definitions and the predicates that
+// document and apply them. Those lines cannot avoid spelling the forbidden vocabulary — a
+// rule is a regex literal containing the term, and the comment justifying it has to quote
+// the term to say anything at all — so holding them to themselves would fail the gate on
+// every clean checkout.
+//
+// The allowance cannot be narrower than a region. Marking each line individually would put an
+// inline marker on most lines of the rules block, which floods the run's exemption list — the
+// reviewable record of what the gate chose not to apply — with entries nobody reads, and makes
+// every edit to a rule's rationale require a new marker. Nor is it wider than it has to be: it
+// opens at the first rule definition and closes at `lineFindings`, the last predicate that
+// applies them; the pair is validated on every run for both its shape and its extent, so a
+// marker cannot be moved out over the scanner itself (see `ruleDefinitionRegion` and
+// `assertScannerOutsideRegion`, and note that counting markers alone would not have); the
+// region is reported as an exemption rather than taking effect silently; and everything
+// outside it — this header, the roots, `pathFindings`, the walk, `main`, the entry-point
+// guard — is scanned with no allowance at all.
+//
+// What this does NOT buy: the vocabulary rules are global, and a clean run is not proof that
+// `tools/` is free of the vocabulary, because this file's largest block is exempt from them.
+// Before the region existed the whole file was exempt and that claim was weaker still; it is
+// now true of one marked region instead of one whole file, and a rule that must hold
+// everywhere should not have its scope resting on an exemption at all.
+const RULE_REGION_BEGIN = '// sanitize:rule-definitions-begin';
+const RULE_REGION_END = '// sanitize:rule-definitions-end';
+
+// The inline marker, assembled rather than written as one literal. Now that this file is
+// scanned, a literal here would make the line implementing the exemption exempt itself, and
+// every line of this file that quotes the marker would report as a deliberate exemption —
+// the gate's own plumbing crowding out the exemptions a reader is meant to review. Prose
+// about the marker is written as "an inline allow marker" for the same reason.
+const ALLOW_MARKER = ['sanitize', 'allow'].join(':');
+
+/**
+ * The inclusive 1-based line range of the rule-definition region in `lines`.
+ *
+ * A marker is the whole trimmed line, so the two constants above — which necessarily contain
+ * the same text — are not themselves mistaken for markers. Exactly one of each must be
+ * present, in order; anything else throws rather than resolving to some other region quietly.
+ *
+ * This checks the markers' COUNT and ORDER and nothing about their EXTENT, which is the half
+ * that actually protects anything: a single well-ordered pair can enclose the entire file.
+ * `assertScannerOutsideRegion` is the extent half, and both run on every scan.
+ *
+ * @param lines - the file's lines, in order
+ * @returns `{ start, end }`, both 1-based and both inside the region
+ */
+export function ruleDefinitionRegion(lines) {
+  const found = (marker) => lines
+    .map((line, index) => (line.trim() === marker ? index + 1 : 0))
+    .filter(Boolean);
+  const starts = found(RULE_REGION_BEGIN);
+  const ends = found(RULE_REGION_END);
+  if (starts.length !== 1 || ends.length !== 1) {
+    throw new Error(
+      `the rule-definition region needs exactly one begin and one end marker; found ${starts.length} and ${ends.length}`,
+    );
+  }
+  if (starts[0] >= ends[0]) {
+    throw new Error('the rule-definition region\'s begin marker must come before its end marker');
+  }
+  return { start: starts[0], end: ends[0] };
+}
+
+// The top-level declarations that make up the scanner itself, as their source lines begin.
+// These are what the region must never reach: the roots it walks, the marker machinery that
+// decides the region, the path judgement, the walk, the run, and the entry-point guard. None
+// of them has any reason to spell a forbidden term, so all of them are scanned.
+const SCANNER_DECLARATIONS = [
+  'const ROOTS =',
+  'export function ruleDefinitionRegion(',
+  'export function assertScannerOutsideRegion(',
+  'export function pathFindings(',
+  'async function* walk(',
+  'async function main(',
+  'function isEntryPoint(',
+];
+
+/**
+ * Throws unless every scanner declaration sits outside `region`.
+ *
+ * Counting and ordering the markers leaves the allowance's size completely unconstrained: one
+ * well-ordered pair can enclose the whole file, which is the exact exemption the region exists
+ * to replace, arriving back under a narrower name and changing nothing visible but a number in
+ * the run's output. Extent is the property worth asserting, and it cannot be asserted against
+ * the markers themselves — a test that reads its expected range out of the markers passes no
+ * matter where they move.
+ *
+ * So the region is pinned against the file's own structure instead. Each declaration must
+ * appear exactly once and fall outside the region; a renamed or duplicated declaration throws
+ * as loudly as a moved marker, because an anchor that silently stops matching is a guard that
+ * silently stops guarding. Lines between two anchors are not individually pinned, so a marker
+ * can still drift within the rules block — but it cannot cross out of it, which is the move
+ * that would restore the whole-file exemption.
+ *
+ * @param lines - the file's lines, in order
+ * @param region - the range from `ruleDefinitionRegion`
+ */
+export function assertScannerOutsideRegion(lines, region) {
+  for (const declaration of SCANNER_DECLARATIONS) {
+    const at = lines
+      .map((line, index) => (line.startsWith(declaration) ? index + 1 : 0))
+      .filter(Boolean);
+    if (at.length !== 1) {
+      throw new Error(
+        `the scanner declaration \`${declaration}\` must appear exactly once to pin the rule-definition region; found ${at.length}`,
+      );
+    }
+    if (at[0] >= region.start && at[0] <= region.end) {
+      throw new Error(
+        `the rule-definition region ${region.start}-${region.end} encloses \`${declaration}\` at line ${at[0]}; the scanner itself is never exempt`,
+      );
+    }
+  }
+}
+
+// sanitize:rule-definitions-begin
 // The names a credential is actually spelled with. Defined once and shared by the
 // populated-secret rules and the self-named-value exemption below, so the two can never
 // drift apart — they were once two identical copies of this list, which is exactly the
@@ -157,7 +283,7 @@ const POPULATED_SECRET_TS = new RegExp(
 // global `Event` type (`e: Event`) with nothing "wrong" written down anywhere: both are just the
 // four characters E-v-e-n-t, standing alone. No accept-list, no cleverer regex, and no rule this
 // gate could write distinguishes them; only human review of the surrounding code can. Every
-// identifier this task specifies as a required catch — eventId, myEvent, EventCard, EventsService,
+// identifier the suite requires as a catch — eventId, myEvent, EventCard, EventsService,
 // ticketId, TicketTier, paymentIntent, RefundPayment — has something attached to "Event"/
 // "Payment"/"Ticket" and still trips, because the accept-list is checked against the whole word,
 // not the substring. Only the bare, standalone word is affected, and it is affected in both
@@ -209,8 +335,8 @@ const isLetter = (ch) => ch !== undefined && /[A-Za-z]/.test(ch);
  * words at all — see the RULES comment at their definition for the triage item this closes).
  *
  * `source-domain path term` (PATH_ONLY_RULES) is deliberately NOT in this set — see the
- * comment on that rule for why widening it the same way is a false-positive risk this task
- * must not introduce, rather than an oversight.
+ * comment on that rule for why widening it the same way is a false-positive risk this gate
+ * must not take on, rather than an oversight.
  *
  * `forge-process role` joins it for the same reason `organizer`/`rsvp` needed it: a generated
  * project could plausibly get a class or variable named after the role this template's own
@@ -222,38 +348,95 @@ const BOUNDED_TERM_LABELS = new Set(['source-domain term', 'forge-process role']
 /**
  * Whether the match of `pattern` starting at `index` in `text` sits on a real word boundary on
  * BOTH sides — `\b`'s notion of one (start/end of string, or a non-letter neighbour) widened to
- * also treat a lowercase-to-uppercase transition as a boundary, the same way `-` and `_` already
- * are. This is deliberately not a bare substring match: a longer word that merely contains the
- * term (`reinvitationless`) has a letter, of the same case run, on at least one side, so it is
+ * also treat a case transition as a boundary, the same way `-` and `_` already are. This is
+ * deliberately not a bare substring match: a longer word that merely contains the term
+ * (`reinvitationless`) has a letter, of the same case run, on at least one side, so it is
  * rejected — only a genuine word boundary, letter-case or otherwise, counts.
  *
- * Boundary before the match: start of string, a non-letter, or the immediately preceding
- * character being lowercase while the match's own first character is uppercase (the
- * compound-boundary transition, e.g. the `y`|`O` in `myOrganizer`).
+ * A DIGIT counts as a boundary on either side, which is wider than `\b` and deliberately so:
+ * `isLetter` is letters-only rather than word-character-wide, so `organizer1` and `x1organizer`
+ * both trip while `\borganizer\b` matches neither (a digit is a word character, so `\b` does not
+ * fire between a letter and a digit at all). A numbered identifier is a leak like any other.
+ *
+ * Boundary before the match: start of string, a non-letter, the immediately preceding character
+ * being lowercase while the match's own first character is uppercase (the compound-boundary
+ * transition, e.g. the `y`|`O` in `myOrganizer`), or the acronym-run transition — an uppercase
+ * neighbour where the match itself begins a new word, i.e. its first character is uppercase and
+ * its second is lowercase (the `I`|`O` in `APIOrganizerService`). A capital in the middle of an
+ * acronym run is still not a boundary, because the character after it is not lowercase.
  * Boundary after the match: end of string, a non-letter, or the immediately following character
  * being uppercase (a new word starting right where the match ends, e.g. the `r`|`I` in
  * `OrganizerInvitation`).
+ *
+ * An ALL-CAPS run supplies no boundary, in either direction, exactly as a lowercase run does
+ * not: nothing in `APIORGANIZERService` marks `ORGANIZER` off from the letters before it, so
+ * it is rejected for the same reason `reorganizerless` is. Treating any uppercase neighbour as
+ * a boundary would close that gap and open a worse one — an ordinary ALL_CAPS constant that
+ * merely contains a term would flag — so the gap is kept, and pinned by a test.
+ *
+ * `matched` is whatever the caller hands over, not necessarily what the pattern matched
+ * greedily; see `boundedAlternatives` for why the greedy match is not the only candidate.
  */
 function isBoundedMatch(text, index, matched) {
   const before = text[index - 1];
   const after = text[index + matched.length];
-  const leadingOk = !isLetter(before) || (/[a-z]/.test(before) && /[A-Z]/.test(matched[0]));
+  const startsNewWord = /[A-Z]/.test(matched[0]) && /[a-z]/.test(matched[1] ?? '');
+  const leadingOk = !isLetter(before)
+    || (/[a-z]/.test(before) && /[A-Z]/.test(matched[0]))
+    || (/[A-Z]/.test(before) && startsNewWord);
   const trailingOk = !isLetter(after) || /[A-Z]/.test(after);
   return leadingOk && trailingOk;
+}
+
+/**
+ * Every prefix of `matched` that `pattern` could itself have produced at the same position,
+ * longest first.
+ *
+ * A regex returns one match per position — the greedy one — and the boundary check then gets
+ * no say in which. That matters wherever a pattern has an optional tail: `organizers?` is
+ * case-insensitive, so its `s?` swallows the capital `S` that starts the next word of
+ * `organizerService`, the match ends one character inside `Service`, and the trailing check
+ * sees a lowercase `e` and refuses. The term was there, properly bounded, in a match the
+ * engine had already discarded.
+ *
+ * Returning the alternatives and letting the caller test each one closes that as a class
+ * rather than one spelling at a time. An earlier fix recognised the swallowed capital by its
+ * own shape (last character uppercase after a lowercase one), which worked for
+ * `organizerService` and walked straight past `REFUNDService` — the all-caps spelling of the
+ * same miss. Every candidate here is a string the pattern genuinely matches, so nothing is
+ * admitted that the rule did not already describe; only the engine's preference for the
+ * longest one is set aside.
+ *
+ * @param pattern - the rule's pattern, with or without `g`
+ * @param matched - the text the engine matched at this position
+ * @returns the candidate matches to boundary-check, longest first
+ */
+function boundedAlternatives(pattern, matched) {
+  const anchored = new RegExp(`^(?:${pattern.source})$`, pattern.flags.replace(/[gy]/g, ''));
+  const candidates = [];
+  for (let length = matched.length; length > 0; length -= 1) {
+    const candidate = matched.slice(0, length);
+    if (anchored.test(candidate)) candidates.push(candidate);
+  }
+  return candidates;
 }
 
 /**
  * Whether `pattern` (case-insensitive, no `\b` of its own — see BOUNDED_TERM_LABELS) finds a
  * properly word-bounded match anywhere in `text`. Every match is walked, not just the first —
  * a bounded hit later on the line must not be shadowed by an unbounded one earlier on it, the
- * same principle `matchesUnacceptedIdentifier` applies for the DOM/platform accept-list.
+ * same principle `matchesUnacceptedIdentifier` applies for the DOM/platform accept-list — and
+ * at each position every alternative the pattern could have matched there is checked, not only
+ * the greedy one the engine returned (see `boundedAlternatives`).
  */
 function matchesBoundedTerm(pattern, text) {
   const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
   const global = new RegExp(pattern.source, flags);
   let match;
   while ((match = global.exec(text)) !== null) {
-    if (isBoundedMatch(text, match.index, match[0])) return true;
+    for (const candidate of boundedAlternatives(pattern, match[0])) {
+      if (isBoundedMatch(text, match.index, candidate)) return true;
+    }
     if (match[0].length === 0) global.lastIndex += 1; // never loop on a zero-width match
   }
   return false;
@@ -290,8 +473,9 @@ export const RULES = [
   ['source-project trace', /voku/i],
   // Terms with no innocent generic use — always a leak.
   //
-  // `invitation` was here and is deliberately gone. Spec §9.4 makes organization
-  // invitations a first-class concept of the template itself: `Invitation`,
+  // `invitation` was here and is deliberately gone. The template ships organizations and
+  // their memberships, and an invitation is how somebody joins one — so organization
+  // invitations are a first-class concept of the template itself: `Invitation`,
   // `invitations.controller.ts` and `INVITATION_ACCEPTED` are all things a generated
   // project is supposed to contain. A rule that bans a word the template uses is not a
   // gate, it is a rule everyone learns to route around, and the routing-around is what
@@ -343,14 +527,92 @@ export const RULES = [
   // of the code a generated project ships.
   //
   // Case-sensitive and requires a space before the digit, deliberately narrow: every leak
-  // measured was capitalized and spelled with a space ("Task 12", "Phase 3"). The bare,
-  // lowercase words "task"/"phase" are ordinary English this template's own comments already
-  // use constantly ("this task", "the next phase of rollout") and must not be flagged, and
-  // neither should a coincidental digit near the lowercase word ("the task 12 hours from
-  // now", "12 open tasks"). Catching the capitalized, spaced shape and nothing else is the
-  // considered trade — see `forge-process brief` below for the same trade made explicitly
-  // about "brief".
-  ['forge-process coordinate', /\b(?:Task|Phase)\s+\d+\b/],
+  // measured was capitalized and spelled with a space ("Task 12", "Phase 3", "Tasks 10–14").
+  // The bare, lowercase words "task"/"phase" are ordinary English this template's own
+  // comments use for ordinary reasons ("the next phase of rollout", "each task in the
+  // queue") and must not be flagged, and neither should a coincidental digit near the
+  // lowercase word ("the task 12 hours from now", "12 open tasks"). Catching the
+  // capitalized, spaced shape and nothing else is the considered trade — see
+  // `forge-process brief` below for the same trade made explicitly about "brief".
+  //
+  // The optional plural is not decoration. A citation of several units at once is written
+  // "Tasks 10–14", and the singular-only form of this rule read straight past exactly that
+  // line in `app/types/api.ts`. Adding `s?` costs nothing in false positives here, because
+  // the rule is case-sensitive: "12 open tasks" and "3 tasks 5 minutes apart" are lowercase
+  // and still do not match.
+  ['forge-process coordinate', /\b(?:Tasks?|Phases?)\s+\d+\b/],
+  // The same register with no coordinate in it. "Task 12" is a citation; "this task" is a
+  // sentence about the work that produced a line, written without numbering it — "the one
+  // read-only composable this task adds", "out of scope for this task", "what this task was
+  // first given". `forge-process coordinate` cannot see any of them, and that is how
+  // thirty-three of them shipped inside `template/` while the gate reported clean: a comment
+  // explaining why a line looks the way it does rarely says which numbered unit of work
+  // wrote it. A generated project's owner has no idea what "this task" refers to, and the
+  // sentence is almost always better as a statement about the code it sits beside.
+  //
+  // Case-insensitive, unlike the coordinate rule above: a sentence opening "This task" is
+  // the same register, and there is no capitalization split to key off.
+  //
+  // One word may sit between "this" and "task", and that allowance is not speculative: the
+  // adjacent-only form of this rule shipped, and "this whole task exists to prevent" and
+  // "the brief for this file's task" both walked past it on the very next read of the tree.
+  // An adjective or a possessive is the cheapest way to say the same thing, so the rule has
+  // to reach one of them or it catches only the phrasing somebody happened to use first.
+  // Exactly one word, not any number: "this is the only task the runner schedules" is an
+  // ordinary sentence, and widening further would start collecting them.
+  //
+  // It is otherwise the bare phrase and nothing cleverer, which has a cost worth naming
+  // rather than discovering. A generated project writing "this task runner is configured in
+  // nx.json", or "this build task", gets a finding for prose of its own. That is a real
+  // false positive and the accepted side of the trade — every narrowing that would exempt it
+  // (a following-word list, a verb list) is the kind of closed enumeration that goes stale,
+  // and the escape is one word ("the task runner"), not an argument with the gate. "task"
+  // without the demonstrative is untouched, and `\b` keeps the rule out of compounds, so
+  // `taskQueue` and `this taskQueue` do not match.
+  //
+  // Labelled distinctly from the phase rule below even though both are provenance: two
+  // entries sharing one label report the same string twice for a line that matches both,
+  // which reads as a duplicate rather than as two findings.
+  ['forge-process task provenance', /\bthis(?:\s+[\w'’-]+)?\s+task\b/i],
+  // The same register spelled with "phase", and it needed a different shape of rule. The
+  // bare word cannot be used here the way "this task" can, because a generated project's
+  // own vocabulary owns it: a sign-in in this template really does happen in two phases,
+  // and "the first phase of a sign-in", "the second phase, proven by a recovery code" and
+  // "two-phase login" are all correct, load-bearing names for a real thing. A rule on
+  // `/phase/i` would flag every one of them on a clean checkout, and a gate that flags
+  // correct code is one that gets argued with instead of obeyed.
+  //
+  // So this is scoped to the word in front of it instead, which is where the two senses
+  // part company. Forge's build-out is pointed at with a demonstrative or a relative-time
+  // word — "this phase", "that phase's", "these phases", "a later phase", "an earlier
+  // phase", "the next phase", "a future phase". The ceremony sense never takes one: it
+  // takes an ordinal or a count ("the first phase of a sign-in", "the same second phase",
+  // "the two phases", "two-phase login"). Checked against every occurrence in `template/`:
+  // this fires on none of the ceremony uses and would have fired on the provenance ones.
+  //
+  // The relative-time list is the principle's own list, not the words that happened to
+  // occur. "Later/earlier/previous/next" were the ones in the tree; "future", "prior",
+  // "upcoming", "subsequent" and "following" are the same part of speech doing the same
+  // job, and leaving them out would have made the stated criterion wider than the rule.
+  // None of them occurs today, so including them costs nothing against the ceremony uses.
+  //
+  // What it does not reach, named rather than left to be found later: "for a phase", "for
+  // one phase", "two phases later" and "every phase that adds an action" are the same
+  // register and go uncaught — no qualifier distinguishes them from "the two phases", and
+  // that ambiguity is real rather than an oversight. A ceremony comment that wrote "the
+  // next phase of the sign-in" would be a false positive; none exists, and "the next step"
+  // is the fix if one is ever wanted.
+  //
+  // The cost that is NOT hypothetical, and is the larger one: a maintainer of a generated
+  // project writing "the next phase of rollout adds SSO" — about their own rollout, with
+  // Forge nowhere in it — gets a finding here. The gate's own suite asserted that exact
+  // sentence as clean until this rule, and the assertion was flipped deliberately rather
+  // than carved out, because planned-work prose in shipped code is the thing this rule is
+  // for and a carve-out would be a hole shaped like the commonest way to write it. The
+  // escape is again one word ("the next stage of rollout"). A narrow rule that holds beats
+  // a wide one somebody narrows under pressure — the trade `forge-process brief` makes
+  // about the word "brief".
+  ['forge-process phase provenance', /\b(?:this|that|these)\s+phases?\b|\b(?:later|earlier|previous|next|subsequent|future|prior|upcoming|following)\s+phases?\b/i],
   // "coordinator" has no ordinary use in this template's own domain vocabulary — a bare,
   // case-insensitive word is safe here in a way it is not for "brief" below, because there is
   // no common English sentence that needs the word "coordinator" for a reason unrelated to
@@ -361,12 +623,13 @@ export const RULES = [
   // same way it missed `OrganizerInvitation` before the boundary fix.
   //
   // No plural `s?`, unlike `source-domain term`'s `organizers?`. The observed vocabulary is
-  // never "coordinators" plural, and adding it would reproduce a real, pre-existing edge case
-  // that rule already carries: `organizers?` case-insensitively lets its own `s?` consume the
-  // capital letter starting the next word in a compound (`organizerService` slips entirely,
-  // measured), because "S" satisfies `s?` before the trailing-boundary check ever runs. Left
-  // unfixed there as out of this task's scope; not reproduced here by simply not matching a
-  // plural this rule has no real occurrence of.
+  // never "coordinators" plural, and there is nothing to gain from matching one. An optional
+  // plural also costs something: because the rules are case-insensitive, `s?` consumes the
+  // capital `S` that starts the next word of a compound (`organizerService`), so the match
+  // runs one character past the term and the trailing-boundary check sees a lowercase letter
+  // after it. `matchesBoundedTerm` now boundary-checks the shorter alternative the pattern
+  // could have matched instead (see `boundedAlternatives`), so `organizers?` no longer slips
+  // such a compound — but a rule with no optional plural never has the problem at all.
   ['forge-process role', /coordinator/i],
   // "brief" alone is ordinary English ("kept it brief", "a brief pause") and this template's
   // own comments are exactly the kind of prose that uses it that way — a bare-word rule here
@@ -396,16 +659,21 @@ export const RULES = [
 // match — they require camelCase, PascalCase, ALL_CAPS, or a dotted module suffix.
 // Verified zero false positives against every real path in `template/` and `tools/`
 // today (only an injected `events-overview.md` fixture matched).
-// NOT widened by the camelCase/PascalCase boundary fix below (see BOUNDED_TERM_LABELS), and
-// that is a considered scope decision, not an oversight. Unlike `source-domain term`, `event`/
+// It keeps a plain `\b` and is deliberately NOT routed through `matchesBoundedTerm` (see
+// BOUNDED_TERM_LABELS), so it matches only where a non-word character separates the term:
+// `events-overview.md` yes, `EventsOverview.md` no. Unlike `source-domain term`, `event`/
 // `payment`/`ticket` have real DOM/platform homonyms (EventTarget, PaymentRequest, …), and the
-// content rules only get away with the bare substring because every match is re-checked against
+// content rules only get away with a bare substring because every match is re-checked against
 // `DOM_AND_PLATFORM_IDENTIFIERS` (see IDENTIFIER_SHAPE_LABELS). This path-only rule has no such
-// accept-list, and building one was not this task's job — tried locally, widening this rule's
-// boundary the same way flags a fixture path named `EventTarget.ts` (a real DOM interface name)
-// with no accept-list to exempt it, which is a false positive this task must not introduce.
-// Kebab-case is still this template's realistic leak shape for a path (see the paragraph above),
-// so the rule is left exactly as it was.
+// accept-list: giving it the case-transition boundary flags a path named `EventTarget.ts` — a
+// real DOM interface name, and a correct name for a file to have — with nothing to exempt it.
+// A gate that flags a correctly named file is one that gets argued with instead of obeyed.
+//
+// The price of staying narrow is a false negative, and it is worth naming rather than leaving
+// implicit: a source-project trace hiding in an event/payment/ticket-shaped file name with no
+// separator goes uncaught. Kebab-case is this template's realistic leak shape for a path (see
+// the paragraph above), so that miss is the cheaper side of the trade — but it is a miss, and
+// the day an accept-list for path terms exists, this is the rule that should get it.
 export const PATH_ONLY_RULES = [
   ['source-domain path term', /\b(events?|payments?|tickets?)\b/i],
   // The kebab-case shape `forge-process coordinate` (RULES, content-only by design) cannot
@@ -502,10 +770,12 @@ export function stripNonSecrets(line) {
  * the false-positive class that rule is wrong for: `secret: secretInput.value` (a reference),
  * `route.query.token === 'string'` (the `=` of `===`), `const secret = ref('')` (an empty
  * ref) and a bare `secret: string` type annotation all flagged as populated secrets in a
- * `.vue` file while the identical TypeScript flagged none of them. Recorded in
- * `.superpowers/sdd/2026-09-18-forge-phase-2-identity-foundation/task-17-report.md` §10.1,
- * and the reason three files under `apps/webapp` were reshaped around the gate instead of the
- * gate being fixed.
+ * `.vue` file while the identical TypeScript flagged none of them. Those false positives were
+ * first dealt with by reshaping three files under `apps/webapp` around the gate — which is the
+ * worse trade of the two, because it leaves the gate wrong, spreads the workaround across
+ * however many `.vue` files arrive later, and teaches the next person that the gate's verdict
+ * is something to write around rather than to trust. Fixing the classification here instead
+ * costs one regex and removes the whole class.
  *
  * LATENT SUB-CLASS, deliberately left unhandled — pinned by a test, not silently accepted.
  * `.vue` also has a *template* block, where a binding is quoted by HTML attribute syntax, not
@@ -566,6 +836,7 @@ export function lineFindings(line, file = '') {
   }
   return labels;
 }
+// sanitize:rule-definitions-end
 
 /**
  * Every rule label a file's *path* trips. Paths are held to the content rules plus the
@@ -610,12 +881,11 @@ async function main() {
 
   for (const root of ROOTS) {
     for await (const file of walk(root)) {
-      if (path.resolve(file) === SELF) continue;
       scannedCount += 1;
 
       // A leftover file or directory *named* for the domain leaks via its path alone,
       // even with generic content inside — content-only scanning is blind to that. A
-      // path cannot carry an inline `sanitize:allow` marker, so a path finding is never
+      // path cannot carry an inline allow marker, so a path finding is never
       // exemptible that way; it is reported with a `(path)` marker in place of a line
       // number to make clear it is not a content hit.
       for (const label of pathFindings(file)) {
@@ -625,10 +895,36 @@ async function main() {
       const buffer = await fs.readFile(file);
       if (buffer.includes(0)) continue;
       const lines = buffer.toString('utf8').split('\n');
+
+      // This file's rule definitions are the one region allowed to spell the forbidden
+      // vocabulary — see the comment on RULE_REGION_BEGIN. The allowance is this file's
+      // alone: no other file under the roots gets a region, only inline markers.
+      let ruleRegion = null;
+      if (path.resolve(file) === SELF) {
+        // Both halves of the region's integrity — the markers, and how far they reach. A
+        // failure here is reported in the gate's own voice rather than as a stack trace,
+        // because it is a finding about this file like any other: the allowance is no longer
+        // the one that was reviewed.
+        try {
+          ruleRegion = ruleDefinitionRegion(lines);
+          assertScannerOutsideRegion(lines, ruleRegion);
+        } catch (error) {
+          console.error(`Sanitization failed: ${error.message}`);
+          process.exit(1);
+        }
+      }
+      if (ruleRegion) {
+        const span = ruleRegion.end - ruleRegion.start + 1;
+        exemptions.push(
+          `${file}:${ruleRegion.start}-${ruleRegion.end}  rule definitions (${span} line(s))`,
+        );
+      }
+
       lines.forEach((line, index) => {
+        if (ruleRegion && index + 1 >= ruleRegion.start && index + 1 <= ruleRegion.end) return;
         // A marked line is a deliberate, reviewed exemption — skip every rule for it,
         // but record it so it shows up in the run's output rather than vanishing silently.
-        if (line.includes('sanitize:allow')) {
+        if (line.includes(ALLOW_MARKER)) {
           exemptions.push(`${file}:${index + 1}  ${line.trim()}`);
           return;
         }

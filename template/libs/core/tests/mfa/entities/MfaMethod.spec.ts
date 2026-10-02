@@ -41,8 +41,11 @@ describe('MfaMethod', () => {
     expect(new MfaMethod({ ...base, confirmedAt: new Date() }).isConfirmed()).toBe(true);
   });
 
-  // The property the whole entity exists to have. Derived from the requirement
-  // (spec §3.1), not from the implementation: this assertion was written before
+  // The property the whole entity exists to have: a method records *which*
+  // second factor an account holds and never the material that answers it,
+  // which lives in the store behind `IMfaService` and nowhere a domain entity
+  // can serialize it. Derived from that requirement, not from the
+  // implementation: this assertion was written before
   // MfaMethod.ts existed, and it is what stops a later "just add the secret here"
   // from being a one-line change nobody notices.
   it('has no field that could hold secret material, in any serialization', () => {

@@ -85,5 +85,5 @@ prop; remove the story for a removed variant) rather than rewriting the file.
 ## Report
 
 After writing, report: files created/modified (full paths), locale keys added/reused, the story
-file and its story names, and anything intentionally deferred. Recommend launching `reviewer`
+file and its story names, and anything left out on purpose. Recommend launching `reviewer`
 (and `tester` for composables/fetchers/stores) next per the playbook.

@@ -79,7 +79,7 @@ Detect: `ls playwright.config.ts 2>/dev/null || echo "NOT_CONFIGURED"`. If neede
 3. Create `e2e/` structure: `fixtures/auth.fixture.ts`, `pages/*.page.ts` (Page Object Models),
    `auth.spec.ts`, `articles.spec.ts`, `comments.spec.ts`, `README.md`.
 4. Auth fixture extends `base` with an `authenticatedPage` (login via UI, `waitForURL('/dashboard')`).
-5. Add the four `test:e2e*` scripts to `package.json`.
+5. Add the `test:e2e*` scripts to `package.json`.
 6. `e2e/README.md`: prerequisites (backend at `http://localhost:3000`), env vars `E2E_USER_EMAIL` /
    `E2E_USER_PASSWORD`, run/debug commands.
 7. Append Playwright artifacts to `.gitignore` (`/test-results/ /playwright-report/ /blob-report/ /playwright/.cache/`).

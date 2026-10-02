@@ -196,9 +196,10 @@ export function buildOAuthProviders(config: ConfigService): IOAuthProvider[] {
       clientSecret: config.getOrThrow<string>('OAUTH_GITHUB_CLIENT_SECRET'),
     }));
   }
-  // oidcConfigured and devEnabled are mutually exclusive by construction: the PF-1
-  // guard above throws before this point whenever both are true, so at most one of
-  // these two branches ever runs and AuthProvider.OIDC is never pushed twice.
+  // oidcConfigured and devEnabled are mutually exclusive by construction: the
+  // development/real-OIDC collision guard above throws before this point whenever both
+  // are true, so at most one of these two branches ever runs and AuthProvider.OIDC is
+  // never pushed twice.
   if (oidcConfigured) {
     providers.push(new OidcOAuthProvider(
       config.getOrThrow<string>('OAUTH_OIDC_ISSUER_URL'),

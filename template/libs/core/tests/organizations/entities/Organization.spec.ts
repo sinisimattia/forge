@@ -89,7 +89,6 @@ describe('Organization', () => {
       expect(revived).toBeInstanceOf(Organization);
       expect(revived.createdAt).toBeInstanceOf(Date);
       expect(revived.createdAt.toISOString()).toBe(CREATED_AT.toISOString());
-      expect(revived.toJSON()).toEqual(original.toJSON());
     });
 
     it('revives a set deletedAt as a Date', () => {

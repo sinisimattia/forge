@@ -71,7 +71,7 @@ describe('the jest conformance adapter', () => {
 // The regex above reads a report that may or may not be wearing colour, depending on
 // whether the runner handed jest a terminal. `plain` is what makes the two cases the
 // same, and it is asserted rather than trusted because the assertion it protects passed
-// under a bare `jest` and failed under the task runner for a whole task without anybody
+// under a bare `jest` and failed under the task runner for a long stretch without anybody
 // seeing it.
 describe('plain', () => {
   it('removes the colour jest writes around a value', () => {

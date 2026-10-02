@@ -42,9 +42,9 @@ const SIGNING_KEY = 'complete-spec-signing-key';
  * A fixture seed, not a credential — declared here and passed by reference
  * rather than written inline, the idiom `mapMfaMethodRecord.spec.ts`
  * established for the same reason: a quoted literal next to a key matching
- * `*secret*` is indistinguishable from a real one to `tools/sanitize.mjs`'s
- * text scan, which is the extraction gate working correctly rather than a
- * rule to exempt this file from.
+ * `*secret*` is indistinguishable from a real one to any text-based secret
+ * scan, which is such a scan working correctly rather than something to exempt
+ * this file from.
  */
 const FAKE_TOTP_SEED = 'JBSWY3DPEHPK3PXP';
 
@@ -383,7 +383,7 @@ describe('OAuthService.complete', () => {
 
       const result = await service.complete('GOOGLE', CODE, STATE, CLIENT);
 
-      // R8: the same account-state rule a password sign-in is subject to,
+      // The same account-state rule a password sign-in is subject to,
       // in the same order. A suspended account must not be reachable
       // through a provider. The reason is recorded and never returned.
       expect(result).toEqual({ status: 'REFUSED', code: 'ACCOUNT_UNAVAILABLE', redirectTo: null });

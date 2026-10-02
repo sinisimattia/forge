@@ -1119,7 +1119,9 @@ describe('AuthService', () => {
     });
 
     it('re-derives a secret stored under weaker parameters, on the next sign-in', async () => {
-      // Spec §9.3's rehash-on-login. The row is rewritten to look like one
+      // Rehash-on-login: a derivation produced under weaker parameters is
+      // replaced at the one moment the password is both in hand and known to
+      // be correct. The row is rewritten to look like one
       // produced before the deployment raised its cost parameters.
       const weak = { memoryCost: 8192, timeCost: 2, parallelism: 1 };
       const before = await argon2Hash(PLAINTEXT, { type: argon2id, ...weak });

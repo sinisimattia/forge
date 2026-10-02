@@ -50,7 +50,7 @@ vi.mock('@simplewebauthn/browser', () => ({
  *
  * A federated callback page once rendered all seven of its refusal messages
  * correctly while the redirect that was supposed to land on it sent the browser
- * somewhere else, so the message behind that phase's central security property
+ * somewhere else, so the message behind a central security property
  * was displayed nowhere. It was invisible because the page's spec asserted the
  * page, the controller's spec asserted the redirect, and nothing asserted that
  * they met.

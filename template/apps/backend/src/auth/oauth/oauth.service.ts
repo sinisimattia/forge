@@ -122,7 +122,7 @@ export type CompletedAuthorization
   | {
     /**
      * The provider proved which account this is, and the account owes a
-     * second factor before it may have a session. Spec §8.4's ending: the
+     * second factor before it may have a session (ADR-0012). This is the
      * federated half of `AuthenticationStatus.MFA_REQUIRED`, carrying the
      * token to present at `POST /auth/mfa/verify` and no credential of any
      * kind — there is no `credentials` field on this member because there is
@@ -592,7 +592,7 @@ export class OAuthService {
 
     await this.identities.markUsed(identityId, now);
 
-    // Spec §8.4: the second factor, decided before a session exists, on this
+    // ADR-0012: the second factor, decided before a session exists, on this
     // path exactly as `AuthService.signIn` decides it on the password one.
     //
     // **A second factor is a property of the account, not of the way its
@@ -602,8 +602,8 @@ export class OAuthService {
     // question of whether the named account may actually be used belongs to
     // this caller. Without the lines below, an account holding a confirmed
     // method and a linked provider signed in here with no second factor at
-    // all, which is every other line this phase wrote bypassed by anybody who
-    // can complete an ordinary provider sign-in for it.
+    // all, which is every other second-factor line in this application
+    // bypassed by anybody who can complete an ordinary provider sign-in for it.
     //
     // `markUsed` above stays above: the identity really did prove the
     // subject, whatever is still owed afterwards, and the password path
@@ -655,15 +655,18 @@ export class OAuthService {
    * just proved a brand-new address with no way to use the account it was
    * proven for.
    *
-   * ## Spec §8.4's policy call is here too, and unconditionally
+   * ## ADR-0012's policy call is here too, and unconditionally
    *
    * Today it can only answer `ISSUE_SESSION`. The account is `manager.insert`ed
    * a few lines below, so nothing has been able to enrol a method against it
    * and the query comes back empty every time.
    *
    * **The call is here anyway, and that it currently decides nothing is the
-   * reason rather than an objection to it.** §8.4's rule is structural — every
-   * path reaching session issuance consults the policy — and the whole value of
+   * reason rather than an objection to it.** ADR-0012's rule is structural, and
+   * it names this provisioning path specifically: the policy is consulted here
+   * too, "although a new account has no confirmed method, because a rule that is
+   * skipped 'where it cannot matter' is a rule the next change to that path will
+   * skip where it can". The whole value of
    * a structural rule is that it holds without anybody re-deriving a local
    * argument before editing nearby. The day something provisions an account and
    * attaches a factor in one flow — an invitation that pre-enrols one, a
@@ -730,7 +733,7 @@ export class OAuthService {
       const id = inserted.identifiers[0].id as UserId;
       await this.identities.createFederatedIdentityIn(manager, id, provider, subject, now);
 
-      // §8.4, on this path too — `settleIn` rather than `settle`, so the read
+      // ADR-0012, on this path too — `settleIn` rather than `settle`, so the read
       // goes through `manager` and sees this transaction's own uncommitted
       // writes rather than a stale snapshot beside them. `credentials: null` is
       // how this block says "issued nothing": the account and its identity

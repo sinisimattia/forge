@@ -41,8 +41,10 @@ import { buildBuckets } from '../../throttling/throttling.config';
  * ## What this file cannot see
  *
  * The store is in memory, so nothing here is evidence about the SQL that counts
- * in production; `throttling/__tests__/postgres-throttler.storage.spec.ts` and
- * the database tier own that.
+ * in production. `throttling/__tests__/postgres-throttler.storage.spec.ts` owns
+ * the halves of that decision which are in TypeScript, and says in its own
+ * header that the counting semantics themselves are asserted nowhere in this
+ * repository.
  */
 
 /** The shipped limit for the bucket under test, read from the shipped definition. */

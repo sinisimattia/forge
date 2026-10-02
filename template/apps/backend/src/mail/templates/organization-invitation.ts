@@ -22,8 +22,9 @@ export type OrganizationInvitationInput = {
  * Follows `verify-email.ts`'s shape exactly: one link, built from `webappUrl`
  * and carrying the token as a `token` query parameter (the same shape
  * `buildVerifyEmailMessage` uses), because this address need not belong to
- * an existing account — accepting while signed out routes through
- * registration first (spec §9.4) and the same link works either way.
+ * an existing account — redemption is checked against the signed-in
+ * redeemer's own address (ADR-0010), so accepting while signed out routes
+ * through registration first, and the same link works either way.
  */
 export function buildOrganizationInvitationMessage({
   to,

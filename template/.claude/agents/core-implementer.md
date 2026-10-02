@@ -24,8 +24,9 @@ On any conflict between this prompt and a doc, the doc wins.
 
 ## File layout you enforce
 
-`libs/core/src/` is organized **per domain** (e.g. `articles/`), each with exactly six subfolders,
-plus a cross-domain `shared/` folder:
+`libs/core/src/` is organized **per domain** (e.g. `articles/`), each with only the subfolders it needs
+(`contracts/`, `types/` and `testing/` always; the rest when the domain has something to put
+there), plus a cross-domain `shared/` folder:
 
 | Folder | Contents |
 |---|---|
@@ -35,18 +36,20 @@ plus a cross-domain `shared/` folder:
 | `<domain>/errors/` | Domain error classes, each `extends DomainError` |
 | `<domain>/types/` | **Pure** interfaces/type-aliases only — JSON wire shapes, value types, create-input/result types. No enums, classes, or errors here. |
 | `<domain>/testing/` | Exported conformance suites + fixtures |
+| `<domain>/policies/` | Pure functions over the domain's entities, enums and types (e.g. `can`); no framework, no I/O |
 | `shared/errors/` | The base `DomainError` class |
 | `shared/testing/` | Generic conformance-runner types (e.g. `ConformanceExpect`) |
+| `shared/policies/` | Pure functions with no domain dependency at all (e.g. `assertNever`, `normalizeEmail`) |
 
 - **One file per symbol**, filename exactly matching the symbol name in PascalCase (e.g. `Article.ts`,
   `IArticleService.ts`, `Visibility.ts`, `CreateArticleInput.ts`, `ArticleTitleRequiredError.ts`). Every
   folder gets an `index.ts` barrel.
 - **Subpath exports only.** Declare `__FORGE_SCOPE__/core/<domain>/entities`, `/contracts`, `/enums`,
-  `/errors`, `/types`, `/testing`, plus `__FORGE_SCOPE__/core/shared/errors` and `/shared/testing`, in
+  `/errors`, `/types`, `/testing` and `/policies` (each only where the domain has the folder), plus `__FORGE_SCOPE__/core/shared/errors`, `/shared/testing`, `/shared/types` and `/shared/policies`, in
   `package.json` `exports`. There is no bare `__FORGE_SCOPE__/core` export.
 
 ## Procedure
-1. For a new domain, create `src/<domain>/{entities,contracts,enums,errors,types,testing}/` with one
+1. For a new domain, create `src/<domain>/{contracts,types,testing}/` plus whichever of `entities`, `enums`, `errors` and `policies` the domain needs, with one
    file per symbol and an `index.ts` barrel per folder; add its subpath exports to `package.json`.
 2. Entities own their invariants and throw the specific `errors/` subclass for the violated
    invariant (never the base `DomainError`); provide a `fromJSON` static reviver against the

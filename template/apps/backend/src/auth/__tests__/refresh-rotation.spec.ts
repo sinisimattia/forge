@@ -29,7 +29,7 @@ import { FakeDataSource } from '../../common/testing';
  * cannot pass. It is stated separately and deliberately, because on every other
  * assertion the two look identical.
  *
- * Watched failing (Step 6 of the task): with the reuse branch changed to reject
+ * Watched failing: with the reuse branch changed to reject
  * the presented credential without ending the session, "is rejected" passes and
  * every family assertion fails.
  */

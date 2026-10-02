@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
  * How a caller asks for one page of an organization's grants.
@@ -16,6 +17,7 @@ export class ListGrantsQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @ApiPropertyOptional()
   readonly page: number = 1;
 
   @IsOptional()
@@ -23,5 +25,6 @@ export class ListGrantsQueryDto {
   @IsInt()
   @Min(1)
   @Max(100)
+  @ApiPropertyOptional()
   readonly limit: number = 20;
 }

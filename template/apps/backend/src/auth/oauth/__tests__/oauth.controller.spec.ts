@@ -66,12 +66,10 @@ const CLIENT_REQUEST = fakeRequest();
 
 /**
  * Fixture credential values, named after themselves — the same idiom
- * `identity-world.ts` already uses for a signing key, and the one that needs
- * no exemption marker of any kind. `tools/sanitize.mjs`'s populated-secret
- * rule matches a `TOKEN`-shaped key next to any non-empty quoted value, with
- * no way to tell a fixture literal from a real one by content alone, but
- * exempts a value that is exactly its own UPPER_SNAKE key name. Passed by
- * reference below, never inlined as a second quoted literal.
+ * `identity-world.ts` already uses for a signing key. Each value is spelled
+ * exactly like its own key, so there is nothing in it the identifier does not
+ * already say. Passed by reference below, never inlined as a second quoted
+ * literal, so each string is written once.
  */
 const ACCESS_TOKEN = 'ACCESS_TOKEN';
 const REFRESH_TOKEN = 'REFRESH_TOKEN';
@@ -179,7 +177,7 @@ describe('OAuthController', () => {
         'GOOGLE', 'the-code', 'the-state', CLIENT_REQUEST, response as unknown as Response,
       );
 
-      // R5: the credential is in a cookie, and the URL carries nothing.
+      // The credential is in a cookie, and the URL carries nothing.
       expect(response.cookie).toHaveBeenCalledWith(
         REFRESH_COOKIE.name, REFRESH_TOKEN, expect.anything(),
       );
@@ -198,7 +196,7 @@ describe('OAuthController', () => {
     });
 
     it('lands on the challenge page, with the token and no cookie, when a second factor is owed', async () => {
-      // Spec §8.4's ending on the wire. The two halves that have to meet are
+      // ADR-0012's federated challenge on the wire. The two halves that have to meet are
       // the token and the destination: a controller that redirected to the
       // ordinary callback page would leave the token nowhere it can be spent,
       // and one that landed here without it would send somebody to a page
@@ -341,7 +339,7 @@ describe('OAuthController', () => {
  *   direct-call test can see — `controller.providers()` still returns the
  *   right thing when called directly — and the actual symptom is the login
  *   page's own provider list 404ing, which is exactly the ADR-0008 failure
- *   this whole task exists to prevent.
+ *   this whole suite exists to prevent.
  * - **The callback's argument binding.** `redirectToProvider`'s own suite
  *   asserts `oauth.begin` is called with the right arguments; nothing did
  *   the equivalent for `callback` — a swapped `@Query('code')`/`@Query('state')`,

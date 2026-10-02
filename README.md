@@ -135,7 +135,7 @@ npm run create -- --name my-app \
 
 ## 📦 What's in the box
 
-A generated project is a working identity platform, not a scaffold. Six phases are built.
+A generated project is a working identity platform, not a scaffold.
 
 | | Ships |
 |---|---|
@@ -177,12 +177,12 @@ flowchart LR
   style A fill:#8250df,color:#fff
 ```
 
-Three packages, one rule each:
+The workspace packages each follow one rule:
 
 - **`libs/core`** — the domain, framework-agnostic and transport-free. One folder per domain, plus `shared`. Service ports ship **executable conformance suites**, and the backend runs every
   one against its real implementation — so "the adapter satisfies the contract" is a test, not
   a review note.
-- **`apps/backend`** — NestJS, TypeORM, seven migrations. External capabilities are ports with
+- **`apps/backend`** — NestJS, TypeORM, migrations. External capabilities are ports with
   development adapters, so a fresh clone works end to end with nothing to sign up for
   ([ADR-0008](template/docs/adrs/0008-ports-not-vendors.md)).
 - **`apps/webapp`** — Nuxt 4 over an Atomic Design component library, with the layering
@@ -197,7 +197,7 @@ my-app/
 ├── compose.yaml, compose.prod.yaml, .env.example
 ├── .github/workflows/ci.yml
 ├── .claude/agents/, .claude/agent-memory/
-├── docs/{standards,adrs,rfcs,architecture,guides,concepts,api,superpowers}/
+├── docs/{standards,adrs,rfcs,architecture,guides,concepts,api}/
 ├── libs/core/        → users identities auth mfa organizations authorization audit shared
 │                       grouped by kind: entities/ types/ enums/ errors/ policies/, plus
 │                       contracts/ + testing/ where a domain has a service port
@@ -256,9 +256,11 @@ breaks while you have it open.
 
 ## 🧪 The gates
 
-A gate that only ever runs against correct code proves nothing. The spec's §11 lists sixteen
-faults, **D1–D16**, each with the observation that must catch it — and the ones Forge owns are
-enforced by *injecting the fault and watching the gate fail*.
+A gate that only ever runs against correct code proves nothing.
+[ADR-0005](docs/adrs/0005-four-test-tiers.md) sets out the four tiers, and what makes a
+discriminating test different from one that merely passes. The named faults run **D1**
+onwards, and that ADR says where they live. The ones Forge itself owns are enforced
+by *injecting the fault and watching the gate fail*:
 
 | | Fault injected | Caught by |
 |---|---|---|
@@ -281,13 +283,19 @@ npm run test:all     # sanitize → unit → integration (generates a real proje
 > tiers live in `npm run test:integration`; `FORGE_E2E=1` adds the Docker stage on top. Budget
 > real time for it — a generated project's `npm ci` plus a Nuxt build, then image builds.
 
-Two gates are not in any `run-many` list and need naming explicitly, in Forge and in every
-generated project:
+**nx runs the targets you name and no others**, so a gate outside the `lint`/`typecheck`/
+`test`/`build` run-many list only runs if you ask for it — in Forge and in every generated
+project:
 
 ```bash
+npx nx run-many -t coverage     # libs/core is held at 100%; `-t test lint typecheck` is blind to it
 npm run purity -w libs/core     # core names no framework or transport, in code or in prose
 npm run layers -w apps/webapp   # a component renders only layers below its own
 ```
+
+`coverage` is the one that bites: `-t test lint typecheck` goes green while it fails. A
+generated project's root `affected` script does name all three; its `build`, `test`, `lint`
+and `typecheck` scripts do not.
 
 <details>
 <summary><strong>CI, and why the slow jobs run on push</strong></summary>
@@ -332,15 +340,25 @@ Binary files are detected by a NUL byte in the first 8 KiB and copied verbatim.
 ## ⚠️ Known limitations
 
 - **No drift or update tooling.** `forge.json` records the commit a project was generated
-  from, so re-syncing stays *possible*, but nothing does it yet.
+  from, so re-syncing stays *possible*; performing it is a manual re-extraction, not
+  something Forge automates (ADR-0003).
 - **A generated project's CI workflow is never parsed.** It is copied like any other file and
   checked only by a plain-text scan, so a YAML error in it would ship silently. Validating it
   needs a YAML parser, which conflicts with the zero-dependency constraint — accepted as a
   known gap, not an oversight.
-- **No OpenAPI document.** The webapp's service layer is written by hand against a contract
-  that exists only as backend source.
 - **Recovery codes predating the transcribable alphabet no longer redeem**, and there is no
   administrator reset path. Nothing is deployed yet, which is why no transition was built.
+- **A throttled person is not told to wait.** The backend answers a throttled request with
+  `429`, `TOO_MANY_ATTEMPTS` and a translated message, and puts the retry window in a
+  `Retry-After` header; the webapp's transport drops that header, and no service or form names
+  this error. Each form names the errors it knows and falls back to one fixed copy for the
+  rest, so what the person sees depends on the route: a generic failure on sign-in,
+  reset-password, the second-step challenge and the MFA forms on the account security page, but
+  **a claim of success** on forgot-password and verification resend, which tell a throttled
+  person a message is on its way when none was sent. Sign-in, forgot-password and resend are
+  uniform on purpose, so that no answer says anything about an address. Surfacing the wait
+  means carrying the header through the transport, the services and every form, which is a
+  mechanism rather than a string.
 
 ---
 
@@ -348,9 +366,9 @@ Binary files are detected by a NUL byte in the first 8 KiB and copied verbatim.
 
 | | |
 |---|---|
-| Design spec | [`docs/superpowers/specs/2026-09-17-forge-template-design.md`](docs/superpowers/specs/2026-09-17-forge-template-design.md) |
-| Phase roadmap | [`docs/superpowers/phase-roadmap.md`](docs/superpowers/phase-roadmap.md) |
-| Forge's own ADRs | [`docs/adrs/`](docs/adrs/) — one template not layers, a dependency-free generator, copy-out-only extraction |
+| The generator contract | [`docs/adrs/0004-the-generator-contract.md`](docs/adrs/0004-the-generator-contract.md) — the tokens and why those, substitution as the only transform, adopt mode, and the `forge.json` receipt |
+| The test tiers | [`docs/adrs/0005-four-test-tiers.md`](docs/adrs/0005-four-test-tiers.md) — what each tier proves that the one below it cannot, and what a discriminating test is |
+| Forge's own ADRs | [`docs/adrs/`](docs/adrs/) — the decisions behind the generator and the template, including the two above |
 | The template's ADRs | [`template/docs/adrs/`](template/docs/adrs/) — the decisions a generated project inherits |
 | Agent orientation | [`CLAUDE.md`](CLAUDE.md) |
 

@@ -20,9 +20,9 @@ import type { AuditEntryProps } from '../types/AuditEntryProps';
  * `occurredAt` cannot be parsed builds an entry silently and then throws from
  * {@link AuditEntry.toJSON} when somebody reads it — refusing at read time,
  * which for an append-only table is the worse of the two places, because the
- * row that provoked it is one nothing may correct. Nothing in this phase can
- * produce such a row: the only writer is `record`, and it is handed a `Date`.
- * If a later phase gives this entity a second way in — rows from somewhere
+ * row that provoked it is one nothing may correct. Nothing in this application
+ * can produce such a row: the only writer is `record`, and it is handed a
+ * `Date`. If this entity ever gains a second way in — rows from somewhere
  * other than this application's own writes — {@link AuditEntry.fromJSON} is
  * where that has to be caught, being the one boundary where refusing costs a
  * reader nothing and a writer nothing.

@@ -8,7 +8,7 @@
     "create": "node tools/create/index.mjs",
     "sanitize": "node tools/sanitize.mjs",
     "refresh-lockfile": "node tools/refresh-lockfile.mjs",
-    "test": "node --test 'tests/unit/**/*.test.mjs'",
+    "test": "node --test 'tests/unit/**/*.test.mjs' && echo '--- unit tier only. The generated-project tier is: npm run test:integration (add FORGE_E2E=1 for the Docker stage).'",
     "test:integration": "node --test --test-timeout=1800000 'tests/integration/**/*.test.mjs'",
     "test:all": "npm run sanitize && npm test && npm run test:integration"
   },

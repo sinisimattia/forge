@@ -60,9 +60,11 @@ import { requireAppRoleName } from '../app-role';
  *   arbitrary request-shaped code, and is the only one of the three that an
  *   attacker reaches through the product.
  *
- * This file is discriminating test D13's mechanism. The test itself is in the
- * docker end-to-end suite, against the running stack: nothing short of a real
- * database can prove that a real statement is refused.
+ * This file is discriminating test D13's mechanism. Proving the refusal needs a
+ * running database — nothing short of a real one can show that a real statement
+ * is rejected — and no test in this repository stands one up; what ships instead
+ * is `db/audit-privilege-check.ts`, which re-checks the `UPDATE` half at
+ * start-up.
  */
 export class AuditAppendOnly1758000002000 implements MigrationInterface {
   name = 'AuditAppendOnly1758000002000';

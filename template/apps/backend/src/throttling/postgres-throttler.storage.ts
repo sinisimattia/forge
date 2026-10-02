@@ -28,9 +28,10 @@ type ThrottlerStorageRecord = Awaited<ReturnType<ThrottlerStorage['increment']>>
  * it would release the subject early, which is the opposite of what the block
  * is for.
  *
- * Exported so the end-to-end suite can execute this exact text against a real
- * Postgres rather than a retyped copy of it — a copy would be a second place
- * the behaviour lives, and the test would stay green while this one changed.
+ * Exported so that anything asserting this behaviour against a real Postgres
+ * executes this exact text rather than a retyped copy of it — a copy would be a
+ * second place the behaviour lives, and the test would stay green while this
+ * one changed.
  */
 export const SWEEP_FINISHED_WINDOWS = `DELETE FROM rate_limit_counters
       WHERE expires_at <= now()
@@ -53,8 +54,10 @@ export const SWEEP_FINISHED_WINDOWS = `DELETE FROM rate_limit_counters
  * subject that tripped the limit late in a window had the refusal erased moments
  * later by the rollover: the rate bound survived, since a fresh window still
  * permits only the limit, but `blockDuration` was decorative and any promise of
- * a retry window was false. The end-to-end suite has a case that fails if the
- * arms are reordered back.
+ * a retry window was false. **Nothing in this repository would catch a
+ * reordering back:** the arms are evaluated by Postgres, and
+ * `__tests__/postgres-throttler.storage.spec.ts` sets out in its own header why
+ * no in-process double can stand in for one. Keep the order.
  *
  * `engaged` is true on the one call that set the block. A block is only ever
  * written by the final arm of `blocked_until`, as `now() + $4`, and `now()` is
@@ -154,8 +157,9 @@ export const THROTTLE_BLOCK_REPORTER = Symbol('THROTTLE_BLOCK_REPORTER');
  *
  * ## No repository, on purpose
  *
- * `RateLimitCounterRecord` maps the table so the schema-drift probe can see it,
- * but nothing here injects a repository: the decision has to be one statement,
+ * `RateLimitCounterRecord` maps the table so `app.module.ts`'s entity list stays
+ * the whole truth, but nothing here injects a repository: the decision has to be
+ * one statement,
  * and the entity API has no form for an upsert whose update reads the row it is
  * updating. Adding a `TypeOrmModule.forFeature` for that record would be wiring
  * nothing reads.

@@ -19,8 +19,8 @@ import type { ApiClient, ApiRequest, LoginResponseBody } from '~/types';
  * ## What this file exists to hold
  *
  * The challenge token is a single-use credential that a person holds for a few
- * minutes. `auth.spec.ts` spends a task's worth of comments on why the access
- * credential lives in memory and nowhere else; the same argument applies here,
+ * minutes. `auth.spec.ts` goes into why the access credential lives in memory
+ * and nowhere else at length; the same argument applies here,
  * and the same three places need watching: a cookie, storage, and the state
  * Pinia serialises into the server-rendered page.
  */
@@ -443,10 +443,9 @@ describe('useAuthStore — the second factor', () => {
     });
   });
 
-  // Compile-time, and here because `nuxt typecheck` is what reads it. The brief
-  // for this file's task named the debt: `POST /auth/login` was typed as the
-  // success body alone, which stopped being true the day it could answer a
-  // challenge. If either directive below is unused, the union has stopped
+  // Compile-time, and here because `nuxt typecheck` is what reads it. The debt
+  // these two directives pay off: `POST /auth/login` was typed as the success
+  // body alone, which stopped being true the day it could answer a challenge. If either directive below is unused, the union has stopped
   // narrowing and the typecheck says so.
   describe('the login response type', () => {
     it('makes a caller that ignores the second arm a compile error', () => {

@@ -37,10 +37,9 @@ const PLAINTEXT = 'a correct horse battery staple';
 /**
  * The same phrase, spoilt, for the attempt that has to be refused.
  *
- * A named binding rather than a literal at its use, for the reason the seam spec
- * gives: the extraction gate strips interpolations from a template literal
- * before judging the remainder, and a short quoted remainder under a
- * secret-shaped key reads as a populated credential.
+ * A named binding rather than a literal at its use: it is built from
+ * `PLAINTEXT`, so the correct phrase has one spelling and this one is visibly
+ * derived from it.
  */
 const WRONG_PLAINTEXT = `${PLAINTEXT}-not`;
 

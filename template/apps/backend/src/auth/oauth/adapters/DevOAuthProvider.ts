@@ -61,8 +61,8 @@ export const DEV_OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
  * no credential presented and no party other than this process ever asked to
  * confirm anything. That is a total authentication bypass, on purpose, so a
  * freshly generated project can exercise the whole sign-in flow — and,
- * config permitting, the link-conflict flow the docker end-to-end suite's
- * own walk needs — before anyone has registered a real provider anywhere.
+ * config permitting, the link-conflict flow — before anyone has registered a
+ * real provider anywhere.
  *
  * **This class does not itself refuse to run in production — that refusal is
  * not its job.** `buildOAuthProviders` in `../oauth.config.ts` owns both
@@ -72,8 +72,8 @@ export const DEV_OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
  * environment, when a real generic OIDC provider is configured alongside this
  * one, because both answer to the single `AuthProvider.OIDC` member and a
  * registry can hold only one of them without silently picking a winner by
- * construction order (that file's PF-1 guard, "The development provider and a
- * real generic OIDC provider never register together"). Repeating either
+ * construction order (that file's collision guard, "The development provider
+ * and a real generic OIDC provider never register together"). Repeating either
  * check here would be a second copy of a rule that only has to be right in
  * one place; `buildOAuthProviders` is that place, read it before trusting
  * that this class is contained.
@@ -83,11 +83,9 @@ export const DEV_OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
  * **No network call, ever.** That is the property that makes this the
  * *development* adapter rather than a badly-written real one — it has to work
  * with nothing registered anywhere, including no DNS route to a provider that
- * does not exist for it. `fetchAccount` is asserted never to contain the
- * substring `fetch(` for exactly this reason: the assertion is on the method
- * body, not on behaviour observed through a mock, so it fails the day this
- * class grows a call it should not have rather than the day a test happens to
- * exercise it.
+ * does not exist for it. `DevOAuthProvider.spec.ts` asserts it by
+ * behaviour: it replaces the global `fetch` with a function that throws, runs
+ * the full authorize-then-redeem flow, and requires that nothing called it.
  *
  * ## How the code is bound to the address, without a network or a store
  *
@@ -138,6 +136,15 @@ export class DevOAuthProvider implements IOAuthProvider {
    * signature is exactly the part that is unique per mint (the payload
    * includes `exp`, so even the same address minted twice differs), and it is
    * already computed on the hot path.
+   *
+   * **Never evicted, and that is acceptable.** The set gains one entry (a
+   * 43-character base64url HMAC-SHA256 signature) per successful sign-in
+   * through this adapter, so its size is the number of development sign-ins
+   * this process has served. A code past {@link DEV_OAUTH_CODE_TTL_MS} would
+   * be refused by the expiry check even if it were not in the set, so no entry
+   * is still doing work after that, but nothing removes it. That is tolerable
+   * because `buildOAuthProviders` refuses to register this adapter when
+   * `NODE_ENV=production`.
    */
   private readonly consumed = new Set<string>();
 
@@ -169,6 +176,7 @@ export class DevOAuthProvider implements IOAuthProvider {
   public async authorizationUrl(params: AuthorizationUrlParams): Promise<string> {
     const code = this.mintAuthorizationCode();
     const query = new URLSearchParams({ code, state: params.state });
+    // The `?` join assumes `params.redirectUri` carries no query of its own.
     return `${params.redirectUri}?${query.toString()}`;
   }
 

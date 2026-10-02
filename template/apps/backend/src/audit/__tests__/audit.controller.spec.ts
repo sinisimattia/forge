@@ -232,7 +232,7 @@ describe('AuditController', () => {
     });
 
     it('appends to the thing being read, but never inside the page it returns', async () => {
-      // Both halves matter. The pass is still recorded — spec §9.5 — so the
+      // Both halves matter. The pass is still recorded — ADR-0006 — so the
       // history really does grow by one on every look at it. What changed is
       // WHEN: after the handler, so a reader never sees the request they just
       // made sitting at the top of their own results.

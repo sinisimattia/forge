@@ -21,10 +21,12 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * always meant to.
  *
  * `USING organization_id::uuid` is safe because nothing has ever written a
- * non-null value into this column: every call site that constructs a
- * `RecordAuditEntryInput` in this phase — `AuditService.record` itself,
- * `AuthService`, `UsersService`, `IdentitiesService`, `RefreshTokenService`,
- * `PlatformAdminOverrideInterceptor` — passes `organizationId: null` literally.
+ * non-null value into this column: every call site that constructed a
+ * `RecordAuditEntryInput` when this migration was written — `AuditService.record`
+ * itself, `AuthService`, `UsersService`, `IdentitiesService`,
+ * `RefreshTokenService`, `PlatformAdminOverrideInterceptor` — passed
+ * `organizationId: null` literally. The organization writes that populate this
+ * column arrive with this migration and after it, never before.
  * Verified statically before writing this migration:
  * `grep -rn "organizationId" apps/backend/src/{audit,auth,identities,users}`
  * shows every write site as the literal `null`, never a variable. That grep is

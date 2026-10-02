@@ -11,7 +11,7 @@ import { localRedirect, SIGNED_IN_HOME } from '~/utils/redirect';
  * ## The success path is a renewal, not a token read
  *
  * `OAuthController.callback`'s own TSDoc is explicit about what it will never
- * do: put an access credential in this URL. R5 — a token in a query string
+ * do: put an access credential in this URL. A token in a query string
  * lands in browser history, the `Referer` header of whatever loads next, and
  * every proxy log on the way. What actually happens on success is that the
  * backend sets the refresh cookie exactly as `POST /auth/login` does, then

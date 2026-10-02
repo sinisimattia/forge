@@ -66,11 +66,16 @@ export class OidcOAuthProvider implements IOAuthProvider {
   /** The in-flight (or completed) discovery fetch, memoized so it runs at most once. */
   private discovery: Promise<OidcEndpoints> | null = null;
 
+  /** The issuer with trailing slashes removed, so `${issuer}${DISCOVERY_PATH}` has one slash. */
+  private readonly issuer: string;
+
   constructor(
-    private readonly issuer: string,
+    issuer: string,
     private readonly credentials: OAuthClientCredentials,
     private readonly http: typeof fetch = fetch,
-  ) {}
+  ) {
+    this.issuer = issuer.replace(/\/+$/, '');
+  }
 
   /**
    * @returns the URL to send the browser to, built from the discovered

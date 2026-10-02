@@ -74,8 +74,9 @@ import { UserRecord } from '../users/user-record.entity';
  *
  * `FakeDataSource` enforces no unique constraints (item 4 on its own inventory)
  * and no foreign keys (item 7). Nothing here is evidence about
- * `uq_memberships_org_user` or about what a real database does on a cascade;
- * the docker end-to-end suite's walk against a real Postgres is.
+ * `uq_memberships_org_user` or about what a real database does on a cascade.
+ * Only a run against a real Postgres would be, and no test in this repository
+ * stands one up.
  */
 
 const OWNER_A = '11111111-1111-4111-8111-111111111111' as UserId;
@@ -556,7 +557,7 @@ describe('tenant isolation (D9)', () => {
   });
 
   /**
-   * R2's cost-if-wrong, asserted where the rule actually runs.
+   * The cost-if-wrong of the expiry rule, asserted where the rule actually runs.
    *
    * `can()` deliberately never reads `expiresAt` — reading it would need a clock,
    * and a clock would stop the same principal and resource producing the same
@@ -564,7 +565,7 @@ describe('tenant isolation (D9)', () => {
    * is judged in the whole system, and an expired grant that survives its filter
    * is honoured by `can()` without complaint. There is no second check anywhere.
    */
-  describe('R2: the hydrator is the only place grant expiry runs', () => {
+  describe('the hydrator is the only place grant expiry runs', () => {
     /** Issues one grant for MEMBER_A in ORG_A, lapsing (or not) when told. */
     const seedGrant = (id: string, expiresAt: Date | null): void => {
       source.seed(ResourceGrantRecord, [
@@ -660,8 +661,8 @@ describe('tenant isolation (D9)', () => {
    * nulled — asserting on it would be asserting on the fake's behaviour, not on
    * the schema's.
    *
-   * So it is left. The docker end-to-end suite stands up a real Postgres and is where the
-   * cascade becomes reachable, and the mapper that has to survive it
+   * So it is left. The cascade becomes reachable only against a real Postgres,
+   * and the mapper that has to survive it
    * (`to-invitation.ts`) already reads the column as `UserId | null`.
    *
    * The clause itself is pinned in `migration-sql.spec.ts` → `the
@@ -670,7 +671,7 @@ describe('tenant isolation (D9)', () => {
    * column for `invited_by_user_id`, `accepted_by_user_id` and `granted_by`.
    * **Those assertions were written because this comment first claimed they
    * existed and they did not** — the file's only `ON DELETE SET NULL` assertion
-   * was an earlier phase's, for `refresh_tokens`. An incorrect pointer to
+   * was an older one, for `refresh_tokens`. An incorrect pointer to
    * coverage is worse than an acknowledged gap, because it stops the next
    * person looking.
    */

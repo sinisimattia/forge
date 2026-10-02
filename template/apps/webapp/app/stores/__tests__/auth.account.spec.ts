@@ -96,7 +96,8 @@ describe('the auth store, for account management', () => {
     // driving it can observe a stale access credential being refused**. A store
     // that dropped the reissue below goes on working here; measured, by removing
     // the line and watching a "the backend is still reachable" assertion pass.
-    // What catches that in the real world is the end-to-end walk.
+    // Nothing in this repository catches that; only a run against the real
+    // backend would.
 
     // And it is a *different* one: the backend ended every session, the caller's
     // included, so a store that kept the old value is presenting a dead

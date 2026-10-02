@@ -1,7 +1,7 @@
 /**
  * What happened. One member per kind of event worth reconstructing later.
  *
- * Members are added by later phases and never renamed or removed: a stored
+ * Members are only ever added, never renamed or removed: a stored
  * value that changes meaning makes every historical entry a lie, and this is a
  * table nothing is permitted to rewrite.
  */

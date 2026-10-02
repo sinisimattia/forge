@@ -36,8 +36,9 @@ import { PLATFORM_ADMIN_PASS, type PlatformAdminPass } from './platform-admin-ov
  *
  * ## Why the pass is recorded and the refusal is not
  *
- * Spec §9.5: `PLATFORM_ADMIN` passes everything, and every such pass is
- * audit-logged. That is what `AuditAction.PLATFORM_ADMIN_OVERRIDE` means — a
+ * ADR-0006: `PLATFORM_ADMIN` passes everything, and "every such pass is
+ * recorded in the audit log". That is what `AuditAction.PLATFORM_ADMIN_OVERRIDE`
+ * means — a
  * pass the ordinary rules would have refused, whose justification is not visible
  * anywhere in the request itself. A refusal is not an override; it is already
  * the ordinary answer, and recording one would let anybody fill the audit log by
@@ -108,7 +109,7 @@ export class PlatformAdminGuard implements CanActivate {
 
     // The pass is MARKED here and WRITTEN by
     // `PlatformAdminOverrideInterceptor` once the handler has finished. The
-    // entry is owed either way — spec §9.5 — but writing it from a guard put it
+    // entry is owed either way — ADR-0006 — but writing it from a guard put it
     // in the page that `GET /audit` was about to return, so the newest row of
     // page 1 was always the request that had asked for it. See the
     // interceptor's own comment for what that fixes and what it does not.

@@ -87,7 +87,7 @@ import { buildOtpauthUri, renderQrSvg } from './totp/totp-enrollment';
  * a live proof of one: a code from any confirmed method, or an unused recovery
  * code — **not the password**. An account created through a federated provider
  * may have no password to present, and the threat is a session that is already
- * hijacked, against which a phished password is no barrier (spec §16.1).
+ * hijacked, against which a phished password is no barrier (ADR-0012).
  * `POST /mfa/recovery-codes` carries the same requirement, because a fresh
  * batch invalidates the codes the rightful owner is holding.
  *

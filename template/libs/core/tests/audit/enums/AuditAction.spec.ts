@@ -60,7 +60,7 @@ describe('AuditAction enum values', () => {
   };
 
   // One case per member, so a failure names the key that moved instead of stopping a loop
-  // at the first one — and every phase that adds an action meets this list first.
+  // at the first one — and every change that adds an action meets this list first.
   it.each(Object.entries(EXPECTED_VALUES))('%s has the expected string value', (key, expected) => {
     expect((AuditAction as Record<string, string>)[key]).toBe(expected);
   });

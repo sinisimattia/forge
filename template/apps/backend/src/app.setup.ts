@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 
 /**
@@ -17,7 +18,14 @@ import cookieParser from 'cookie-parser';
  * pipe, the exception filter and the response interceptor are all `APP_*`
  * providers in `app.module.ts`, where module metadata makes them assertable
  * without starting anything. What is left here is the residue that Nest has no
- * declarative form for: middleware, and CORS. `__tests__/composition-root.spec.ts`
+ * declarative form for, and that is the whole membership rule for this function:
+ * anything expressible as module metadata belongs in `app.module.ts`, and only
+ * what is not expressible that way belongs here — so read the body, not this
+ * sentence, for the current contents. As written they are `cookieParser`, CORS,
+ * and the OpenAPI document, which `SwaggerModule` mounts through the HTTP adapter
+ * rather than as a controller (see the comment at that call: the mount is skipped
+ * only when `NODE_ENV` is exactly `production`, and the global guard never sees
+ * those routes). `__tests__/composition-root.spec.ts`
  * calls **this function** — not a copy of it — against a probe application, so
  * deleting a line here turns a test red.
  *
@@ -58,4 +66,21 @@ export function configureApp(app: INestApplication): void {
   // expired session.
   const corsOrigin = config.get<string>('CORS_ORIGIN', 'http://localhost:3001');
   app.enableCors({ origin: corsOrigin, credentials: true });
+
+  // The API document is served wherever `NODE_ENV` is not exactly `production` —
+  // which includes unset, `staging` and a typo, so this fails OPEN. `SwaggerModule`
+  // mounts through the HTTP adapter, not as a controller, so the global guard never
+  // sees these routes and the full API map is served anonymously. The shipped
+  // production artifacts set `NODE_ENV=production`; an environment deployed any
+  // other way publishes the map. The `@nestjs/swagger` compiler plugin
+  // (`nest-cli.json`) infers schemas from TypeScript types, but only for classes in
+  // files named `*.dto.ts` or `*.entity.ts`; a DTO declared elsewhere is documented
+  // without its constraints. The check is explicit, so that deleting it is a visible change a spec turns red on.
+  if (process.env.NODE_ENV !== 'production') {
+    const document = SwaggerModule.createDocument(
+      app,
+      new DocumentBuilder().setTitle('__FORGE_TITLE__ API').setVersion('1.0').addBearerAuth().build(),
+    );
+    SwaggerModule.setup('api/docs', app, document);
+  }
 }

@@ -9,8 +9,9 @@ import { InMemoryMfaService } from './InMemoryMfaService';
 /**
  * The value this world is seeded with, gathered into an object and read out of it by
  * destructuring — see the note on the same construction in the auth security suite's
- * driver. It is a quoted string literal, which is precisely what the extraction gate
- * flags when it sits under a secret-ish member name; named for what it is, it would flag.
+ * driver. It is a quoted string literal, which is precisely what a text-based secret scan
+ * flags when one sits under a secret-ish member name; named for what it is, it would be
+ * exactly that shape.
  * So the name the deps interface asks for is introduced as a binding by the destructuring
  * below, and the object's own key stays neutral.
  */

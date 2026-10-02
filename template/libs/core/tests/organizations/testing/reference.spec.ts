@@ -23,13 +23,9 @@ const ORGANIZATION_ID = 'org-seeded' as OrganizationId;
  * The opaque value this world redeems nothing with.
  *
  * Bound to a name of its own and referenced below, rather than written inline,
- * because the extraction gate that scans this tree for a pasted credential flags
- * a secret-ish member name given a quoted value — and `absentToken:
- * 'no-such-token'` is exactly that shape. It cannot tell a deliberately useless
- * test value from a credential typed into a config file, and should not try to.
- * The gate was narrowed so that an unquoted value in TypeScript no longer counts,
- * being a reference to a binding rather than a literal, so naming the value here
- * keeps the domain's word without a per-line exemption.
+ * so the use site reads as "the value this world redeems nothing with" rather
+ * than as an opaque string. The name carries the meaning and the literal is
+ * written once, here.
  */
 const REDEEMS_NOTHING = 'no-such-value';
 

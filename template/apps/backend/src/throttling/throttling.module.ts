@@ -138,7 +138,8 @@ export function throttlerOptions(
  * No `TypeOrmModule.forFeature` for `RateLimitCounterRecord`. The table is
  * reached with raw SQL through the `DataSource`, so no repository for it is
  * ever injected, and registering one would be wiring nothing reads. The entity
- * is in `app.module.ts`'s list, which is where the schema-drift probe looks.
+ * is in `app.module.ts`'s list, which `__tests__/composition-root.spec.ts` asserts
+ * entity by entity.
  */
 @Module({
   imports: [

@@ -146,6 +146,20 @@ export const BOTH_CREDENTIALS_REFUSED
 export const NO_CREDENTIAL_REFUSED
   = 'A WebAuthn ceremony needs either a session (an enrollment) or a challenge token (a login).';
 
+/** The unique index that makes one WebAuthn credential belong to one method row. */
+const WEBAUTHN_CREDENTIAL_INDEX = 'uq_mfa_methods_webauthn_credential';
+
+/**
+ * Whether `error` is Postgres refusing a second row for one credential id.
+ * Both halves are required: `23505` alone is any unique violation, and the
+ * neighbouring tables carry their own unique constraints, whose failures are
+ * not this refusal and must not be reported as it.
+ */
+const isDuplicateCredential = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null
+  && (error as { code?: string }).code === '23505'
+  && (error as { constraint?: string }).constraint === WEBAUTHN_CREDENTIAL_INDEX;
+
 /**
  * Fixes the ceremony by the credential the request carried, and by nothing
  * else.
@@ -673,7 +687,7 @@ export class WebAuthnCeremonies {
     const now = new Date();
     const id = randomUUID();
 
-    const recoveryCodes = await this.dataSource.transaction(async (manager) => {
+    const recoveryCodes = await this.mapDuplicate(this.dataSource.transaction(async (manager) => {
       // The account's row, locked — the lock `MfaService.confirmTotpEnrollment`
       // and `MfaService.regenerateRecoveryCodes` take, so two first
       // confirmations for one account take turns and only one issues a batch.
@@ -739,7 +753,7 @@ export class WebAuthnCeremonies {
       if (!firstMethod) return null;
 
       return this.recoveryCodes.generate(userId, manager);
-    });
+    }));
 
     const written = await this.methods.findOne({ where: { id, userId } });
     if (written === null) throw new MfaVerificationFailedError();
@@ -899,8 +913,38 @@ export class WebAuthnCeremonies {
     const clash = await this.methods.findOne({
       where: { webauthnCredentialId: credentialId },
     });
-    if (clash !== null) {
-      throw new ConflictException('That security key is already registered.');
+    if (clash !== null) throw WebAuthnCeremonies.duplicateCredential();
+  }
+
+  /**
+   * The refusal for a credential that is already registered — the one
+   * spelling of it, thrown by the check before the write and by the mapping of
+   * the index's refusal after it.
+   */
+  private static duplicateCredential(): ConflictException {
+    return new ConflictException('That security key is already registered.');
+  }
+
+  /**
+   * Awaits the transaction that writes the method row, answering the database's
+   * refusal of a duplicate credential with the refusal
+   * {@link WebAuthnCeremonies.refuseDuplicateCredential} gives.
+   *
+   * That check reads before the write, so two enrollments of one credential can
+   * both pass it and the second insert is then refused by the unique index.
+   * The index is the guarantee, and it already holds; what is wrong without
+   * this is only the shape of the answer, a raw driver error surfacing as a
+   * 500. This maps the database's own refusal onto the vocabulary the check
+   * uses, at the point the driver reports it, rather than reimplementing the
+   * check inside the transaction. Any other failure, including a unique
+   * violation on another constraint, passes through unchanged.
+   */
+  private async mapDuplicate<T>(write: Promise<T>): Promise<T> {
+    try {
+      return await write;
+    } catch (error) {
+      if (isDuplicateCredential(error)) throw WebAuthnCeremonies.duplicateCredential();
+      throw error;
     }
   }
 

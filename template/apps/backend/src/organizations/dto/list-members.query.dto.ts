@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
 import { OrgRole } from '__FORGE_SCOPE__/core/organizations/enums';
 import { validationMessage } from '../../common/i18n';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
  * How a caller asks for one page of an organization's memberships.
@@ -15,6 +16,7 @@ export class ListMembersQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @ApiPropertyOptional()
   readonly page: number = 1;
 
   @IsOptional()
@@ -22,6 +24,7 @@ export class ListMembersQueryDto {
   @IsInt()
   @Min(1)
   @Max(100)
+  @ApiPropertyOptional()
   readonly limit: number = 20;
 
   /** Restricts the page to members holding this role, when given. */

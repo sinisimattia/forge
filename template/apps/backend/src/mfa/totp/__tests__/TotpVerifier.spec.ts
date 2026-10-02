@@ -5,10 +5,10 @@ import { STEP_SECONDS, totpCodeAtStep } from '../totp-authenticator';
  * RFC 6238 Appendix B's own key, `12345678901234567890` (ASCII) — the same
  * twenty bytes the RFC also spells `3132333435363738393031323334353637383930`
  * in hex. Named `..._KEY_...`, not `..._SECRET_...`: it is a published,
- * public test vector, never a credential, and this repository's sanitize
- * gate (rightly) cannot tell those apart by looking at an assignment shape
- * alone — seen the same way `mapMfaMethodRecord.spec.ts` names its own
- * fixture `FAKE_TOTP_SEED` rather than "secret".
+ * public test vector, never a credential — and nothing reading an assignment
+ * shape alone can tell those two apart, which is the same reason
+ * `mapMfaMethodRecord.spec.ts` names its own fixture `FAKE_TOTP_SEED` rather
+ * than "secret".
  *
  * `TotpVerifier.verify` takes its secret Base32-encoded (see that file's own
  * TSDoc), so this is the RFC key re-encoded into that alphabet — computed

@@ -58,7 +58,7 @@ export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
  *   backend's own table and grows the moment a row is added there, while this
  *   array is typed out by hand and does not. That gap is exactly how this list
  *   fell eleven codes behind — the organization, membership, invitation and
- *   grant codes of Tasks 10–14 — with the literal-list test staying green on
+ *   grant codes — with the literal-list test staying green on
  *   both sides throughout, because neither side's eleven-item literal ever
  *   had to change to stay equal to the other's eleven-item literal. It opened
  *   again for `TOO_MANY_ATTEMPTS` the moment the backend began refusing with

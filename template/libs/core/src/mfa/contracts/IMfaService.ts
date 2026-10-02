@@ -76,8 +76,9 @@ export interface IMfaService {
    *
    * A batch of recovery codes comes back exactly once for an account: the
    * confirmation that gives the account its first confirmed method mints
-   * them, spec §9.3's "generated once" applying to the account rather than
-   * to any one method, and every confirmation after that returns `null`.
+   * them. A batch belongs to the **account**, not to any one method, so every
+   * confirmation after that returns `null`; regenerating one is a separate,
+   * deliberate act that costs a fresh proof (ADR-0012).
    * A caller that lets a non-`null` result go without showing or storing it
    * has lost those codes for good — the store never holds them in a form
    * this contract, or anything else, can read back out.

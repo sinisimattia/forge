@@ -32,7 +32,7 @@ export function runIMfaServiceSecurityContract(deps: IMfaServiceSecurityContract
 
   describe('IMfaService security conformance', () => {
     describe('regenerateRecoveryCodes', () => {
-      // What spec §9.3's "stored hashed" is worth: a store an attacker
+      // What ADR-0012's "hashed at rest" is worth: a store an attacker
       // could merely read from — a backup, a misconfigured replica, a stray
       // log — must not hand them a usable code. This is the property no
       // caller of the contract could ever check on its own, which is why it

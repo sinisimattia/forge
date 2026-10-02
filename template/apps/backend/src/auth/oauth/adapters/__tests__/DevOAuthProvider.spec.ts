@@ -102,10 +102,26 @@ describe('DevOAuthProvider', () => {
     });
   });
 
-  it('is the only adapter whose account assertion needs no network', () => {
+  it('makes no network call across its whole authorize-and-redeem flow', async () => {
     // Not decoration: this is the property that makes it the development adapter.
-    // If this class ever gains a fetch, it has stopped being one.
-    expect(DevOAuthProvider.prototype.fetchAccount.toString()).not.toMatch(/fetch\(/);
+    // If this class ever gains a network call, it has stopped being one. Asserted
+    // on behaviour, not on source text, so it holds however a `fetch` call is spelled
+    // (`globalThis.fetch`, an alias made at call time, a helper). It only sees calls that
+    // resolve the global at call time: `node:http`, an HTTP client package, or a `fetch`
+    // captured at import would not be caught.
+    const fetchSpy = jest.fn(() => {
+      throw new Error('DevOAuthProvider reached for the network');
+    });
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      const { adapter, code } = await mintCode(CONFIGURED_ADDRESS);
+      await adapter.fetchAccount({ code, codeVerifier: 'v', redirectUri: REDIRECT_URI });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   // The seam an earlier pass of this adapter left open: `mintAuthorizationCode`

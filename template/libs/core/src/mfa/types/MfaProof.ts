@@ -7,9 +7,10 @@ import type { MfaMethodId } from './MfaMethodId';
  *
  * A discriminated union on **field presence**, never a single string an
  * implementation has to sniff apart to tell a code from a recovery code.
- * An earlier phase modelled this as one string field and inferred which
- * kind it was from its shape — a check a well-formed input of the wrong
- * kind could still pass. A field name cannot be fooled that way: a caller
+ * Modelling it as one string field and inferring which kind it was from
+ * its shape was tried and rejected — that is a check a well-formed input
+ * of the wrong kind can still pass. A field name cannot be fooled that
+ * way: a caller
  * states which proof it is offering by which field it populates, and
  * `'methodId' in proof` (or the type checker, statically) is the whole of
  * how an implementation tells the branches apart.

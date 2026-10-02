@@ -18,7 +18,7 @@ import { useOrganizationStore } from '~/stores/organization';
 import { stubNuxtAutoImports } from '~/test/stubNuxtAutoImports';
 
 /**
- * `useAudit`, the one read-only composable this task adds. There is no
+ * `useAudit`, which only reads. There is no
  * `record` test here — `~/services/organizationAudit.service.ts`'s own
  * TSDoc is where the reason lives: it must never be callable from a
  * browser.

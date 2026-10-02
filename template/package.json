@@ -24,6 +24,9 @@
     "@stylistic/eslint-plugin": "^5.10.0",
     "nx": "^21.2.0"
   },
+  "scarfSettings": {
+    "enabled": false
+  },
   "overrides": {
     "@nuxt/schema": "4.4.8"
   },

@@ -54,8 +54,8 @@ import type {
  * This stub is a model of the backend, not the backend. It proves that the
  * webapp's services parse what the backend produces and map errors as the
  * contract requires. It proves nothing about whether the backend behaves
- * correctly — that is the backend's own conformance run and the end-to-end
- * walk. When the two disagree, the stub is what is wrong.
+ * correctly — that is the backend's own conformance run. When the two disagree,
+ * the stub is what is wrong.
  *
  * That paragraph is the difference between DEC-1 being a design and DEC-1 being
  * a comment nobody read, so it is worth saying what it rules out in particular.

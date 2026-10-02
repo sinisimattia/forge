@@ -101,8 +101,9 @@ export function runIOrganizationServiceContract(deps: IOrganizationServiceContra
         expect.equal(created.isDeleted, false, 'and must not arrive already deleted');
       });
 
-      // The invariant the whole of §9.4 opens with, and the one most easily
-      // written so that it cannot fail: an organization with no OWNER can be
+      // An organization always has at least one OWNER. That invariant starts
+      // here, at creation, and it is the one most easily asserted so that it
+      // cannot fail: an organization with no OWNER can be
       // administered by nobody, and nothing inside the domain can put one back.
       //
       // It is asserted through `listMembers` rather than through anything
@@ -315,9 +316,9 @@ export function runIOrganizationServiceContract(deps: IOrganizationServiceContra
       // assertion in this suite that has the owner act on their own
       // membership, and an ADMIN demoting the sole OWNER is not the owner
       // demoting themselves. A suite that only ever had `owner` act on `owner`
-      // would pass that wrong implementation and every other one, which is
-      // exactly what this task's own injection proved before this assertion
-      // was strengthened.
+      // would pass that wrong implementation and every other one — which is
+      // what injecting exactly that implementation demonstrated against the
+      // weaker, owner-acting-on-owner form this assertion replaced.
       it('refuses to demote the last owner, whoever is asking', async () => {
         const { service, organization, owner, admin } = await makeContext();
         const members = await service.listMembers(owner.id, organization.id, EVERYTHING);

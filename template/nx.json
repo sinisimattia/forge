@@ -13,6 +13,6 @@
     "purity": { "cache": true },
     "layers": { "cache": true },
     "coverage": { "cache": true, "inputs": ["default", "^production"] },
-    "build-storybook": { "cache": true, "inputs": ["production", "^production"] }
+    "build-storybook": { "cache": true, "inputs": ["production", "^production"], "outputs": ["{projectRoot}/storybook-static"] }
   }
 }

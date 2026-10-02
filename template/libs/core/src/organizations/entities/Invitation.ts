@@ -10,7 +10,7 @@ import type { OrganizationId } from '../types/OrganizationId';
 
 /**
  * An email-based, single-use, expiring offer of a role in an organization
- * (spec §9.4). Accepting one while signed out routes through registration and
+ * (ADR-0010). Accepting one while signed out routes through registration and
  * then consumes the invitation — the invitation itself does not care which
  * order that happened in, only that the account which accepts holds the
  * address it was sent to.

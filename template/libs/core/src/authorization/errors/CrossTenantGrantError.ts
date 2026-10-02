@@ -4,8 +4,8 @@ import { DomainError } from '../../shared/errors/DomainError';
  * Raised when a grant is issued in an organization to somebody who is not a
  * member of it.
  *
- * It is the contract-level half of "grants never widen into another tenant"
- * (spec §9.5). `can` enforces the other half by consulting the principal's
+ * It is the contract-level half of ADR-0006's "grants ... never reach across a
+ * tenant boundary". `can` enforces the other half by consulting the principal's
  * membership before it ever reaches a grant, so such a grant would decide
  * nothing — but a store that accepted it would hold a record saying an outsider
  * may edit a tenant's document, which reads as access whether or not anything

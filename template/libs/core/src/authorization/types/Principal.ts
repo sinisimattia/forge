@@ -8,8 +8,9 @@ import type { ResourceType } from './ResourceType';
 /**
  * One organization a principal belongs to, and what they are in it.
  *
- * A role is a property of a membership and never of a person (spec §9.4), so
- * this pair is the smallest thing a decision can read. It is not a
+ * A role is a property of a membership and never of a person — the same person
+ * can be an OWNER of one organization and a VIEWER of another — so this pair is
+ * the smallest thing a decision can read. It is not a
  * {@link Membership}: that is a record with a lifecycle and an id, this is the
  * two facts a rule consults, and keeping them apart is what lets a caller
  * hydrate a principal without loading rows it will not read.

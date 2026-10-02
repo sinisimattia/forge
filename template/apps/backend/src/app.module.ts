@@ -82,18 +82,18 @@ export function typeOrmOptions(config: ConfigService): TypeOrmModuleOptions {
       MembershipRecord,
       InvitationRecord,
       ResourceGrantRecord,
-      // All three at once, and not one per feature as each is first read. The
-      // schema-drift probe in `tests/integration/docker.test.mjs` asserts the
-      // exact SET of tables TypeORM maps, so a partial registration turns it
-      // red just as surely as an unregistered table does — three tasks each
-      // adding one entity would be three red probes and three edits to the
-      // same expected list. `mfa_recovery_codes` therefore appears here before
-      // anything reads it: the row it maps exists in the migration, and the
-      // cost of mapping a table nothing queries is nothing at all.
+      // All three at once, and not one per feature as each is first read.
+      // `__tests__/composition-root.spec.ts` asserts this exact list, entity by
+      // entity, so a partial registration turns it red just as surely as an
+      // unregistered table does. A missing entity is otherwise a repository Nest
+      // cannot resolve, which surfaces at start-up and nowhere earlier.
+      // `mfa_recovery_codes` therefore appears here before anything reads it:
+      // the row it maps exists in the migration, and the cost of mapping a table
+      // nothing queries is nothing at all.
       MfaMethodRecord,
       MfaChallengeRecord,
       MfaRecoveryCodeRecord,
-      // Mapped for the schema-drift probe's sake, like the MFA entities above:
+      // Mapped so this list stays the whole truth, like the MFA entities above:
       // the table is queried with raw SQL through the `DataSource`, so no
       // repository for this record is ever injected.
       RateLimitCounterRecord,
@@ -109,7 +109,7 @@ export function typeOrmOptions(config: ConfigService): TypeOrmModuleOptions {
  * this module exists — `HttpExceptionFilter` falls back to
  * `i18n ? translate(key) : key` — so a refused sign-in answered
  * `{"message":"errors.auth.invalid_credentials"}` while the English for it sat
- * unread in `i18n/en/errors.json`. The plumbing shipped a phase before anything
+ * unread in `i18n/en/errors.json`. The plumbing shipped before anything
  * produced a message; the identity endpoints are the first routes that do.
  *
  * Exported as a value for the reason {@link GLOBAL_PROVIDERS} is: a spec
@@ -203,7 +203,7 @@ export const GLOBAL_PROVIDERS: Provider[] = [
   // apply wherever `PlatformAdminGuard` does and nowhere else — it does nothing
   // at all unless that guard marked the request — and pairing it with the guard
   // by hand on each controller is a pairing somebody eventually forgets, which
-  // would silently stop recording passes on one route. Spec §9.5.
+  // would silently stop recording passes on one route. ADR-0006.
   { provide: APP_INTERCEPTOR, useClass: PlatformAdminOverrideInterceptor },
 ];
 

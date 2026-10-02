@@ -9,8 +9,8 @@ import {
  * Redeeming an invitation: the one screen an invited person reaches by a
  * link, not by navigating in.
  *
- * **No `permission` middleware, and that is not an oversight this task
- * quietly worked around.** Every organization-scoped permission this
+ * **No `permission` middleware, and that is not an oversight.** Every
+ * organization-scoped permission this
  * application has is a question about a membership the actor already
  * holds — `can()`'s layer two, `ROLE_PERMISSIONS` — and accepting an
  * invitation is the one act that exists *because* the actor does not have

@@ -14,8 +14,8 @@ export interface UseInvitations {
   readonly loading: Ref<boolean>;
   /** Whether the last request failed. The reason is not kept — nothing renders one. */
   readonly failed: Ref<boolean>;
-  /** Reads the list again, replacing what is held. */
-  readonly load: () => Promise<void>;
+  /** Reads the list again, replacing what is held. Defaults to the open invitations. */
+  readonly load: (status?: InvitationStatus) => Promise<void>;
   /** Invites an address into the active organization, and re-reads the list. */
   readonly invite: (email: string, role: OrgRole) => Promise<void>;
   /** Revokes an open invitation, and re-reads the list. */
@@ -50,7 +50,7 @@ export function useInvitations(): UseInvitations {
     return new OrganizationHttpService(authStore.authenticatedClient());
   }
 
-  async function load(): Promise<void> {
+  async function load(status: InvitationStatus = InvitationStatus.PENDING): Promise<void> {
     const actor = authStore.user?.id;
     const organizationId = orgStore.activeOrganizationId;
     if (actor === undefined || organizationId === null) {
@@ -60,15 +60,17 @@ export function useInvitations(): UseInvitations {
     loading.value = true;
     failed.value = false;
     try {
-      // `PENDING` only: this composable's own contract is "open invitations",
-      // and an accepted or revoked one is no longer something this screen is
-      // offering to manage. `revoke` re-reads through this same filter, which
-      // is what makes a just-revoked invitation disappear from the list rather
-      // than linger with a struck-through status nothing here would render.
+      // The default is the contract: this composable's own meaning is "open
+      // invitations", and an accepted or revoked one is no longer something
+      // this screen is offering to manage. The parameter is the escape hatch
+      // for a view that wants another status, so it need not bypass this
+      // fetcher. `invite` and `revoke` re-read with no argument, which is what
+      // makes a just-revoked invitation disappear from the list rather than
+      // linger with a struck-through status nothing here would render.
       const page = await service().listInvitations(actor, organizationId, {
         page: 1,
         limit: 100,
-        status: InvitationStatus.PENDING,
+        status,
       });
       invitations.value = page.data;
     } catch {

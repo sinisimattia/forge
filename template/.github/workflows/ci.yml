@@ -31,8 +31,8 @@ jobs:
       - uses: nrwl/nx-set-shas@v5
       # `build-storybook` is named explicitly and that is not redundant: it is a separate nx
       # target, and `-t build` does not invoke it. Leaving it off this line is how a story
-      # file ends up compiled by nothing at all — Forge's own CI had exactly that gap for two
-      # phases, and the stories it shipped in that window were never once bundled.
+      # file ends up compiled by nothing at all — Forge's own CI had exactly that gap once,
+      # and the stories it shipped in that window were never once bundled.
       #
       # It is on the same `affected` line as the rest rather than in a job of its own so that
       # it runs on every push and pull request this workflow handles, with no
@@ -52,7 +52,7 @@ jobs:
     env:
       # CI-only placeholders for the disposable smoke-test stack. Never used by a real deploy.
       POSTGRES_USER: ci
-      POSTGRES_PASSWORD: ci-only-placeholder  # sanitize:allow — throwaway CI container, never a real credential
+      POSTGRES_PASSWORD: ci-only-placeholder  # sanitize:allow — a placeholder for the disposable database this job starts and tears down, never a deployment credential
       POSTGRES_DB: ci
     steps:
       - uses: actions/checkout@v7

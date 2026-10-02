@@ -4,7 +4,7 @@ The **NestJS** REST API for __FORGE_TITLE__ — TypeORM over PostgreSQL, i18n er
 handling. Part of the [__FORGE_TITLE__ monorepo](../../README.md). Ships with no business
 domain of its own, and with the identity foundation already built: `GET /health` and `GET /health/ready`, the
 `/auth` endpoints (registration, verification, sign-in, renewal, sign-out, sessions,
-password reset and change), `/users` (the caller's own profile plus four platform-admin
+password reset and change), `/users` (the caller's own profile plus the platform-admin
 routes), `/users/me/identities`, `/audit`, and a global guard that closes every route that
 does not carry `@Public()`.
 
@@ -18,7 +18,14 @@ npm run dev:logs       # follow logs
 npm run dev:migrate    # run TypeORM migrations against the running backend
 ```
 
-The API is served at **http://localhost:3000** (liveness at `GET /health`, readiness at `GET /health/ready`). It expects a Postgres
+The API is served at **http://localhost:3000** (liveness at `GET /health`, readiness at `GET /health/ready`). The
+OpenAPI document is served at `/api/docs` (JSON at `/api/docs-json`, YAML at `/api/docs-yaml`) wherever `NODE_ENV` is not
+exactly `production` — **which includes unset, `staging` and any typo**. Schemas are inferred from TypeScript types by the
+`@nestjs/swagger` compiler plugin for DTOs in files named `*.dto.ts` or `*.entity.ts`; a DTO declared anywhere else is
+documented without the constraints (`minimum`, `maximum`, `default`) the plugin would have read, so put a DTO in a
+`*.dto.ts` file for it to document itself. The routes are mounted outside Nest's guards, so the document is served
+anonymously: any environment you deploy to that is not `NODE_ENV=production` publishes the full API map to anyone who can
+reach it. The shipped production artifacts (`compose.prod.yaml`, the `Dockerfile`) set it. The API expects a Postgres
 reachable via `DATABASE_URL`; in the dev stack that's wired for you. See the root
 [README](../../README.md) for the full environment and `.env.example` for configuration.
 

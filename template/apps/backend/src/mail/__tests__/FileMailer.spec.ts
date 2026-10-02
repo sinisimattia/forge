@@ -53,8 +53,8 @@ describe('FileMailer', () => {
     // `Date.now()` is pinned so both sends fall in the SAME millisecond on
     // purpose — that collision is exactly the case a filename built from the
     // timestamp alone would lose a file to. Fault-injection for this assertion
-    // (see the task report) removed the random suffix from the filename and
-    // watched this fail with exactly one file before restoring it.
+    // removed the random suffix from the filename and watched this fail with
+    // exactly one file before restoring it.
     const now = jest.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
     try {
       const mailer = new FileMailer(outboxDir);

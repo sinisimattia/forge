@@ -11,7 +11,7 @@ produce a reviewable, step-by-step implementation plan across the packages it to
 
 ## The monorepo
 
-The __FORGE_TITLE__ NX workspace has three code packages plus docs:
+The __FORGE_TITLE__ NX workspace has these code packages plus docs:
 
 - `libs/core` — framework-agnostic domain: pure entities (owning their invariants),
   `I*`-prefixed service contracts that speak in entities, and behavioral conformance
@@ -21,7 +21,7 @@ The __FORGE_TITLE__ NX workspace has three code packages plus docs:
 - `apps/webapp` — Nuxt 4 / Vue 3 / Pinia / TypeScript. Implements the same `core`
   contracts via an HTTP client.
 
-A single feature or PR can span all three. The overall flow is **core-first**:
+A single feature or PR can span all of them. The overall flow is **core-first**:
 
 ```
 planner → core-implementer → [ backend-implementer ‖ webapp-implementer ]
@@ -108,7 +108,7 @@ detailed enough that implementation proceeds without re-reading the docs.
 [core / backend / webapp — and the core-first sequence for this feature.]
 
 ### Documentation consulted
-- `docs/rfcs/[primary].md` — [what it covers for this task]
+- `docs/rfcs/[primary].md` — [what it covers for this feature]
 - `docs/architecture/*.md` — [boundary/integration decisions relevant to this feature]
 
 ### Existing code to reuse
@@ -179,7 +179,7 @@ pagination, i18n keys, `core`-purity constraints, entity↔ORM drift, rehydratio
 - [ ] Lint + typecheck pass across touched packages
 - [ ] Tests added/updated per the test plan
 - [ ] TSDoc on new `core` entities/contracts (when core is touched)
-- [ ] CHANGELOG updated for touched packages
+- [ ] CHANGELOG updated for touched packages (only those that keep one)
 
 ---
 

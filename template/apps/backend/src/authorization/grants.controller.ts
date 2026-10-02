@@ -40,8 +40,8 @@ import { RequirePermission } from './require-permission.decorator';
  * it does for every other controller it protects — see that guard's own TSDoc
  * for why naming the organization itself as the resource would turn an
  * ADMIN's `grant:create` into a route to `organization:delete`. Layer three is
- * administered here and consulted nowhere in this phase; that is `can`'s own
- * documented state, not a gap this controller is failing to close.
+ * administered here and consulted on no route in this application; that is
+ * `can`'s own documented state, not a gap this controller is failing to close.
  */
 @Controller('organizations/:id/grants')
 export class GrantsController {

@@ -80,8 +80,10 @@ import { FakeDataSource } from './fake-data-source';
  * - **Audit immutability (item 3), the most load-bearing.** This store will
  *   happily `UPDATE` and `DELETE` an `audit_entries` row. The guarantee is a
  *   revoked privilege in `1758000002000-AuditAppendOnly`, and *nothing* driven
- *   from here can fail for want of it. The docker end-to-end suite proves it
- *   against a live database; see `audit.conformance.spec.ts`.
+ *   from here can fail for want of it. What stands behind the guarantee is the
+ *   revoked privilege itself; `db/audit-privilege-check.ts` re-checks the
+ *   `UPDATE` half at start-up and refuses to serve without it. See
+ *   `audit.conformance.spec.ts`.
  * - **Unique constraints (item 4).** There are none, so the losing half of a
  *   registration race — `AuthService.register`'s `23505` branch — is not reached
  *   by any conformance test.

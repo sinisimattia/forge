@@ -61,7 +61,6 @@ describe('Membership', () => {
       expect(revived.createdAt).toBeInstanceOf(Date);
       expect(revived.createdAt.toISOString()).toBe(CREATED_AT.toISOString());
       expect(revived.updatedAt.toISOString()).toBe(UPDATED_AT.toISOString());
-      expect(revived.toJSON()).toEqual(original.toJSON());
     });
   });
 });

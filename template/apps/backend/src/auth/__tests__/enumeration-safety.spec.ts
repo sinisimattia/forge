@@ -43,7 +43,7 @@ import { FakeDataSource, UNMETERED_THROTTLING, recordingAudit } from '../../comm
  * like to learn — whether that address has an account here — and each of them
  * must answer without carrying it.
  *
- * **This file exercises the first three.** It said "three" for a phase after the
+ * **This file exercises the first three.** It went on saying "three" after the
  * fourth was added, which is the kind of sentence that quietly becomes a
  * coverage claim nobody checks, so where the fourth is held is written down
  * rather than left to be assumed:

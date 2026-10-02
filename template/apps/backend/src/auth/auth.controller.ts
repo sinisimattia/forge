@@ -117,7 +117,7 @@ export class AuthController {
    * already proven, and one whose account has been closed; this method must not
    * reintroduce a difference the service was careful not to have.
    *
-   * It was missing for a phase, while `AuthService.resendVerification` existed
+   * It was missing for a time, while `AuthService.resendVerification` existed
    * and was tested. The consequence was invisible from this side and total from
    * the other: `IAuthService` names the method, so no caller implementing that
    * contract over this API could honour it, and anybody who let a verification

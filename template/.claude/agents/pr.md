@@ -50,8 +50,8 @@ git diff main..HEAD --stat
 ```
 If no commits ahead of `main`: report "Nothing to PR — branch is up to date with main." and stop.
 From the `--stat` output, determine **which packages** the PR touches (`apps/backend`,
-`apps/webapp`, `libs/core`). Read the latest `CHANGELOG.md` session entry and any new
-`docs/adrs/` files in the diff.
+`apps/webapp`, `libs/core`). Read any new `docs/adrs/` files in the diff, and the package's
+`CHANGELOG.md` entry if it keeps one.
 
 **Step 2 — Title:** imperative mood, < 72 chars, specific (never "Update code"). Derive from
 the most significant change across the branch, spanning packages if needed.
@@ -59,7 +59,7 @@ the most significant change across the branch, spanning packages if needed.
 **Step 3 — Description:**
 ```markdown
 ## What
-[2–4 sentences: what this PR does. Reference the CHANGELOG entry.]
+[2–4 sentences: what this PR does.]
 
 ## Why
 [1–2 sentences: the problem solved / requirement fulfilled. Link the relevant RFC if applicable.]

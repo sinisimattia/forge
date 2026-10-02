@@ -36,7 +36,7 @@ mechanism is the same for every role — a thin agent prompt points at that pack
 | `webapp-tester`       | Sonnet | Vitest unit tests by default, Playwright e2e as a mode. Runs automatically after `composables/`/`fetchers/`/`stores/` changes; on request for components; e2e on request or after a multi-page flow.                                                                                                                       |
 | `reviewer`            | Sonnet | Single, monorepo-aware. One code-vs-docs / standards-compliance check over the diff — **discovers its compliance dimensions from each touched package's own `STANDARDS.md`** — and emits one JSON verdict per diff. Runs only the rows relevant to the changed files; can run in the background.                          |
 | `documenter`          | Sonnet | Single, monorepo-aware. Owns the human-friendly narrative layer (READMEs, `docs/guides/`, `docs/architecture/`, `docs/concepts/`). **Check-first, write-only-if-needed**: gap-checks before `closer` and stays silent when docs are current; verifies any code example it writes. Also on request ("write a guide for X"). |
-| `closer`              | Sonnet | Single, NX-aware. Close a session: `nx affected` → lint → test → CHANGELOG across the touched packages. Launch on "wrap up", "done", "update the changelog".                                                                                                                                                               |
+| `closer`              | Sonnet | Single, NX-aware. Close a session: `nx affected` → lint → test → CHANGELOG (where a package keeps one) across the touched packages. Launch on "wrap up", "done", "update the changelog".                                                                                                                                                               |
 | `pr`                  | Sonnet | Single; a PR can span packages. Two modes: **create** (structured description + `gh pr create`) / **review** (reads the diff fresh, independent verdict, same dimension-discovery as `reviewer`). Launch on explicit request only ("open a PR", "review PR #N").                                                          |
 
 ## Task flow (core-first)
@@ -55,7 +55,7 @@ planner → core-implementer → [ backend-implementer ‖ webapp-implementer ]
   the relevant implementer, which addresses it and re-triggers review/test.
 - `documenter` runs a check-first gap pass on the narrative docs before `closer`; it
   stays silent (no changes) when they're already current.
-- `closer` scopes lint/test/CHANGELOG to `nx affected` packages.
+- `closer` scopes lint/test/CHANGELOG to `nx affected` packages; a project has no changelogs until its first release.
 - `pr` is launched only on explicit user instruction.
 
 ## The reviewer

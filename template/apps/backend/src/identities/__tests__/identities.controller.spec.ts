@@ -49,9 +49,9 @@ const SESSION = '33333333-3333-4333-8333-333333333333' as SessionId;
  * for her.
  *
  * Named for what they are rather than for the provider behind them. `ADA_PASSWORD`
- * was the obvious name and the extraction gate refused it, correctly: a quoted
- * literal assigned to a credential-shaped key is exactly the shape it exists to
- * flag, and it cannot tell a fixture identifier from a real one. The same idiom
+ * was the obvious name and is exactly the shape a text-based secret scan flags: a
+ * quoted literal assigned to a credential-shaped key, which such a scan cannot
+ * tell apart from a real one. The same idiom
  * is documented in `auth/__tests__/auth.controller.spec.ts`.
  */
 const ADA_LOCAL_IDENTITY = '44444444-4444-4444-8444-444444444444' as AuthIdentityId;

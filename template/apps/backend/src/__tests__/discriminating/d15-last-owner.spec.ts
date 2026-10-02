@@ -16,7 +16,9 @@ import {
  *
  * It satisfies D15 *as the row is worded* — "the last OWNER tries to leave or
  * demote **themselves**" — and it is wrong, because the invariant is not about
- * who is asking. Spec §9.4 says an organization always has at least one OWNER.
+ * who is asking. The invariant is that an organization always has at least one
+ * OWNER — `LastOwnerError`'s own TSDoc states it, and
+ * `OrganizationsService.changeMemberRole` and `.removeMember` each enforce it.
  * That is a fact about a **count of remaining owners**, and the two differ in
  * both directions:
  *

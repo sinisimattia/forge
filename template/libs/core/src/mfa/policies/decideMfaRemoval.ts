@@ -26,8 +26,8 @@ import type { MfaMethodId } from '../types/MfaMethodId';
  *
  * ## Removing an unconfirmed method is always allowed
  *
- * The word "confirmed" above is load-bearing, not decorative. Spec §4.2 and
- * §11.2 name the last **confirmed** method as what re-authentication
+ * The word "confirmed" above is load-bearing, not decorative. ADR-0012 names
+ * the last **confirmed** method as what re-authentication
  * protects — and {@link decideAuthenticationStep}'s own TSDoc already
  * establishes why an unconfirmed method is excluded from that word: it "is
  * not a weaker gate ... it is no gate at all", because nobody has ever
@@ -44,7 +44,7 @@ import type { MfaMethodId } from '../types/MfaMethodId';
  * Two policies written for the same account must not disagree about what an
  * abandoned enrollment is worth; this is that agreement, enforced here.
  *
- * `validProofPresented` records spec §16.1's answer to *which* proof
+ * `validProofPresented` records ADR-0012's answer to *which* proof
  * re-authentication demands: a fresh proof of the **second factor being
  * removed or another confirmed one**, not the account's password. Two
  * reasons converge on that answer rather than the more familiar

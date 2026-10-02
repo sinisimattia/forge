@@ -50,13 +50,13 @@ import {
  * annotation, and what happens when a route names a record that turns out to
  * belong to another tenant. That is a production authorization feature, and
  * inventing one inside a testing task to make a row of a table go green is
- * precisely the move this phase is organised against. It belongs to whichever
- * phase first ships a record-scoped resource, and the assertion at the bottom of
- * this file is what will tell that phase that D12 is now owed.
+ * precisely the move this suite is organised against. It belongs to whoever
+ * first ships a record-scoped resource, and the assertion at the bottom of this
+ * file is what will tell them that D12 is now owed.
  *
  * ## What this file does establish
  *
- * Design ruling R4's half: the principal is rebuilt from rows on every single
+ * The no-caching half: the principal is rebuilt from rows on every single
  * request, so a withdrawal takes effect on the next one. That is the property
  * that would be wrong the day `PrincipalService` grew a cache, and it *is*
  * observable over the wire — through an organization ROLE, which layer two does
@@ -196,6 +196,19 @@ describe('D12 (PARTIAL — layer three is consumed by nothing; see this file’s
    * So it is asserted. When this goes red, the fix is not to update the
    * expectation — it is to write the real D12 against the route that made it
    * reachable, and then delete this partial.
+   *
+   * **Two debts come due together, not one.** The same claim is what keeps the
+   * refusal of `platform:administer` in `can()`'s layer three
+   * (`libs/core/src/authorization/policies/can.ts`) inert. That refusal is a
+   * case-sensitive comparison of the *requested* permission against a literal.
+   * A permission argument that reached `can()` mis-cased — which the
+   * `Permission` union blocks at compile time today — would skip the
+   * exclusion, and a grant row spelled the same way would then match it. While
+   * no decision consults a grant, that cannot matter; the day one does, it can.
+   * So when this goes red the comparison is owed attention as well as the real
+   * D12: check what the exclusion does with a mis-cased argument, and test it.
+   * The casing assertion below pins the argument literals, and exists so that
+   * the two facts stay tied.
    */
   describe('the claim this partial rests on', () => {
     const backendSrc = path.resolve(__dirname, '../..');
@@ -268,6 +281,37 @@ describe('D12 (PARTIAL — layer three is consumed by nothing; see this file’s
       });
 
       expect(naming).toEqual([]);
+    });
+
+    it('spells every permission literal it can see in lower case, so can()’s case-sensitive comparison has nothing to miss', () => {
+      // The comparison in `can()` that refuses `platform:administer` at layer
+      // three is exact-match. It is inert only while that layer has no consumer,
+      // which the two assertions above pin; this one pins the other half, that
+      // nothing in the backend source spells the permission any other way and
+      // so relies on a comparison that would not match it. Quoted literals only:
+      // a permission is only ever written as one. Its limit: it reads the
+      // backend source (not `libs/core`) and pins literal spellings, not what a
+      // stored row can contain.
+      const literal = /(['"`])([^'"`\n]*)\1/g;
+      const misspelt = sourceFiles(backendSrc).flatMap((file) => {
+        const text = code(file);
+        const found: string[] = [];
+        for (const match of text.matchAll(literal)) {
+          if (/^platform:administer$/i.test(match[2]) && match[2] !== 'platform:administer') {
+            found.push(`${path.relative(backendSrc, file)}: ${match[0]}`);
+          }
+        }
+        for (const call of canCalls(text)) {
+          for (const match of call.matchAll(literal)) {
+            if (/^[a-z]+:[a-z]+$/i.test(match[2]) && match[2] !== match[2].toLowerCase()) {
+              found.push(`${path.relative(backendSrc, file)}: can(… ${match[0]} …)`);
+            }
+          }
+        }
+        return found;
+      });
+
+      expect(misspelt).toEqual([]);
     });
   });
 });

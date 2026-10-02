@@ -59,8 +59,8 @@ services:
         condition: service_completed_successfully
     # Host-published port only, exactly as compose.yaml does it: the
     # container-internal port stays fixed at 3000. A hardcoded host port makes
-    # this file unusable on any machine that already has something on 3000 —
-    # including the e2e gate, which allocates a free port rather than assuming.
+    # this file unusable on any machine that already has something on 3000,
+    # which is why the host side is overridable and the container side is not.
     ports:
       - '${BACKEND_PORT:-3000}:3000'
     # NOTE: `environment:` takes precedence over `env_file:`, so these pinned values win

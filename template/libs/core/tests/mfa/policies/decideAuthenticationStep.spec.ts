@@ -19,7 +19,8 @@ describe('decideAuthenticationStep', () => {
   it.each([
     ['no methods at all', [], MfaStep.ISSUE_SESSION],
     // Review Focus 3. An enrollment somebody abandoned must not lock them out of
-    // their own account. Derived from spec §3.1, written before the policy.
+    // their own account. Derived from ADR-0012's "only a confirmed method
+    // gates", written before the policy.
     ['one method, unconfirmed', [method(false)], MfaStep.ISSUE_SESSION],
     ['several methods, all unconfirmed', [method(false), method(false)], MfaStep.ISSUE_SESSION],
     ['one confirmed method', [method(true)], MfaStep.REQUIRE_SECOND_FACTOR],

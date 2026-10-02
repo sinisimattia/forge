@@ -26,8 +26,12 @@ name: CI
 # `unit` tier and nothing else, so the gate that actually generates a project and runs its
 # suites did not run on the branch it exists to protect. Everything a PR checked could be
 # landed by pushing. `generated-project` is where the template's own discriminating tests
-# live (D2/D5/D9/D12/D14/D15 and the rest of spec §11's table), which made that gap the
+# live (D2/D5/D9/D12/D14/D15 and the rest), which made that gap the
 # difference between having those tests and having a file that contains them.
+# `docs/adrs/0005-four-test-tiers.md` defines what a discriminating test is and what each
+# tier proves that the one below it cannot. It deliberately does not list the D-numbers:
+# they are not collected anywhere, they sit next to the behaviour each one constrains, and
+# grepping the label in the tree is how the full set is found.
 #
 # The cost is real and was accepted deliberately: a push to `main` now spends ~30 minutes in
 # `generated-project` and up to ~45 in `docker` rather than ~10. A gate that runs only on
@@ -105,21 +109,26 @@ jobs:
   # The failure was always `✓ 0 modules transformed` followed by `[vite:build-html] Missing
   # field 'moduleType'`, and every word of that is a false lead. `vite:build-html` is not at
   # fault; it is merely the plugin that owned the transform chain for `iframe.html`, which is
-  # the first module in the graph. The real cause is a Vite major-version split inside one
-  # build: Nuxt 4.5's `@nuxt/vite-builder` contributes a `nuxt:replace` plugin that is a
-  # *Rolldown-native* plugin (Nuxt 4.5 builds on Vite 8 / Rolldown), while Storybook builds
-  # with `@storybook/builder-vite@9`, which is Vite 7 / Rollup. Rollup calls that native
-  # plugin's `transform` with Rollup's argument shape and the NAPI binding rejects it over a
-  # field Rollup has no concept of. It throws on the entry HTML, so nothing is ever
-  # transformed. Two further faults were hidden behind it, both of which only became visible
-  # once the build got far enough to reach them: `.storybook/preview.ts` imported a
-  # stylesheet that has never existed in this template, and the stories' `libs/core` imports
-  # could not be bundled from core's CommonJS `dist/`. All three fixes are in
-  # `template/apps/webapp/.storybook/`, each with the reasoning next to it.
+  # the first module in the graph.
+  #
+  # The real cause was a Vite major-version split inside one build: Nuxt 4.5's
+  # `@nuxt/vite-builder` contributes a `nuxt:replace` plugin that is a *Rolldown-native*
+  # plugin (Vite 8), while Storybook then built with `@storybook/builder-vite@9`, which was
+  # Vite 7 / Rollup. Rollup called that native plugin's `transform` with Rollup's argument
+  # shape and the NAPI binding rejected it over a field Rollup has no concept of. It threw on
+  # the entry HTML, so nothing was ever transformed. The split is gone: the Storybook
+  # packages are on 10.x (`@storybook/builder-vite@10`, which runs the same Vite 8 as Nuxt),
+  # and the workaround that stripped `nuxt:replace` has been deleted. Two further faults were
+  # hidden behind it: `.storybook/preview.ts` imported a stylesheet that has never existed in
+  # this template, and the stories' `libs/core` imports could not be bundled from core's
+  # CommonJS `dist/`. Those two fixes remain in `template/apps/webapp/.storybook/`, each with
+  # the reasoning next to it.
   #
   # Earlier attempts attributed this to dependency drift and then to a missing lockfile.
-  # Neither was it; see `docs/superpowers/phase-1-decision-log.md` for that history, which is
-  # left standing as a record of what was believed rather than corrected.
+  # Neither was it, and neither diagnosis ever produced a green run — the cause was the
+  # Vite major-version split described above, and nothing about pinning or regenerating
+  # dependencies would have touched it. Recorded here only so the same two guesses are not
+  # spent a third time on the next Storybook failure in this job.
   #
   # ## The one fact worth carrying forward: the exit code here proves nothing on its own
   #
@@ -136,8 +145,9 @@ jobs:
   # itself. If you change the glob, the stories' location, or the framework, read that spec
   # before trusting a green tick here.
   #
-  # Verified when this was fixed: a passing run transforms 604 modules, and deliberately
-  # breaking one story's import turns the run red naming that story file.
+  # Verified when this was fixed: a passing run transforms 777 modules (604 before the
+  # Storybook packages moved to 10.x), and deliberately breaking one story's import turns the run
+  # red naming that story file.
   storybook:
     name: template Storybook build (compiles every story file)
     needs: unit

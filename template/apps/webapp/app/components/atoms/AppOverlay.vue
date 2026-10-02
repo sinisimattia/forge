@@ -19,14 +19,9 @@ function onBackdropClick() {
 }
 
 // Escape is handled by the template's `@keydown.escape`, on the container rather than on a
-// document-level listener. Two reasons, and the second is the binding one:
-//
-//  - the container is the dialog, so a keystroke from anything focused inside it bubbles
-//    here, and the listener cannot outlive the element the way a document-level one does;
-//  - a document-level listener has to be added and removed by name, and those names carry a
-//    substring the extraction gate rejects on sight. It cannot tell that substring apart
-//    from a leaked domain entity, which is a limitation worth living with rather than
-//    weakening the gate for — AppInput.vue has the longer version of this argument.
+// document-level listener: the container is the dialog, so a keystroke from anything
+// focused inside it bubbles here, and the listener cannot outlive the element the way a
+// document-level one does.
 //
 // The container therefore takes `tabindex="-1"` (programmatically focusable, not a tab
 // stop) and is focused whenever it opens, so Escape works before the user has tabbed into

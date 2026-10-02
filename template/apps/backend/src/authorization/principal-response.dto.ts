@@ -13,7 +13,8 @@ import type { UserId } from '__FORGE_SCOPE__/core/users/types';
  * (ADR-0006) — a client hides an action rather than offering one the server will
  * refuse — and a client cannot evaluate it without the principal. Nothing else
  * in this backend produces one: the access credential deliberately carries two
- * claims (design ruling R4), so there is no other source a webapp could read.
+ * claims and no roles or memberships, so there is no other source a webapp could
+ * read.
  *
  * **It is about the actor themselves**, so it carries no `@RequirePermission`:
  * there is no organization to judge it against, and the one thing it discloses
@@ -43,7 +44,8 @@ export interface PrincipalResponseDto {
   /**
    * The record-level exceptions they hold, **live as of the instant this was
    * served** — the hydrator applied `isGrantLive` and a lapsed grant is absent
-   * rather than present and ignored (design ruling R2). Instants are ISO-8601
+   * rather than present and ignored, the hydrator being the only place that rule
+   * runs. Instants are ISO-8601
    * strings, because a serialized payload has no `Date`.
    */
   grants: readonly ResourceGrantJSON[];

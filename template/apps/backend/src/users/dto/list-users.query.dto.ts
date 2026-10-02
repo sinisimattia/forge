@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
  * How an administrator asks for one page of accounts.
@@ -14,6 +15,7 @@ export class ListUsersQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @ApiPropertyOptional()
   readonly page: number = 1;
 
   @IsOptional()
@@ -21,6 +23,7 @@ export class ListUsersQueryDto {
   @IsInt()
   @Min(1)
   @Max(100)
+  @ApiPropertyOptional()
   readonly limit: number = 20;
 
   /**

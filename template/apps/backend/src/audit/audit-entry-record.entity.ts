@@ -65,10 +65,10 @@ export class AuditEntryRecord {
    * What happened. `text`, with no `CHECK` and no Postgres `enum` type — and
    * this is the column that makes that the rule for the whole schema.
    *
-   * `AuditAction` gains members every phase, and this table is append-only: a
-   * constrained domain would mean a schema migration for each new member, on
-   * the one table whose existing rows nothing is permitted to correct if the
-   * migration is got wrong. `UserStatus` and `PlatformRole` would each take a
+   * `AuditAction` gains members as the application grows, and this table is
+   * append-only: a constrained domain would mean a schema migration for each
+   * new member, on the one table whose existing rows nothing is permitted to
+   * correct if the migration is got wrong. `UserStatus` and `PlatformRole` would each take a
    * `CHECK` happily; they follow this column instead, for the reason set out on
    * `UserRecord.status`.
    */

@@ -1,19 +1,30 @@
 # Forge — Agent Orientation
 
-Forge generates new application projects from one template tree. This file is orientation
-only. The authoritative documents are:
+Forge generates new application projects from one template tree. A generated project is a
+working identity platform — auth, organizations, authorization, MFA and an append-only audit
+log — not a scaffold with the interesting parts left out.
 
-- **Design spec:** `docs/superpowers/specs/2026-09-17-forge-template-design.md` — goals,
-  non-goals, repository layout, the token table, the generator's CLI, template contents, and
-  the testing strategy (including the discriminating-test table). Read this before touching
-  `tools/create/` or `template/`.
-- **Phase 1 plan:** `docs/superpowers/plans/2026-09-17-forge-phase-1-generator-and-template-skeleton.md`
-  — the task-by-task build-out this repository's history follows. Later phases (identity
-  foundation, tenancy, authorization, audit) are planned but not yet built; see the spec's
-  §14 "Deferred" and the plan's own "Next" pointer.
-- **ADRs:** `docs/adrs/0001` through `0003` record why the generator looks the way it does
-  (single template, not layers; zero dependencies; Voku is read-only). Read these before
-  proposing a layer system, a templating engine, or any dependency on the generator.
+This file is orientation only. The authoritative record is `docs/adrs/`, which holds Forge's
+own decisions about how the generator and the template work. Read the ones that bear on what
+you are about to change, before you change it:
+
+- **ADR-0001 — one template tree, copied wholesale, not layers.** Read it before proposing a
+  layer system, a templating engine, or any form of partial composition.
+- **ADR-0002 — the generator depends on nothing but Node.** Read it before reaching for a
+  library. Its consequence (no YAML or JSON merging is possible) is the reason several things
+  are shaped the way they are, and it is a deliberate trade rather than an oversight to fix.
+- **ADR-0003 — extraction is copy-out only; Voku is read-only, forever.**
+- **ADR-0004 — the generator contract:** what the tokens are and why those, substitution as
+  the only transform, adopt mode as subset selection, and why `forge.json` is written even
+  though nothing reads it. Read it before touching `tools/create/` or adding a file to
+  `template/`.
+- **ADR-0005 — four test tiers, and tests written to fail.** What each tier proves that the
+  one below it cannot, what makes a discriminating test different, and the two traps
+  (`coverage` is a separate target; `npm test` is the unit tier only) that have each cost
+  this project real time.
+
+`template/docs/adrs/` is a different set entirely — the decisions a *generated* project
+inherits. Do not confuse the two.
 
 ## Three rules an agent working on Forge must not break
 
@@ -40,10 +51,9 @@ only. The authoritative documents are:
 | `tools/create/` | the generator (zero runtime dependencies) |
 | `tools/sanitize.mjs` | the extraction gate — scans `template/` and `tools/` for source-project traces and secrets |
 | `tests/unit/` | fast tests: token substitution, adopt-mode subset selection, never-overwrite |
-| `tests/integration/` | generates a real project and runs its own gates; the Docker e2e (`FORGE_E2E=1`) |
-| `docs/superpowers/{specs,plans}/` | the design spec and the phase plan |
+| `tests/integration/` | `npm run test:integration` — generates a real project and runs its own gates; `FORGE_E2E=1 npm run test:integration` adds the Docker e2e. `npm test` runs neither (ADR-0005) |
 | `docs/adrs/` | Forge's own architecture decisions (this repo, not the template's) |
-| `.github/workflows/ci.yml` | Forge's own CI — unit tier on every push, generated-project/storybook/docker tiers on PRs |
+| `.github/workflows/ci.yml` | Forge's own CI — the unit, generated-project, storybook and docker tiers all run on push and on PR; a weekly scheduled job re-resolves the template's lockfile |
 
 Everything under `template/docs/`, `template/.claude/`, etc. is the template's own copy of
 this same kind of material for a *generated* project — do not confuse the two: editing

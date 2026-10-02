@@ -5,9 +5,9 @@
  * `npm install` cannot be run directly against `template/`'s own package.json files: their
  * `name` fields are still forge tokens (`__FORGE_SCOPE__/backend`, `__FORGE_NAME__`, ...),
  * and a leading `_` is not a legal npm package-name character, so npm fails outright with
- * `EINVALIDPACKAGENAME` before it resolves a single dependency. (This is a real defect in
- * the plan that first asked for "run `npm install` at template/ root" — see
- * `docs/superpowers/lockfile-report.md`.)
+ * `EINVALIDPACKAGENAME` before it resolves a single dependency. So "run `npm install` at
+ * template/ root" — the obvious instruction, and the one originally written down — cannot
+ * work, and fails before producing any output a reader could learn that from.
  *
  * This script works around that by substituting a throwaway, valid placeholder
  * name/scope/title/description into every `package.json` under `template/`, running

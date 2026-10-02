@@ -29,9 +29,10 @@ import { OrganizationsService } from './organizations.service';
  * carries `@Controller()` with no prefix and gives each method its own full
  * path, rather than forcing a shared root onto a route that has none.
  *
- * **`POST /invitations/:token/accept` is not `@Public()`.** Spec §9.4:
- * accepting while signed out routes through registration first and returns
- * the visitor here with a session, so this endpoint always has an actor —
+ * **`POST /invitations/:token/accept` is not `@Public()`.** Redemption is
+ * checked against "the signed-in redeemer's own account address" (ADR-0010),
+ * so accepting while signed out routes through registration first and returns
+ * the visitor here with a session, and this endpoint always has an actor —
  * which is what makes `Invitation.acceptedByUserId` a fact this backend
  * established rather than a value some other layer had to guess at.
  *
