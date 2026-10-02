@@ -1,6 +1,7 @@
 import request from 'supertest';
 import {
   currentCodeFor,
+  previousStepCodeFor,
   makeMfaWorld,
   type MfaWorld,
   type SeededMfaUser,
@@ -27,7 +28,6 @@ describe('POST /mfa/totp/confirm, for an account that already has a second facto
     await world.close();
   });
 
-  const STEP_MS = 30_000;
   const bearer = (token: string): string => `Bearer ${token}`;
 
   /** A full two-phase sign-in, spending the previous step's code and leaving the current one for a proof. */
@@ -41,7 +41,7 @@ describe('POST /mfa/totp/confirm, for an account that already has a second facto
       .send({
         challengeToken: login.body.challengeToken,
         methodId: user.methodId,
-        code: currentCodeFor(user.totpSecret, new Date(Date.now() - STEP_MS)),
+        code: await previousStepCodeFor(user.totpSecret),
       })
       .expect(200);
     return verified.body.accessToken as string;

@@ -11,6 +11,7 @@ import { UserRecord } from '../../users/user-record.entity';
 import {
   FEDERATED_ADDRESS,
   currentCodeFor,
+  previousStepCodeFor,
   makeMfaWorld,
   type MfaWorld,
   type SeededAccount,
@@ -58,7 +59,7 @@ describe('mfa audit trail', () => {
   function wrongCodeFor(secret: string): string {
     const now = Date.now();
     const valid = new Set(
-      [-STEP_MS, 0, STEP_MS].map((offset) => currentCodeFor(secret, new Date(now + offset))),
+      [-2, -1, 0, 1, 2].map((step) => currentCodeFor(secret, new Date(now + step * STEP_MS))),
     );
     for (let candidate = 0; candidate < 1_000_000; candidate += 1) {
       const code = String(candidate).padStart(6, '0');
@@ -97,7 +98,7 @@ describe('mfa audit trail', () => {
     const done = await verify({
       challengeToken: started.body.challengeToken,
       methodId: user.methodId,
-      code: currentCodeFor(user.totpSecret, new Date(Date.now() - STEP_MS)),
+      code: await previousStepCodeFor(user.totpSecret),
     }).expect(200);
     return done.body.accessToken as string;
   }

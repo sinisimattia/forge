@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import type { ThrottlerStorage } from '@nestjs/throttler';
 import {
   currentCodeFor,
+  previousStepCodeFor,
   makeMfaWorld,
   type MfaWorld,
   type SeededMfaUser,
@@ -72,7 +73,9 @@ describe('the budget on a signed-in passkey enrollment', () => {
       .send({
         challengeToken: login.body.challengeToken,
         methodId: user.methodId,
-        code: currentCodeFor(user.totpSecret, new Date(Date.now() + offset * STEP_MS)),
+        code: offset < 0
+          ? await previousStepCodeFor(user.totpSecret)
+          : currentCodeFor(user.totpSecret, new Date(Date.now() + offset * STEP_MS)),
       })
       .expect(200);
     return verified.body.accessToken as string;

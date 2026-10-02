@@ -13,6 +13,7 @@ import { OptionalJwtAuthGuard } from '../../../auth/guards';
 import {
   WEBAUTHN,
   currentCodeFor,
+  previousStepCodeFor,
   makeMfaWorld,
   type MfaWorld,
   type SeededAccount,
@@ -574,8 +575,6 @@ describe('WebAuthn ceremonies', () => {
   });
 
   describe('enrollment, for an account that already has a second factor', () => {
-    const STEP_MS = 30_000;
-
     /** A full two-phase sign-in, leaving the current step's code unspent for a proof. */
     async function signIn(user: SeededMfaUser): Promise<string> {
       const login = await request(world.app.getHttpServer())
@@ -587,7 +586,7 @@ describe('WebAuthn ceremonies', () => {
         .send({
           challengeToken: login.body.challengeToken,
           methodId: user.methodId,
-          code: currentCodeFor(user.totpSecret, new Date(Date.now() - STEP_MS)),
+          code: await previousStepCodeFor(user.totpSecret),
         })
         .expect(200);
       return verified.body.accessToken as string;
@@ -765,8 +764,6 @@ describe('WebAuthn ceremonies', () => {
   });
 
   describe('enrollment, at the most methods an account may hold', () => {
-    const STEP_MS = 30_000;
-
     async function signIn(user: SeededMfaUser): Promise<string> {
       const login = await request(world.app.getHttpServer())
         .post('/auth/login')
@@ -777,7 +774,7 @@ describe('WebAuthn ceremonies', () => {
         .send({
           challengeToken: login.body.challengeToken,
           methodId: user.methodId,
-          code: currentCodeFor(user.totpSecret, new Date(Date.now() - STEP_MS)),
+          code: await previousStepCodeFor(user.totpSecret),
         })
         .expect(200);
       return verified.body.accessToken as string;

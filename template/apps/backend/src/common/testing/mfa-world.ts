@@ -270,6 +270,84 @@ export function currentCodeFor(secret: string, now: Date = new Date()): string {
 }
 
 /**
+ * A TOTP step in milliseconds. Steps are counted from the Unix epoch, so an
+ * instant `t` is `t % STEP_MS` into its own step and `STEP_MS - (t % STEP_MS)`
+ * away from the next one.
+ */
+const STEP_MS = STEP_SECONDS * 1000;
+
+/**
+ * How much of the current step must remain before {@link previousStepCodeFor}
+ * mints. A request built by these specs is served in-process and takes
+ * single-digit milliseconds; a second and a half is two orders of magnitude of
+ * headroom. It is only ever waited out when a mint lands in the last second
+ * and a half of a step — about one call in twenty, for an average cost under
+ * forty milliseconds.
+ */
+const BOUNDARY_MARGIN_MS = 1_500;
+
+/**
+ * The previous step's code, minted far enough from a step boundary that the
+ * verifier is still in the same step when it checks.
+ *
+ * ## Why a spec wants the previous step at all
+ *
+ * `TotpVerifier` refuses a candidate step that is not strictly greater than the
+ * last one accepted, so a sign-in that spends the *current* step leaves nothing
+ * for a proof later in the same test. Signing in with the step before this one
+ * leaves both the current step and the next one usable.
+ *
+ * ## The race this closes
+ *
+ * `TotpVerifier` accepts one step either side of its own idea of now. A code
+ * minted for step `S - 1` and checked while the server is still in step `S` is
+ * in window. But a round trip separates the mint from the check, and if a step
+ * boundary falls inside it the server is in `S + 1`, whose window is `S` to
+ * `S + 2` — and `S - 1` sits outside. The sign-in answers 401 and the spec
+ * fails having asserted nothing about what it meant to assert.
+ *
+ * The odds are the round trip divided by the step: small, load-dependent, and
+ * not reproducible on demand. There is no symmetric case — a code for `S + 1`
+ * is in window whether the server is at `S` or at `S + 1` — which is why these
+ * failures only ever appeared on the helpers that reach backwards, and why
+ * three separate investigations closed without finding them.
+ *
+ * Waiting out the end of a step before minting takes the boundary off the round
+ * trip's path instead of making it rarer: afterwards a whole step remains, and
+ * the request would have to outlast {@link BOUNDARY_MARGIN_MS} to cross one.
+ *
+ * @param secret - the shared secret, Base32, as `mfa_methods.totp_secret` holds it
+ * @returns a code for the step before the current one, in window now and for at
+ *   least {@link BOUNDARY_MARGIN_MS} after
+ * @throws Error when the code is already out of window, rather than letting it
+ *   reach the server and surface as a 401 in whichever spec called this
+ */
+export async function previousStepCodeFor(secret: string): Promise<string> {
+  const untilNextStep = STEP_MS - (Date.now() % STEP_MS);
+  if (untilNextStep < BOUNDARY_MARGIN_MS) {
+    // The ten milliseconds are slack: a timer may run marginally early, and
+    // waking on the old side of the boundary would restore the very race this
+    // waits out.
+    await new Promise((resolve) => {
+      setTimeout(resolve, untilNextStep + 10);
+    });
+  }
+
+  const code = currentCodeFor(secret, new Date(Date.now() - STEP_MS));
+
+  // `currentCodeFor` checks the code against the instant it was asked to mint
+  // for, where a previous-step code is in window by construction. The instant
+  // that decides whether a sign-in succeeds is this one.
+  if (!new TotpVerifier().verify(secret, code, null, new Date()).accepted) {
+    throw new Error(
+      'previousStepCodeFor produced a code that is already out of window: a step boundary was '
+      + 'crossed despite the margin. The sign-in built on this code would have been refused 401.',
+    );
+  }
+  return code;
+}
+
+/**
  * A fresh world: an empty store, the identity and MFA backends over it, and
  * `AuthController` routed in front of them.
  *

@@ -31,7 +31,7 @@ name: CI
 # `docs/adrs/0005-four-test-tiers.md` defines what a discriminating test is and what each
 # tier proves that the one below it cannot. It deliberately does not list the D-numbers:
 # they are not collected anywhere, they sit next to the behaviour each one constrains, and
-# grepping the label in the tree is how the full set is found.
+# grepping the label in the tree is how they are found, bar the exceptions ADR-0005 names.
 #
 # The cost is real and was accepted deliberately: a push to `main` now spends ~30 minutes in
 # `generated-project` and up to ~45 in `docker` rather than ~10. A gate that runs only on

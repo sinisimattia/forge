@@ -99,7 +99,7 @@ refresh token must be rejected *and* revoke its family; a cross-tenant request m
 return data; a revoked grant must deny the very next request; writing the audit table as the
 application role must be refused by the database; transport vocabulary in core's prose must
 fail `purity`; the last owner of an organization must not be able to leave. That is a
-sample, not the set — every D-number is greppable in the tree, which is where the full list
+sample, not the set — the D-numbers are greppable in the tree, which is where the full list
 lives. The value of numbering them is that a change can be checked against a list somebody
 has to deliberately shorten.
 

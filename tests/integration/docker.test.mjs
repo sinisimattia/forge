@@ -400,6 +400,7 @@ test(
       // A walk that needs the original address has to rewrite the file and recreate the
       // backend itself, as that function does.
       await walkTheFederatedRefusal(compose, projectName, base, target);
+      await walkTheConfirmedEnrolmentHoldsItsBatch(base, target);
       await walkTheSecondFactor(compose, base, target);
       await walkTheTenancyFlow(base, target);
       await proveTheAuditLogIsAppendOnly(compose, projectName, target);
@@ -1591,6 +1592,57 @@ async function enrolTotp(base, token) {
     methodId: offer.json.methodId,
     recoveryCodes: confirmed.json.recoveryCodes,
   };
+}
+
+/**
+ * Confirming a first factor and issuing its recovery batch are one transaction.
+ *
+ * Enrols and confirms a TOTP method, then reads the account back through the
+ * API, as a later request would, and asserts two things:
+ *
+ * 1. `GET /mfa/methods` lists the method as confirmed.
+ * 2. `recoveryCodesRemaining` is the full batch. **This is the assertion that
+ *    matters.** A confirmation that committed without its batch leaves an
+ *    account holding a second factor and no way back in, and assertion 1 alone
+ *    cannot see that. Only a real database shows the transaction boundary
+ *    holding; the in-memory fake has no boundary to hold.
+ *
+ * Deliberately does not use the confirm response's `recoveryCodes` as evidence:
+ * that is what the service returned, not what the database kept.
+ *
+ * @param base - the stack's base URL
+ * @param target - the generated project directory, for the outbox
+ */
+async function walkTheConfirmedEnrolmentHoldsItsBatch(base, target) {
+  const { token } = await registerAndSignIn(base, target, 'confirm-batch@example.com');
+
+  const offer = await call(base, 'POST', '/mfa/totp/enroll', { token, body: { label: 'Phone' } });
+  assert.equal(offer.status, 201, offer.text);
+
+  const before = await call(base, 'GET', '/mfa/methods', { token });
+  assert.equal(before.status, 200, before.text);
+  assert.equal(before.json.recoveryCodesRemaining, 0, `a batch existed before any confirmation: ${before.text}`);
+
+  const confirmed = await call(base, 'POST', '/mfa/totp/confirm', {
+    token,
+    body: { methodId: offer.json.methodId, code: totpAt(offer.json.secret, totpStepNow()) },
+  });
+  assert.equal(confirmed.status, 200, confirmed.text);
+
+  const after = await call(base, 'GET', '/mfa/methods', { token });
+  assert.equal(after.status, 200, after.text);
+
+  // 1. the method reads as confirmed
+  const method = after.json.methods.find((candidate) => candidate.id === offer.json.methodId);
+  assert.ok(method, `the enrolled method is not listed: ${after.text}`);
+  assert.ok(method.confirmedAt, `the method is not confirmed after a successful confirm: ${after.text}`);
+
+  // 2. and its recovery batch exists, whole
+  assert.equal(
+    after.json.recoveryCodesRemaining,
+    10,
+    `a confirmed first factor holds ${after.json.recoveryCodesRemaining} recovery codes, not the full batch of 10: ${after.text}`,
+  );
 }
 
 /**

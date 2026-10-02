@@ -3,6 +3,7 @@ import request from 'supertest';
 import { MfaMethodType } from '__FORGE_SCOPE__/core/mfa/enums';
 import {
   currentCodeFor,
+  previousStepCodeFor,
   makeMfaWorld,
   type MfaWorld,
   type SeededMfaUser,
@@ -62,10 +63,10 @@ describe('mfa removal and recovery-code regeneration', () => {
    * with what it asserts.
    */
   const signInCodes = new Map<string, string>();
-  const signInCode = (user: SeededMfaUser): string => {
+  const signInCode = async (user: SeededMfaUser): Promise<string> => {
     const known = signInCodes.get(user.userId);
     if (known !== undefined) return known;
-    const code = currentCodeFor(user.totpSecret, new Date(Date.now() - STEP_MS));
+    const code = await previousStepCodeFor(user.totpSecret);
     signInCodes.set(user.userId, code);
     return code;
   };
@@ -86,7 +87,7 @@ describe('mfa removal and recovery-code regeneration', () => {
       .send({
         challengeToken: login.body.challengeToken,
         methodId: user.methodId,
-        code: signInCode(user),
+        code: await signInCode(user),
       })
       .expect(200);
     return verified.body.accessToken as string;
@@ -228,7 +229,7 @@ describe('mfa removal and recovery-code regeneration', () => {
       // watched the sign-in would have — is a spent step, not a live proof.
       const refused = await remove(token, user.methodId, {
         methodId: user.methodId,
-        code: signInCode(user),
+        code: await signInCode(user),
       }).expect(422);
 
       expect(refused.body.code).toBe('MFA_VERIFICATION_FAILED');
@@ -249,7 +250,7 @@ describe('mfa removal and recovery-code regeneration', () => {
     it('refuses a code that is simply wrong', async () => {
       const user = await world.seedUserWithConfirmedTotp();
       const token = await signIn(user);
-      const live = new Set([currentCode(user), nextCode(user), signInCode(user)]);
+      const live = new Set([currentCode(user), nextCode(user), await signInCode(user)]);
       const wrong = ['000000', '111111', '222222'].find((candidate) => !live.has(candidate));
 
       await remove(token, user.methodId, { methodId: user.methodId, code: wrong }).expect(422);
@@ -378,7 +379,8 @@ describe('mfa removal and recovery-code regeneration', () => {
       const token = await signIn(user);
       await world.recoveryCodes.generate(user.userId);
 
-      await regenerate(token, { methodId: user.methodId, code: signInCode(user) }).expect(422);
+      const stale = { methodId: user.methodId, code: await signInCode(user) };
+      await regenerate(token, stale).expect(422);
 
       expect(world.source.all(MfaRecoveryCodeRecord)).toHaveLength(RECOVERY_CODE_COUNT);
     });
