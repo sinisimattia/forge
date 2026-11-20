@@ -306,7 +306,7 @@ and `typecheck` scripts do not.
 | `generated-project` | push + PR | generates a real project and runs its own gates |
 | `storybook` | push + PR | the only thing that compiles the story files at all |
 | `docker` | push + PR | boots the generated stack for real |
-| `lockfile-refresh` | weekly | regenerates the lockfile and re-runs the gate; never commits |
+| `lockfile-refresh` | monthly | regenerates the lockfile and re-runs the gate; never commits |
 
 `generated-project` and `docker` used to be pull-request-only, which meant a direct push to
 `main` ran `unit` and nothing else — everything a PR checked could be landed by pushing. A push

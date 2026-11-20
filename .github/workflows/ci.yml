@@ -36,7 +36,7 @@ name: CI
 # The cost is real and was accepted deliberately: a push to `main` now spends ~30 minutes in
 # `generated-project` and up to ~45 in `docker` rather than ~10. A gate that runs only on
 # the path somebody can choose not to take is not a gate.
-#   - lockfile-refresh:   scheduled only (weekly), never on push/PR. See its own comment below.
+#   - lockfile-refresh:   scheduled only (monthly), never on push/PR. See its own comment below.
 #
 # Forge ships zero runtime and zero test dependencies (ADR-0002), so there is no lockfile and
 # no `npm install`/`npm ci` step for forge's own package.json — there is nothing to install.
@@ -51,7 +51,7 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    # Weekly, Monday 06:00 UTC. `template/package-lock.json` pins the generated-project
+    # Monthly, the 1st at 06:00 UTC. `template/package-lock.json` pins the generated-project
     # dependency graph as of the day it was last refreshed — that is the whole point of
     # shipping it, but it also means it goes stale the moment anything it pins gets a new
     # release. A stale-but-still-installable lockfile fails silently: `npm ci` keeps
@@ -59,7 +59,7 @@ on:
     # ever notice drift building back up. This job re-resolves the lockfile from scratch on
     # a schedule so that drift is caught here, by forge, before it reaches a user who
     # generates a project on a bad day — see the `lockfile-refresh` job below.
-    - cron: '0 6 * * 1'
+    - cron: '0 6 1 * *'
 
 # Least privilege by default — none of these jobs need to write anything.
 permissions:
@@ -205,7 +205,7 @@ jobs:
   # human runs `npm run refresh-lockfile` locally, reviews the diff, fixes whatever broke,
   # and commits it themselves.
   lockfile-refresh:
-    name: weekly lockfile drift check (schedule-only; never commits)
+    name: monthly lockfile drift check (schedule-only; never commits)
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30

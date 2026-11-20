@@ -27,9 +27,6 @@
   "scarfSettings": {
     "enabled": false
   },
-  "overrides": {
-    "@nuxt/schema": "4.4.8"
-  },
   "engines": {
     "node": ">=22 <23"
   }

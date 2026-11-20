@@ -78,7 +78,12 @@ describe('D8: renewal, and a credential presented twice', () => {
     const store = new FakeDataSource(honourLocks);
     const entries: RecordAuditEntryInput[] = [];
 
-    const at = new Date('2026-09-18T10:00:00.000Z');
+    // Anchored to the real clock, never to a fixed date: `rotate()` reads
+    // `new Date()` itself and checks every expiry below against it, so a fixed
+    // anchor turns into an expired session — and a red suite — once the
+    // calendar passes it plus `lifetime`. That is exactly what happened to the
+    // `2026-09-18` anchor this replaced, on 2026-10-18.
+    const at = new Date();
     const lifetime = 30 * 24 * 60 * 60 * 1000;
 
     store.seed(SessionRecord, [

@@ -53,7 +53,7 @@ inherits. Do not confuse the two.
 | `tests/unit/` | fast tests: token substitution, adopt-mode subset selection, never-overwrite |
 | `tests/integration/` | `npm run test:integration` — generates a real project and runs its own gates; `FORGE_E2E=1 npm run test:integration` adds the Docker e2e. `npm test` runs neither (ADR-0005) |
 | `docs/adrs/` | Forge's own architecture decisions (this repo, not the template's) |
-| `.github/workflows/ci.yml` | Forge's own CI — the unit, generated-project, storybook and docker tiers all run on push and on PR; a weekly scheduled job re-resolves the template's lockfile |
+| `.github/workflows/ci.yml` | Forge's own CI — the unit, generated-project, storybook and docker tiers all run on push and on PR; a monthly scheduled job re-resolves the template's lockfile |
 
 Everything under `template/docs/`, `template/.claude/`, etc. is the template's own copy of
 this same kind of material for a *generated* project — do not confuse the two: editing
