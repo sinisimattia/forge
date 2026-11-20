@@ -262,43 +262,35 @@ async function connectionUrlsFrom(target) {
 }
 
 /**
- * Gives every file under the generated project back to the user running this test.
+ * Every path under `dir` that is not owned by `uid`, bar what lives in a Docker volume.
  *
- * `compose.yaml` bind-mounts the project over `/app` in the dev `backend` and `webapp`
- * containers, and both run as root. What they write there at start-up —
- * `apps/backend/dist` from `nest start --watch`, `libs/core/dist` from `nx build core`,
- * `apps/webapp/.nuxt` from `nuxt dev` — is therefore owned by root on the host. On Linux
- * that is literal, so the runner cannot delete it, `tests/helpers/temp.mjs` reports the
- * directory as leaked, and the file fails although every assertion in it passed. This job
- * was red on every push from its first run on GitHub for exactly that reason. Docker
- * Desktop maps bind-mount ownership to the host user, which is why it never reproduced on
- * macOS.
+ * The dev `backend` and `webapp` containers bind-mount the project over `/app`, and they
+ * write into it at start-up (`apps/backend/dist`, `libs/core/dist`, `apps/webapp/.nuxt`).
+ * They used to do it as root, which on a Linux host leaves the developer's own build output
+ * root-owned and undeletable — and failed this job on every push from its first run on
+ * GitHub, through the temp-dir sweep, with every other assertion green.
+ * `docker/dev-entrypoint.sh` now runs the command as the checkout's owner and
+ * `docker/prepare-mounts.mjs` creates the anonymous volumes' mount points before the daemon
+ * can; this is what turns red if either stops working.
  *
- * The `chown` runs as root inside a throwaway container from the stack's own backend image
- * — already built, so nothing is pulled — with only the project directory mounted.
- * `compose run` would be the obvious call and is the wrong one: it creates fresh anonymous
- * `node_modules` volumes, populates them from the image, and then walks all of them.
+ * It only discriminates on Linux. Docker Desktop maps everything written through a bind
+ * mount back to the host user, so on macOS it passes with or without the fix.
  *
- * Fixing it here rather than in the template is deliberate and narrower than the real
- * problem: anyone running `npm run dev:up` on Linux gets the same root-owned directories
- * in their own checkout. This only stops it from failing Forge's test.
- *
- * @param compose - the project-scoped compose runner
- * @param target - the generated project directory, as bind-mounted at `/app`
+ * @param dir - the generated project directory
+ * @param uid - the user every entry must belong to
+ * @returns the offending paths, relative to `dir`
  */
-async function returnOwnershipToHost(compose, target) {
-  // Absent on Windows, where none of this applies.
-  if (typeof process.getuid !== 'function') return;
-
-  const { stdout } = await compose('images', '-q', 'backend');
-  const image = stdout.trim().split('\n')[0];
-  // No image means the stack never started, so nothing wrote into the mount.
-  if (!image) return;
-
-  await run('docker', [
-    'run', '--rm', '--entrypoint', 'chown', '-v', `${target}:/app`, image,
-    '-R', `${process.getuid()}:${process.getgid()}`, '/app',
-  ]);
+async function foreignOwned(dir, uid) {
+  const found = [];
+  async function walk(current) {
+    for (const entry of await fs.readdir(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if ((await fs.lstat(full)).uid !== uid) found.push(path.relative(dir, full));
+      if (entry.isDirectory()) await walk(full);
+    }
+  }
+  await walk(dir);
+  return found;
 }
 
 test(
@@ -354,6 +346,11 @@ test(
     // it is run once, by hand, below. See its assertion for what it catches that
     // nothing else here does.
     await fs.writeFile(path.join(target, 'apps/backend/drift-probe.ts'), DRIFT_PROBE);
+
+    // What `npm run dev:up` does before `docker compose up`, which this test calls directly:
+    // without it the daemon creates the anonymous volumes' mount points in the checkout as
+    // root, and the ownership assertion at the end of the walks says so.
+    await run('node', ['docker/prepare-mounts.mjs'], { cwd: target });
 
     const base = `http://localhost:${backendPort}`;
     const webappBase = `http://localhost:${webappPort}`;
@@ -446,16 +443,19 @@ test(
       await proveTheAuditLogIsAppendOnly(compose, projectName, target);
       await proveWhatTheFakeCannotExpress(compose, base, target);
       await proveTheRateLimiterCountsInTheDatabase(compose, target);
+
+      // Last, so both dev servers have written everything they write at start-up, and the
+      // walks above whatever they add. Absent on Windows, where ownership is not a uid.
+      if (typeof process.getuid === 'function') {
+        assert.deepEqual(
+          await foreignOwned(target, process.getuid()), [],
+          'the dev containers left files in the checkout that the host user does not own',
+        );
+      }
     } catch (error) {
       const diagnostics = await composeDiagnostics(target, projectName);
       throw new Error(`${error.message}\n\n${diagnostics}`);
     } finally {
-      // Before `down`, which removes the image this needs. See the function's own
-      // comment for why this exists at all; without it the temp-dir sweep fails the
-      // file on every Linux run even when every assertion above passed.
-      await returnOwnershipToHost(compose, target).catch((error) => {
-        process.stderr.write(`warning: could not return ${target} to the host user: ${error.message}\n`);
-      });
       // `--rmi local` as well as `-v`: this test builds a fresh image tag per run
       // (the project name is unique), so without it every run leaves another
       // `forge-e2e-*-backend` behind. The build cache is untouched, so the next

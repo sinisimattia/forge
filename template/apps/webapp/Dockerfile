@@ -17,6 +17,10 @@ RUN npm ci
 # --- dev: nuxt dev bound to all interfaces on 3001 (source bind-mounted by compose) ---
 FROM base AS dev
 COPY . .
+# Runs CMD as the owner of the bind-mounted checkout rather than root — see the script.
+# Invoked through `sh`, so it does not depend on the generated copy keeping an exec bit.
+COPY docker/dev-entrypoint.sh /usr/local/bin/dev-entrypoint.sh
+ENTRYPOINT ["sh", "/usr/local/bin/dev-entrypoint.sh"]
 EXPOSE 3001
 # `npx nx build core` first, in the CMD rather than as a `RUN` step above: `compose.yaml`
 # bind-mounts the whole repo over `/app` at container start (`.:/app`), which shadows

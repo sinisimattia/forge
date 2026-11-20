@@ -10,7 +10,7 @@
     "lint": "nx run-many -t lint",
     "typecheck": "nx run-many -t typecheck",
     "affected": "nx affected -t lint test build build-storybook typecheck purity layers coverage",
-    "dev:up": "docker compose up --build",
+    "dev:up": "node docker/prepare-mounts.mjs && docker compose up --build",
     "dev:down": "docker compose down",
     "dev:reset": "docker compose down -v",
     "dev:build": "docker compose build",

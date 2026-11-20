@@ -15,6 +15,10 @@ RUN npm ci
 # --- dev: hot reload; runs migrations then nest --watch (source bind-mounted by compose) ---
 FROM base AS dev
 COPY . .
+# Runs CMD as the owner of the bind-mounted checkout rather than root — see the script.
+# Invoked through `sh`, so it does not depend on the generated copy keeping an exec bit.
+COPY docker/dev-entrypoint.sh /usr/local/bin/dev-entrypoint.sh
+ENTRYPOINT ["sh", "/usr/local/bin/dev-entrypoint.sh"]
 EXPOSE 3000 9229
 CMD ["sh", "-lc", "npm run migration:run -w apps/backend && npm run start:dev -w apps/backend"]
 

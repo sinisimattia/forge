@@ -25,6 +25,13 @@ their own via `npm ci`.
 
 Tear the stack down with `npm run dev:down`, or wipe its volumes too with `npm run dev:reset`.
 
+The dev containers mount this checkout and write build output into it (`dist/`, `.nuxt/`).
+They do that as whoever owns the checkout, not as root, so on Linux everything they leave
+behind is yours to delete — `docker/dev-entrypoint.sh` says how. Start the stack with
+`npm run dev:up` rather than a bare `docker compose up`: it first runs
+`docker/prepare-mounts.mjs`, without which Docker itself creates an empty, root-owned
+`node_modules` here that a later host `npm ci` cannot write to.
+
 ## Packages
 
 | Path           | What it is                                                              | Guidance                                               |

@@ -53,7 +53,9 @@ first ([ADR-0012](docs/adrs/0012-a-second-factor-is-a-property-of-the-account.md
 - **Dev environment (containerized, Node 22):** `npm run dev:up` brings up backend + webapp +
   Postgres together; `npm run dev:down` / `npm run dev:reset` tear down. The host Node version
   does not affect the running stack — it installs and runs inside the containers, which pin
-  Node 22.
+  Node 22. The containers run as the checkout's owner, not root (`docker/dev-entrypoint.sh`),
+  and `dev:up` rather than a bare `docker compose up` is what keeps Docker from creating
+  root-owned mount points in the checkout (`docker/prepare-mounts.mjs`).
 - Build/test/lint/typecheck via NX: `npx nx <target> <project>` or
   `npx nx run-many -t <target>`. **These run on the host's Node, not in a container.**
   `package.json` declares the range this project supports; a green run under a Node outside
